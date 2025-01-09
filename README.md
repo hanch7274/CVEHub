@@ -25,7 +25,7 @@ CVE Hub는 CVE(Common Vulnerabilities and Exposures) 정보를 관리하고 공�
 
 ### 사전 요구사항
 - Python 3.11+
-- Node.js 16+
+- Node.js 18
 - MongoDB
 
 ### 백엔드 설정
