@@ -1,8 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional
 from app.models.cve import CVEModel, PoC, SnortRule, Reference, ModificationHistory
 from datetime import datetime
-from ..auth.user import get_current_user, get_current_admin_user
 from pydantic import BaseModel
 from zoneinfo import ZoneInfo
 
@@ -20,7 +19,9 @@ class CreateSnortRuleRequest(BaseModel):
 
 class CreateCVERequest(BaseModel):
     cveId: str
+    title: Optional[str] = None
     description: Optional[str] = None
+    status: str = "미할당"
     affectedProducts: List[str] = []
     references: List[dict] = []
     pocs: List[CreatePoCRequest] = []
@@ -39,9 +40,22 @@ class BulkUpdateCVERequest(BaseModel):
     cves: List[dict]
     crawlerName: Optional[str] = None
 
+class PatchCVERequest(BaseModel):
+    cveId: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    affectedProducts: Optional[List[str]] = None
+    references: Optional[List[Reference]] = None
+    pocs: Optional[List[CreatePoCRequest]] = None
+    snortRules: Optional[List[CreateSnortRuleRequest]] = None
+
+    class Config:
+        extra = "allow"  # 추가 필드 허용
+
 async def create_single_cve(
     cve_data: CreateCVERequest,
-    current_user: str = Depends(get_current_user),
+    current_user: str = "anonymous",
     is_crawler: bool = False,
     crawler_name: Optional[str] = None
 ) -> tuple[Optional[CVEModel], Optional[dict]]:
@@ -86,13 +100,14 @@ async def create_single_cve(
         
         new_cve = CVEModel(
             cveId=cve_data.cveId,
+            title=cve_data.title,
             description=cve_data.description,
             affectedProducts=cve_data.affectedProducts,
             references=cve_data.references,
             pocs=pocs,
             snortRules=snort_rules,
             publishedDate=current_time,
-            status="unassigned",
+            status=cve_data.status,  
             createdAt=current_time,
             createdBy=creator,
             modificationHistory=[]
@@ -110,7 +125,7 @@ async def create_single_cve(
 async def update_single_cve(
     cve_id: str,
     cve_data: dict,
-    current_user: str = Depends(get_current_user),
+    current_user: str = "anonymous",
     is_crawler: bool = False,
     crawler_name: Optional[str] = None
 ) -> tuple[Optional[CVEModel], Optional[dict]]:
@@ -170,73 +185,198 @@ async def update_single_cve(
             "error": str(e)
         }
 
-@router.get("/cves", response_model=List[CVEModel])
+@router.get("/", response_model=List[CVEModel])
 async def get_cves(
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=100),
     status: Optional[str] = None
 ):
+    """모든 CVE를 조회합니다."""
     query = {}
     if status:
         query["status"] = status
     
-    cves = await CVEModel.find(query).skip(skip).limit(limit).to_list()
-    return cves
+    try:
+        cves = await CVEModel.find(query).skip(skip).limit(limit).to_list()
+        return cves
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/cves/{cve_id}", response_model=CVEModel)
+@router.get("/{cve_id}", response_model=CVEModel)
 async def get_cve(cve_id: str):
-    cve = await CVEModel.find_one({"cveId": cve_id})
-    if not cve:
-        raise HTTPException(status_code=404, detail="CVE not found")
-    return cve
+    """특정 CVE를 조회합니다."""
+    try:
+        cve = await CVEModel.find_one({"cveId": cve_id})
+        if not cve:
+            raise HTTPException(
+                status_code=404,
+                detail=f"CVE with ID {cve_id} not found"
+            )
+        return cve
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/cve")
+@router.post("/", response_model=CVEModel)
 async def create_cve(
     cve_data: CreateCVERequest,
-    current_user: str = Depends(get_current_user)
+    crawler_name: Optional[str] = None,
+    is_crawler: bool = False
 ):
-    """새로운 CVE를 생성합니다."""
-    cve, error = await create_single_cve(cve_data, current_user)
+    """단일 CVE를 생성합니다."""
+    cve, error = await create_single_cve(
+        cve_data=cve_data,
+        current_user="anonymous",
+        is_crawler=is_crawler,
+        crawler_name=crawler_name
+    )
+    
     if error:
         raise HTTPException(status_code=400, detail=error["error"])
     return cve
 
-@router.put("/cve/{cve_id}")
-async def update_cve(
+@router.patch("/{cve_id}", response_model=CVEModel)
+async def patch_cve(
     cve_id: str,
-    cve_data: dict,
-    current_user: str = Depends(get_current_user)
+    cve_data: PatchCVERequest,
+    crawler_name: Optional[str] = None,
+    is_crawler: bool = False
 ):
-    """CVE를 업데이트합니다."""
-    cve, error = await update_single_cve(cve_id, cve_data, current_user)
-    if error:
-        raise HTTPException(
-            status_code=404 if error["error"] == "CVE not found" else 400,
-            detail=error["error"]
+    """CVE를 부분 업데이트합니다."""
+    try:
+        print(f"Received PATCH request for CVE {cve_id}")
+        print(f"Request data: {cve_data.dict()}")
+        
+        # 1. CVE 존재 여부 확인
+        existing_cve = await CVEModel.find_one({"cveId": cve_id})
+        if not existing_cve:
+            raise HTTPException(
+                status_code=404,
+                detail=f"CVE with ID {cve_id} not found"
+            )
+
+        # 2. 업데이트할 데이터 준비
+        update_data = cve_data.dict(exclude_unset=True, exclude={"cveId"})
+        print(f"Update data after processing: {update_data}")
+        
+        if not update_data:
+            return existing_cve
+
+        current_time = datetime.now(ZoneInfo("Asia/Seoul"))
+        modifier = f"{crawler_name} (Crawler)" if is_crawler else "anonymous"
+
+        # 3. 기본 필드 업데이트
+        if "title" in update_data:
+            existing_cve.title = update_data["title"]
+        if "description" in update_data:
+            existing_cve.description = update_data["description"]
+        if "status" in update_data:
+            existing_cve.status = update_data["status"]
+        if "affectedProducts" in update_data:
+            existing_cve.affectedProducts = update_data["affectedProducts"]
+        if "references" in update_data:
+            existing_cve.references = update_data["references"]
+        
+        # 4. PoC와 Snort Rule 처리
+        if "pocs" in update_data:
+            pocs = update_data["pocs"]
+            for poc in pocs:
+                poc_data = PoC(
+                    source=poc.get("source", "Etc"),
+                    url=poc.get("url", ""),
+                    description=poc.get("description"),
+                    dateAdded=current_time,
+                    addedBy=modifier
+                )
+                existing_cve.pocs.append(poc_data)
+
+        if "snortRules" in update_data:
+            rules = update_data["snortRules"]
+            for rule in rules:
+                rule_data = SnortRule(
+                    rule=rule.get("rule", ""),
+                    type=rule.get("type", "사용자 정의"),
+                    description=rule.get("description"),
+                    dateAdded=current_time,
+                    addedBy=modifier
+                )
+                existing_cve.snortRules.append(rule_data)
+
+        # 5. 수정 이력 추가
+        if not hasattr(existing_cve, "modificationHistory"):
+            existing_cve.modificationHistory = []
+            
+        modification = ModificationHistory(
+            modifiedBy=modifier,
+            modifiedAt=current_time,
+            modifiedFields=list(update_data.keys())
         )
-    return cve
+        existing_cve.modificationHistory.append(modification)
 
-@router.post("/cves/{cve_id}/pocs", response_model=CVEModel)
-async def add_poc(cve_id: str, poc: PoC):
-    cve = await CVEModel.find_one({"cveId": cve_id})
-    if not cve:
-        raise HTTPException(status_code=404, detail="CVE not found")
-    
-    cve.pocs.append(poc)
-    await cve.save()
-    return cve
+        # 6. 저장
+        await existing_cve.save()
+        
+        # 7. 업데이트된 CVE 반환
+        updated_cve = await CVEModel.find_one({"cveId": cve_id})
+        if not updated_cve:
+            raise HTTPException(status_code=500, detail="Failed to update CVE")
+        
+        return updated_cve
 
-@router.post("/cves/{cve_id}/snort-rules", response_model=CVEModel)
-async def add_snort_rule(cve_id: str, rule: SnortRule):
-    cve = await CVEModel.find_one({"cveId": cve_id})
-    if not cve:
-        raise HTTPException(status_code=404, detail="CVE not found")
-    
-    cve.snortRules.append(rule)
-    await cve.save()
-    return cve
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        print(f"Error updating CVE: {str(e)}")
+        print(f"Error type: {type(e)}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
 
-@router.get("/cves/search/{query}", response_model=List[CVEModel])
+@router.post("/{cve_id}/poc", response_model=CVEModel)
+async def add_poc(cve_id: str, poc: CreatePoCRequest):
+    try:
+        cve = await CVEModel.find_one({"cveId": cve_id})
+        if not cve:
+            raise HTTPException(status_code=404, detail="CVE not found")
+        
+        current_time = datetime.now(ZoneInfo("Asia/Seoul"))
+        new_poc = PoC(
+            **poc.dict(),
+            dateAdded=current_time,
+            addedBy="anonymous"
+        )
+        
+        cve.pocs.append(new_poc)
+        await cve.save()
+        return cve
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/{cve_id}/snort-rule", response_model=CVEModel)
+async def add_snort_rule(cve_id: str, rule: CreateSnortRuleRequest):
+    try:
+        cve = await CVEModel.find_one({"cveId": cve_id})
+        if not cve:
+            raise HTTPException(status_code=404, detail="CVE not found")
+        
+        current_time = datetime.now(ZoneInfo("Asia/Seoul"))
+        new_rule = SnortRule(
+            **rule.dict(),
+            dateAdded=current_time,
+            addedBy="anonymous"
+        )
+        
+        cve.snortRules.append(new_rule)
+        await cve.save()
+        return cve
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/search", response_model=List[CVEModel])
 async def search_cves(
     query: str,
     skip: int = Query(0, ge=0),
@@ -254,44 +394,43 @@ async def search_cves(
     
     return cves
 
-@router.post("/cves/bulk")
+@router.post("/bulk")
 async def bulk_create_cves(
     cves_data: BulkCreateCVERequest,
-    current_user: str = Depends(get_current_user)
 ):
     """여러 CVE를 일괄 생성합니다."""
-    created_cves = []
-    errors = []
+    results = {
+        "success": {
+            "count": 0,
+            "cves": []
+        },
+        "errors": {
+            "count": 0,
+            "details": []
+        }
+    }
 
     for index, cve_data in enumerate(cves_data.cves):
         cve, error = await create_single_cve(
-            cve_data,
-            current_user,
+            cve_data=cve_data,
+            current_user="anonymous",
             is_crawler=True,
             crawler_name=cves_data.crawlerName
         )
         
         if error:
             error["index"] = index
-            errors.append(error)
+            results["errors"]["details"].append(error)
+            results["errors"]["count"] += 1
         else:
-            created_cves.append(cve)
+            results["success"]["cves"].append(cve)
+            results["success"]["count"] += 1
     
-    return {
-        "success": {
-            "count": len(created_cves),
-            "cves": created_cves
-        },
-        "errors": {
-            "count": len(errors),
-            "details": errors
-        }
-    }
+    return results
 
-@router.put("/cves/bulk")
+@router.put("/bulk")
 async def bulk_update_cves(
     cves_data: BulkUpdateCVERequest,
-    current_user: str = Depends(get_current_user)
 ):
     """여러 CVE를 일괄 업데이트합니다."""
     updated_cves = []
@@ -309,7 +448,6 @@ async def bulk_update_cves(
         cve, error = await update_single_cve(
             cve_id,
             cve_data,
-            current_user,
             is_crawler=True,
             crawler_name=cves_data.crawlerName
         )
@@ -331,12 +469,11 @@ async def bulk_update_cves(
         }
     }
 
-@router.put("/cve/{cve_id}/snort-rule/{rule_index}")
+@router.put("/{cve_id}/snort-rules/{rule_index}")
 async def update_snort_rule(
     cve_id: str,
     rule_index: int,
     rule_data: UpdateSnortRuleRequest,
-    current_user: str = Depends(get_current_user)
 ):
     """특정 Snort Rule을 수정합니다."""
     cve = await CVEModel.find_one({"cveId": cve_id})
@@ -361,26 +498,48 @@ async def update_snort_rule(
         description=rule_data.description,
         dateAdded=cve.snortRules[rule_index].dateAdded,  # 원래 추가 날짜 유지
         addedBy=cve.snortRules[rule_index].addedBy,  # 원래 작성자 유지
-        lastModifiedBy=current_user,
+        lastModifiedBy="anonymous",
         lastModifiedAt=current_time
     )
     
     # 수정 이력 추가
-    modification = ModificationHistory(
-        modifiedBy=current_user,
-        modifiedAt=current_time
-    )
-    cve.modificationHistory.append(modification)
-    
-    await cve.save()
-    return cve.snortRules[rule_index]
+    modification = {
+        "modifiedAt": current_time,
+        "modifiedBy": "anonymous",
+        "modifiedFields": ["snortRules"]
+    }
 
-@router.delete("/cve/{cve_id}")
+    # 데이터 업데이트
+    try:
+        updated_cve = await CVEModel.find_one_and_update(
+            {"cveId": cve_id},
+            {
+                "$set": {f"snortRules.{rule_index}": cve.snortRules[rule_index].dict()},
+                "$push": {"modificationHistory": modification}
+            },
+            return_document=True
+        )
+        
+        if not updated_cve:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to update CVE"
+            )
+            
+        return updated_cve.snortRules[rule_index]
+
+    except Exception as mongo_error:
+        print(f"MongoDB error: {str(mongo_error)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: {str(mongo_error)}"
+        )
+
+@router.delete("/{cve_id}")
 async def delete_cve(
     cve_id: str,
-    current_user: str = Depends(get_current_admin_user)  # admin 권한 체크
 ):
-    """CVE를 삭제합니다. admin 권한이 필요합니다."""
+    """CVE를 삭제합니다."""
     cve = await CVEModel.find_one({"cveId": cve_id})
     if not cve:
         raise HTTPException(

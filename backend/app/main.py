@@ -12,7 +12,7 @@ app = FastAPI(
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React 앱의 주소
+    allow_origins=["*"],  # 개발 환경에서는 모든 origin 허용
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -20,9 +20,9 @@ app.add_middleware(
 
 # 라우터 등록
 app.include_router(auth.router, prefix="/api", tags=["auth"])  # auth 라우터 등록
-app.include_router(cve.router, prefix="/api", tags=["cves"])
+app.include_router(cve.router, prefix="/api/cves", tags=["cves"])
 app.include_router(lock.router, prefix="/api", tags=["lock"])
-app.include_router(comment.router, prefix="/api", tags=["comment"])
+app.include_router(comment.router, prefix="/api/cves", tags=["comment"])
 
 @app.on_event("startup")
 async def startup_event():

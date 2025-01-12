@@ -37,9 +37,11 @@ class ModificationHistory(BaseModel):
 
 class CVEModel(Document):
     cveId: str
+    title: Optional[str] = None
     description: Optional[str] = None
-    status: str = "unassigned"  # unassigned, in-progress, analyzed, completed
+    status: str = "미할당"  # 미할당, 분석중, 분석완료, 대응완료
     assignedTo: Optional[str] = None
+    affectedProducts: List[str] = []  # 영향받는 제품 목록 추가
     publishedDate: datetime
     lastModifiedDate: datetime = datetime.now(ZoneInfo("Asia/Seoul"))
     createdAt: datetime = datetime.now(ZoneInfo("Asia/Seoul"))
@@ -59,15 +61,32 @@ class CVEModel(Document):
 
     class Settings:
         name = "cves"
-        
+        indexes = [
+            "cveId",
+            "status",
+            "assignedTo",
+            "publishedDate",
+            "lastModifiedDate",
+            "createdAt",
+            "createdBy"
+        ]
+
     class Config:
         json_schema_extra = {
             "example": {
                 "cveId": "CVE-2023-1234",
+                "title": "Buffer overflow vulnerability in Example Software",
                 "description": "Buffer overflow vulnerability in Example Software",
-                "status": "unassigned",
+                "status": "미할당",
+                "affectedProducts": ["Example Software v1.0", "Example Software v1.1"],
                 "publishedDate": datetime.now(ZoneInfo("Asia/Seoul")),
+                "lastModifiedDate": datetime.now(ZoneInfo("Asia/Seoul")),
                 "createdAt": datetime.now(ZoneInfo("Asia/Seoul")),
-                "createdBy": "user@example.com"
+                "createdBy": "anonymous",
+                "modificationHistory": [],
+                "pocs": [],
+                "snortRules": [],
+                "references": [],
+                "comments": []
             }
         }

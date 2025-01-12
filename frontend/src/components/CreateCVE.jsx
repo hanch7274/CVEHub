@@ -36,20 +36,28 @@ const SNORT_RULE_TYPES = {
   "Snort Official": "Snort Official"
 };
 
-const CreateCVE = ({ open, onClose, onSuccess }) => {
+const STATUS_OPTIONS = [
+  { value: "미할당", label: "미할당" },
+  { value: "분석중", label: "분석중" },
+  { value: "분석완료", label: "분석완료" },
+  { value: "대응완료", label: "대응완료" }
+];
+
+const CreateCVE = ({ onClose, onSuccess }) => {
   const [formData, setFormData] = useState({
     cveId: '',
-    references: [],
+    title: '',
+    description: '',
+    status: '미할당',
     pocs: [],
-    snortRules: [],
+    snortRules: []
   });
-  const [newReference, setNewReference] = useState({ source: '', url: '' });
+
   const [newPoc, setNewPoc] = useState({ source: POC_SOURCES.Etc, url: '', description: '' });
   const [newSnortRule, setNewSnortRule] = useState({ 
     rule: '', 
     type: SNORT_RULE_TYPES["사용자 정의"], 
-    description: '', 
-    addedBy: '' 
+    description: '' 
   });
   const [error, setError] = useState('');
 
@@ -58,22 +66,6 @@ const CreateCVE = ({ open, onClose, onSuccess }) => {
     setFormData(prev => ({
       ...prev,
       [name]: value
-    }));
-  };
-
-  const handleAddReference = () => {
-    if (!newReference.source.trim() || !newReference.url.trim()) return;
-    setFormData(prev => ({
-      ...prev,
-      references: [...prev.references, { ...newReference }]
-    }));
-    setNewReference({ source: '', url: '' });
-  };
-
-  const handleRemoveReference = (index) => {
-    setFormData(prev => ({
-      ...prev,
-      references: prev.references.filter((_, i) => i !== index)
     }));
   };
 
@@ -102,8 +94,7 @@ const CreateCVE = ({ open, onClose, onSuccess }) => {
     setNewSnortRule({ 
       rule: '', 
       type: SNORT_RULE_TYPES["사용자 정의"], 
-      description: '', 
-      addedBy: '' 
+      description: ''
     });
   };
 
@@ -125,16 +116,89 @@ const CreateCVE = ({ open, onClose, onSuccess }) => {
         return;
       }
 
-      const response = await axios.post('/api/cve', formData);
+      const requestData = {
+        cveId: formData.cveId,
+        title: formData.title,
+        description: formData.description,
+        status: formData.status,
+        pocs: formData.pocs.map(poc => ({
+          source: poc.source,
+          url: poc.url,
+          description: poc.description || ''
+        })),
+        snortRules: formData.snortRules.map(rule => ({
+          rule: rule.rule,
+          type: rule.type,
+          description: rule.description || ''
+        })),
+        affectedProducts: [],
+        references: []
+      };
+
+      console.log('Sending request with data:', requestData);
+
+      const response = await axios.post(
+        'http://localhost:8000/api/cves',
+        requestData,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          validateStatus: function (status) {
+            return status >= 200 && status < 300;
+          }
+        }
+      );
+
+      console.log('Received response:', {
+        status: response.status,
+        statusText: response.statusText,
+        data: response.data,
+        headers: response.headers
+      });
+
+      // CVE가 성공적으로 생성됨
       onSuccess(response.data);
       onClose();
     } catch (error) {
-      setError(error.response?.data?.detail || 'Failed to create CVE');
+      console.error('Error details:', {
+        message: error.message,
+        name: error.name,
+        stack: error.stack,
+        response: error.response ? {
+          status: error.response.status,
+          statusText: error.response.statusText,
+          data: error.response.data,
+          headers: error.response.headers
+        } : 'No response',
+        request: error.request ? 'Request was made but no response received' : 'No request was made'
+      });
+
+      let errorMessage;
+      if (!error.response) {
+        // 네트워크 오류 또는 요청이 전송되지 않음
+        errorMessage = 'Network error. Please check your connection.';
+      } else if (error.response.status === 400) {
+        // 잘못된 요청
+        errorMessage = error.response.data.detail || 'Invalid CVE data';
+      } else if (error.response.status === 409) {
+        // 충돌 (중복된 CVE ID 등)
+        errorMessage = 'CVE ID already exists';
+      } else if (error.response.status >= 500) {
+        // 서버 오류
+        errorMessage = 'Server error. Please try again later.';
+      } else {
+        // 기타 오류
+        errorMessage = `Error creating CVE: ${error.message}`;
+      }
+      
+      setError(errorMessage);
     }
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog open={true} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>Create New CVE</DialogTitle>
       <DialogContent>
         {error && (
@@ -142,226 +206,132 @@ const CreateCVE = ({ open, onClose, onSuccess }) => {
             {error}
           </Alert>
         )}
-        
-        <TextField
-          fullWidth
-          label="CVE ID"
-          name="cveId"
-          value={formData.cveId}
-          onChange={handleInputChange}
-          placeholder="CVE-YYYY-NNNNN"
-          margin="normal"
-          required
-        />
 
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" gutterBottom>
-            References
-          </Typography>
-          <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 2 }}>
+          {/* 기본 정보 */}
+          <Box sx={{ display: 'grid', gridTemplateColumns: '2fr 3fr 1fr', gap: 2 }}>
             <TextField
+              required
+              label="CVE ID"
+              name="cveId"
+              value={formData.cveId}
+              onChange={handleInputChange}
+              helperText="Format: CVE-YYYY-NNNNN"
               size="small"
-              placeholder="Source"
-              value={newReference.source}
-              onChange={(e) => setNewReference(prev => ({ ...prev, source: e.target.value }))}
             />
+            
             <TextField
+              label="Title"
+              name="title"
+              value={formData.title}
+              onChange={handleInputChange}
               size="small"
-              placeholder="URL"
-              value={newReference.url}
-              onChange={(e) => setNewReference(prev => ({ ...prev, url: e.target.value }))}
-              sx={{ flexGrow: 1 }}
             />
-            <Button
-              variant="contained"
-              onClick={handleAddReference}
-              disabled={!newReference.source.trim() || !newReference.url.trim()}
-            >
-              <AddIcon />
-            </Button>
+
+            <FormControl size="small" sx={{ minWidth: 100 }}>
+              <InputLabel>Status</InputLabel>
+              <Select
+                name="status"
+                value={formData.status}
+                onChange={handleInputChange}
+                sx={{ height: 40 }}
+              >
+                {STATUS_OPTIONS.map(option => (
+                  <MenuItem key={option.value} value={option.value}>
+                    {option.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
           </Box>
-          {formData.references.map((ref, index) => (
-            <Box
-              key={index}
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 1,
-                mb: 1,
-                p: 1,
-                bgcolor: 'grey.100',
-                borderRadius: 1
-              }}
-            >
-              <Typography variant="body2" sx={{ flexGrow: 1 }}>
-                <strong>{ref.source}:</strong> {ref.url}
-              </Typography>
-              <IconButton size="small" onClick={() => handleRemoveReference(index)}>
-                <DeleteIcon />
+
+          {/* Description */}
+          <TextField
+            label="Description"
+            name="description"
+            value={formData.description}
+            onChange={handleInputChange}
+            multiline
+            rows={3}
+            size="small"
+          />
+
+          {/* PoCs */}
+          <Box>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>Proof of Concepts (PoCs)</Typography>
+            <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
+              <FormControl size="small" sx={{ width: '25%', minWidth: 100 }}>
+                <Select
+                  value={newPoc.source}
+                  onChange={(e) => setNewPoc(prev => ({ ...prev, source: e.target.value }))}
+                  sx={{ height: 40 }}
+                >
+                  {Object.entries(POC_SOURCES).map(([key, value]) => (
+                    <MenuItem key={key} value={value}>{value}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <TextField
+                size="small"
+                placeholder="URL"
+                value={newPoc.url}
+                onChange={(e) => setNewPoc(prev => ({ ...prev, url: e.target.value }))}
+                sx={{ flexGrow: 1 }}
+              />
+              <IconButton onClick={handleAddPoc} size="small">
+                <AddIcon />
               </IconButton>
             </Box>
-          ))}
-        </Box>
-
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" gutterBottom>
-            Proof of Concepts (PoCs)
-          </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 1 }}>
-            <FormControl size="small">
-              <InputLabel>Source</InputLabel>
-              <Select
-                value={newPoc.source}
-                onChange={(e) => setNewPoc(prev => ({ ...prev, source: e.target.value }))}
-                label="Source"
-              >
-                {Object.entries(POC_SOURCES).map(([key, value]) => (
-                  <MenuItem key={key} value={value}>{value}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <TextField
-              size="small"
-              placeholder="URL"
-              value={newPoc.url}
-              onChange={(e) => setNewPoc(prev => ({ ...prev, url: e.target.value }))}
-            />
-            <TextField
-              size="small"
-              placeholder="Description"
-              value={newPoc.description}
-              onChange={(e) => setNewPoc(prev => ({ ...prev, description: e.target.value }))}
-              multiline
-              rows={2}
-            />
-            <Button
-              variant="contained"
-              onClick={handleAddPoc}
-              disabled={!newPoc.url.trim()}
-            >
-              Add PoC
-            </Button>
-          </Box>
-          {formData.pocs.map((poc, index) => (
-            <Box
-              key={index}
-              sx={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 1,
-                mb: 1,
-                p: 1,
-                bgcolor: 'grey.100',
-                borderRadius: 1
-              }}
-            >
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Typography variant="subtitle2">{poc.source}</Typography>
-                <IconButton size="small" onClick={() => handleRemovePoc(index)}>
-                  <DeleteIcon />
+            {formData.pocs.map((poc, index) => (
+              <Box key={index} sx={{ display: 'flex', gap: 1, mb: 0.5, alignItems: 'center' }}>
+                <Typography variant="body2" sx={{ width: '30%' }}>{poc.source}</Typography>
+                <Typography variant="body2" sx={{ flexGrow: 1 }}>{poc.url}</Typography>
+                <IconButton onClick={() => handleRemovePoc(index)} size="small">
+                  <DeleteIcon fontSize="small" />
                 </IconButton>
               </Box>
-              <Typography variant="body2">
-                <strong>URL:</strong> {poc.url}
-              </Typography>
-              {poc.description && (
-                <Typography variant="body2">
-                  <strong>Description:</strong> {poc.description}
-                </Typography>
-              )}
-            </Box>
-          ))}
-        </Box>
-
-        <Box sx={{ mt: 2 }}>
-          <Typography variant="subtitle2" gutterBottom>
-            Snort Rules
-          </Typography>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mb: 1 }}>
-            <TextField
-              size="small"
-              placeholder="Rule"
-              value={newSnortRule.rule}
-              onChange={(e) => setNewSnortRule(prev => ({ ...prev, rule: e.target.value }))}
-              multiline
-              rows={2}
-            />
-            <FormControl size="small">
-              <InputLabel>Type</InputLabel>
-              <Select
-                value={newSnortRule.type}
-                onChange={(e) => setNewSnortRule(prev => ({ ...prev, type: e.target.value }))}
-                label="Type"
-              >
-                {Object.entries(SNORT_RULE_TYPES).map(([key, value]) => (
-                  <MenuItem key={key} value={value}>{value}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <TextField
-              size="small"
-              placeholder="Description"
-              value={newSnortRule.description}
-              onChange={(e) => setNewSnortRule(prev => ({ ...prev, description: e.target.value }))}
-              multiline
-              rows={2}
-            />
-            <Button
-              variant="contained"
-              onClick={handleAddSnortRule}
-              disabled={!newSnortRule.rule.trim()}
-            >
-              Add Snort Rule
-            </Button>
+            ))}
           </Box>
-          {formData.snortRules.map((rule, index) => (
-            <Box
-              key={index}
-              sx={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 1,
-                mb: 1,
-                p: 1,
-                bgcolor: 'grey.100',
-                borderRadius: 1
-              }}
-            >
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Typography variant="subtitle2">
-                  {rule.type} Rule
-                  {rule.addedBy?.includes("(Crawler)") && (
-                    <Typography
-                      component="span"
-                      variant="caption"
-                      sx={{ ml: 1, color: 'text.secondary' }}
-                    >
-                      (Auto-updated)
-                    </Typography>
-                  )}
-                </Typography>
-                <IconButton 
-                  size="small" 
-                  onClick={() => handleRemoveSnortRule(index)}
+
+          {/* Snort Rules */}
+          <Box>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>Snort Rules</Typography>
+            <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
+              <FormControl size="small" sx={{ width: '25%', minWidth: 100 }}>
+                <Select
+                  value={newSnortRule.type}
+                  onChange={(e) => setNewSnortRule(prev => ({ ...prev, type: e.target.value }))}
+                  sx={{ height: 40 }}
                 >
-                  <DeleteIcon />
+                  {Object.entries(SNORT_RULE_TYPES).map(([key, value]) => (
+                    <MenuItem key={key} value={value}>{value}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <TextField
+                size="small"
+                placeholder="Rule"
+                value={newSnortRule.rule}
+                onChange={(e) => setNewSnortRule(prev => ({ ...prev, rule: e.target.value }))}
+                sx={{ flexGrow: 1 }}
+              />
+              <IconButton onClick={handleAddSnortRule} size="small">
+                <AddIcon />
+              </IconButton>
+            </Box>
+            {formData.snortRules.map((rule, index) => (
+              <Box key={index} sx={{ display: 'flex', gap: 1, mb: 0.5, alignItems: 'center' }}>
+                <Typography variant="body2" sx={{ width: '30%' }}>{rule.type}</Typography>
+                <Typography variant="body2" sx={{ flexGrow: 1 }}>{rule.rule}</Typography>
+                <IconButton onClick={() => handleRemoveSnortRule(index)} size="small">
+                  <DeleteIcon fontSize="small" />
                 </IconButton>
               </Box>
-              <Typography
-                variant="body2"
-                sx={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}
-              >
-                {rule.rule}
-              </Typography>
-              {rule.description && (
-                <Typography variant="body2">
-                  <strong>Description:</strong> {rule.description}
-                </Typography>
-              )}
-            </Box>
-          ))}
+            ))}
+          </Box>
         </Box>
       </DialogContent>
+
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
         <Button

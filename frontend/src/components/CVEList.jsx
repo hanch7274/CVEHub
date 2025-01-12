@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
+  Box,
   Table,
   TableBody,
   TableCell,
@@ -7,23 +8,23 @@ import {
   TableHead,
   TableRow,
   Paper,
-  Chip,
   IconButton,
-  Pagination,
-  Box,
+  TablePagination,
   Typography,
-  TableSortLabel,
-  Tooltip,
-  Card,
-  CardContent,
   Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
+  Chip
 } from '@mui/material';
 import {
-  Visibility as VisibilityIcon,
   Edit as EditIcon,
-  Assignment as AssignmentIcon,
-  Add as AddIcon,
   Delete as DeleteIcon,
+  Visibility as VisibilityIcon,
+  ArrowUpward as ArrowUpwardIcon,
+  ArrowDownward as ArrowDownwardIcon,
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import axios from 'axios';
@@ -31,48 +32,67 @@ import CVEEdit from './CVEEdit';
 import CVEDetail from './CVEDetail';
 import CreateCVE from './CreateCVE';
 
-// 임시 데이터
 const mockData = [
   {
-    cveId: 'CVE-2023-1234',
-    description: 'Buffer overflow vulnerability in Example Software',
-    cvssScore: 7.5,
-    status: 'unassigned',
-    affectedProducts: ['Example Software v1.0'],
-    publishedDate: new Date('2023-12-01'),
-    assignedTo: null,
-    pocCount: 2,
-    snortRuleCount: 1,
+    cveId: "CVE-2023-1234",
+    title: "Buffer Overflow in Example Software",
+    description: "A buffer overflow vulnerability in Example Software versions 1.0-2.0 allows attackers to execute arbitrary code.",
+    status: "미할당",
+    severity: "High",
+    publishedDate: "2023-01-01",
+    lastModifiedDate: "2023-01-15",
   },
-  // 더 많은 목업 데이터 추가 가능
+];
+
+const getStatusColor = (status) => {
+  switch (status) {
+    case '미할당':
+      return 'error';
+    case '분석중':
+      return 'warning';
+    case '분석완료':
+      return 'info';
+    case '대응완료':
+      return 'success';
+    default:
+      return 'default';
+  }
+};
+
+const STATUS_OPTIONS = [
+  { value: "미할당", label: "미할당" },
+  { value: "분석중", label: "분석중" },
+  { value: "분석완료", label: "분석완료" },
+  { value: "대응완료", label: "대응완료" }
 ];
 
 const CVEList = () => {
   const theme = useTheme();
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(0);
   const [orderBy, setOrderBy] = useState('publishedDate');
   const [order, setOrder] = useState('desc');
-  const [selectedCVE, setSelectedCVE] = useState(null);
-  const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [currentUser, setCurrentUser] = useState(null);
+  const [selectedCVE, setSelectedCVE] = useState(null);
   const [cves, setCves] = useState(mockData);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [cveToDelete, setCveToDelete] = useState(null);
 
   useEffect(() => {
-    const fetchData = async () => {
+    const fetchCVEs = async () => {
       try {
-        // 현재 사용자 정보 가져오기
-        const userResponse = await axios.get('/api/user/me');
-        setCurrentUser(userResponse.data);
-      } catch (err) {
-        setError(err.message);
+        const response = await axios.get('http://localhost:8000/api/cves');
+        setCves(response.data);
+      } catch (error) {
+        console.error('Error fetching CVEs:', error);
+        setError('Failed to fetch CVEs');
       }
     };
 
-    fetchData();
+    fetchCVEs();
   }, []);
 
   const handleSort = (property) => {
@@ -81,247 +101,229 @@ const CVEList = () => {
     setOrderBy(property);
   };
 
-  const handleEditClick = (cve) => {
-    setSelectedCVE(cve);
-    setEditDialogOpen(true);
+  const handleChangePage = (event, newPage) => {
+    setPage(newPage);
   };
 
-  const handleDetailClick = (cve) => {
+  const handleDetailOpen = (cve) => {
     setSelectedCVE(cve);
-    setDetailDialogOpen(true);
-  };
-
-  const handleEditClose = () => {
-    setEditDialogOpen(false);
-    setSelectedCVE(null);
+    setDetailOpen(true);
   };
 
   const handleDetailClose = () => {
-    setDetailDialogOpen(false);
+    setDetailOpen(false);
     setSelectedCVE(null);
   };
 
-  const handleCreateClose = () => {
+  const handleEditOpen = (cve) => {
+    setSelectedCVE(cve);
+    setEditOpen(true);
+  };
+
+  const handleEditClose = () => {
+    setEditOpen(false);
+    setSelectedCVE(null);
+  };
+
+  const handleCreateDialogOpen = () => {
+    setCreateDialogOpen(true);
+  };
+
+  const handleCreateDialogClose = () => {
     setCreateDialogOpen(false);
   };
 
-  const handleEditSave = () => {
-    // CVE 수정 후 목록 새로고침
-    // TODO: Implement refresh logic
+  const handleDeleteClick = (cve) => {
+    setCveToDelete(cve);
+    setDeleteDialogOpen(true);
   };
 
-  const handleCreateSuccess = (newCve) => {
-    // TODO: Implement create success logic
-  };
-
-  const handleDelete = async (cveId) => {
-    if (!window.confirm(`Are you sure you want to delete CVE ${cveId}?`)) {
-      return;
-    }
+  const handleDeleteConfirm = async () => {
+    if (!cveToDelete) return;
 
     try {
-      await axios.delete(`/api/cve/${cveId}`);
-      // 삭제 후 목록 업데이트
-      setCves(cves.filter(cve => cve.cveId !== cveId));
-    } catch (err) {
-      if (err.response?.status === 403) {
-        alert('You do not have permission to delete CVEs');
-      } else {
-        alert(`Error deleting CVE: ${err.message}`);
-      }
+      await axios.delete(`http://localhost:8000/api/cves/${cveToDelete.cveId}`);
+      setCves(cves.filter(cve => cve.cveId !== cveToDelete.cveId));
+      setDeleteDialogOpen(false);
+      setCveToDelete(null);
+    } catch (error) {
+      console.error('Error deleting CVE:', error);
     }
   };
 
-  const getStatusColor = (status) => {
-    const colors = {
-      'unassigned': 'default',
-      'in-progress': 'primary',
-      'analyzed': 'info',
-      'completed': 'success'
-    };
-    return colors[status] || 'default';
+  const handleDeleteCancel = () => {
+    setDeleteDialogOpen(false);
+    setCveToDelete(null);
   };
 
-  const getCVSSColor = (score) => {
-    if (score >= 9.0) return '#c62828';
-    if (score >= 7.0) return '#ef6c00';
-    if (score >= 4.0) return '#f9a825';
-    return '#2e7d32';
+  const handleCreateCVE = async (newCVE) => {
+    try {
+      const response = await axios.post('http://localhost:8000/api/cves', newCVE);
+      setCves([...cves, response.data]);
+      setCreateDialogOpen(false);
+    } catch (error) {
+      console.error('Error creating CVE:', error);
+    }
   };
+
+  const handleUpdateCVE = async (updatedCVE) => {
+    try {
+      const response = await axios.put(`http://localhost:8000/api/cves/${updatedCVE.cveId}`, updatedCVE);
+      setCves(cves.map(cve => cve.cveId === updatedCVE.cveId ? response.data : cve));
+      setEditOpen(false);
+    } catch (error) {
+      console.error('Error updating CVE:', error);
+    }
+  };
+
+  const sortedCVEs = [...cves].sort((a, b) => {
+    const isAsc = order === 'asc';
+    if (orderBy === 'publishedDate') {
+      return isAsc 
+        ? new Date(a.publishedDate) - new Date(b.publishedDate)
+        : new Date(b.publishedDate) - new Date(a.publishedDate);
+    }
+    return isAsc
+      ? a[orderBy].localeCompare(b[orderBy])
+      : b[orderBy].localeCompare(a[orderBy]);
+  });
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="h5" sx={{ color: theme.palette.text.primary }}>
-          CVE Database
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          mb: 3
+        }}
+      >
+        <Typography variant="h5" component="h1">
+          CVE List
         </Typography>
         <Button
           variant="contained"
           color="primary"
-          startIcon={<AddIcon />}
-          onClick={() => setCreateDialogOpen(true)}
+          onClick={handleCreateDialogOpen}
+          sx={{ textTransform: 'none' }}
         >
-          Add New CVE
+          CREATE NEW CVE
         </Button>
       </Box>
 
-      <Card>
-        <TableContainer component={Paper} sx={{ mb: 2 }}>
-          <Table stickyHeader>
-            <TableHead>
-              <TableRow>
+      <TableContainer component={Paper}>
+        <Table>
+          <TableHead>
+            <TableRow>
+              <TableCell>
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  ID
+                  <IconButton size="small" onClick={() => handleSort('cveId')}>
+                    {orderBy === 'cveId' ? (
+                      order === 'asc' ? <ArrowUpwardIcon /> : <ArrowDownwardIcon />
+                    ) : null}
+                  </IconButton>
+                </Box>
+              </TableCell>
+              <TableCell>Title</TableCell>
+              <TableCell>Status</TableCell>
+              <TableCell>
+                <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                  Published Date
+                  <IconButton size="small" onClick={() => handleSort('publishedDate')}>
+                    {orderBy === 'publishedDate' ? (
+                      order === 'asc' ? <ArrowUpwardIcon /> : <ArrowDownwardIcon />
+                    ) : null}
+                  </IconButton>
+                </Box>
+              </TableCell>
+              <TableCell align="right">Actions</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {sortedCVEs.map((cve) => (
+              <TableRow key={cve.cveId}>
+                <TableCell>{cve.cveId}</TableCell>
+                <TableCell>{cve.title}</TableCell>
                 <TableCell>
-                  <TableSortLabel
-                    active={orderBy === 'cveId'}
-                    direction={orderBy === 'cveId' ? order : 'asc'}
-                    onClick={() => handleSort('cveId')}
-                  >
-                    CVE ID
-                  </TableSortLabel>
+                  <Chip 
+                    label={cve.status} 
+                    color={getStatusColor(cve.status)}
+                    size="small"
+                  />
                 </TableCell>
-                <TableCell>Description</TableCell>
-                <TableCell>Status</TableCell>
+                <TableCell>{new Date(cve.publishedDate).toLocaleDateString()}</TableCell>
                 <TableCell>
-                  <TableSortLabel
-                    active={orderBy === 'publishedDate'}
-                    direction={orderBy === 'publishedDate' ? order : 'asc'}
-                    onClick={() => handleSort('publishedDate')}
-                  >
-                    Published Date
-                  </TableSortLabel>
+                  <IconButton onClick={() => handleDetailOpen(cve)}>
+                    <VisibilityIcon />
+                  </IconButton>
+                  <IconButton onClick={() => handleEditOpen(cve)}>
+                    <EditIcon />
+                  </IconButton>
+                  <IconButton onClick={() => handleDeleteClick(cve)}>
+                    <DeleteIcon />
+                  </IconButton>
                 </TableCell>
-                <TableCell>PoCs</TableCell>
-                <TableCell>Snort Rules</TableCell>
-                <TableCell align="center">Actions</TableCell>
               </TableRow>
-            </TableHead>
-            <TableBody>
-              {cves.map((cve) => (
-                <TableRow 
-                  key={cve.cveId} 
-                  hover
-                  sx={{
-                    cursor: 'pointer',
-                    '&:hover': {
-                      backgroundColor: theme.palette.action.hover,
-                    },
-                  }}
-                >
-                  <TableCell>
-                    <Typography variant="body2" sx={{ fontWeight: 500, color: theme.palette.primary.main }}>
-                      {cve.cveId}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" sx={{ 
-                      maxWidth: '400px',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap'
-                    }}>
-                      {cve.description}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      label={cve.status}
-                      color={getStatusColor(cve.status)}
-                      size="small"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    {new Date(cve.publishedDate).toLocaleDateString()}
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      label={cve.pocCount}
-                      size="small"
-                      variant="outlined"
-                      color="primary"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      label={cve.snortRuleCount}
-                      size="small"
-                      variant="outlined"
-                      color="secondary"
-                    />
-                  </TableCell>
-                  <TableCell align="center">
-                    <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1 }}>
-                      <Tooltip title="View Details">
-                        <IconButton 
-                          size="small" 
-                          color="primary"
-                          onClick={() => handleDetailClick(cve)}
-                        >
-                          <VisibilityIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Edit">
-                        <IconButton 
-                          size="small" 
-                          color="primary"
-                          onClick={() => handleEditClick(cve)}
-                        >
-                          <EditIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Assign">
-                        <IconButton size="small" color="primary">
-                          <AssignmentIcon />
-                        </IconButton>
-                      </Tooltip>
-                      {currentUser?.is_admin && (
-                        <Tooltip title="Delete">
-                          <IconButton 
-                            size="small" 
-                            color="error"
-                            onClick={() => handleDelete(cve.cveId)}
-                          >
-                            <DeleteIcon />
-                          </IconButton>
-                        </Tooltip>
-                      )}
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
-        <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
-          <Pagination
-            count={10}
-            page={page}
-            onChange={(e, value) => setPage(value)}
-            color="primary"
-          />
-        </Box>
-      </Card>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
 
-      {/* CVE 편집 다이얼로그 */}
-      <CVEEdit
-        open={editDialogOpen}
-        onClose={handleEditClose}
-        cveId={selectedCVE?.cveId}
-        onSave={handleEditSave}
+      <TablePagination
+        component="div"
+        count={cves.length}
+        page={page}
+        onPageChange={handleChangePage}
+        rowsPerPage={10}
+        rowsPerPageOptions={[10]}
       />
 
-      {/* CVE 상세 보기 다이얼로그 */}
       <CVEDetail
-        open={detailDialogOpen}
+        open={detailOpen}
         onClose={handleDetailClose}
         cve={selectedCVE}
       />
 
-      {/* CVE 생성 다이얼로그 */}
-      <CreateCVE
-        open={createDialogOpen}
-        onClose={handleCreateClose}
-        onSuccess={handleCreateSuccess}
+      <CVEEdit
+        open={editOpen}
+        onClose={handleEditClose}
+        cveId={selectedCVE?.cveId}
+        onSave={(updatedCVE) => {
+          setCves(prevCves => prevCves.map(cve => 
+            cve.cveId === updatedCVE.cveId ? updatedCVE : cve
+          ));
+          setEditOpen(false);
+        }}
       />
+
+      <Dialog open={createDialogOpen} onClose={handleCreateDialogClose} maxWidth="md" fullWidth>
+        <CreateCVE 
+          onClose={handleCreateDialogClose}
+          onSuccess={(newCVE) => {
+            setCves(prevCves => [...prevCves, newCVE]);
+            handleCreateDialogClose();
+          }}
+        />
+      </Dialog>
+
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={handleDeleteCancel}
+      >
+        <DialogTitle>Delete CVE</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to delete this CVE? This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleDeleteCancel}>Cancel</Button>
+          <Button onClick={handleDeleteConfirm} color="error">
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

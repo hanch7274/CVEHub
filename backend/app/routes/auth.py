@@ -1,55 +1,85 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from jose import JWTError, jwt
 from passlib.context import CryptContext
-from ..models.user import User, UserCreate, UserResponse
-from ..auth.user import create_access_token, get_current_user, verify_password, get_password_hash
+from ..models.user import User, UserCreate
 from ..core.config import settings
+from pydantic import BaseModel
 
-router = APIRouter()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+router = APIRouter(tags=["auth"])
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+    is_admin: Optional[bool] = None
 
 class UserCreateWithAdmin(UserCreate):
     is_admin: bool = False
 
-@router.post("/register", response_model=UserResponse)
-async def register(user_data: UserCreateWithAdmin):
-    """새로운 사용자를 등록합니다."""
-    # 이메일 중복 체크
-    existing_user = await User.find_one({"email": user_data.email})
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password):
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except JWTError:
+        raise credentials_exception
     
-    # 사용자 이름 중복 체크
+    user = await User.find_one({"username": token_data.username})
+    if user is None:
+        raise credentials_exception
+    return user
+
+@router.post("/register")
+async def register(user_data: UserCreate):
+    """새로운 사용자를 등록합니다."""
+    # 이미 존재하는 사용자인지 확인
     existing_user = await User.find_one({"username": user_data.username})
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already taken"
+            detail="Username already registered"
         )
     
-    # 비밀번호 해시화
+    # 비밀번호 해싱
     hashed_password = get_password_hash(user_data.password)
     
     # 새 사용자 생성
-    new_user = User(
-        username=user_data.username,
-        email=user_data.email,
-        hashed_password=hashed_password,
-        is_admin=user_data.is_admin  # admin 권한 설정
-    )
+    user_dict = user_data.dict()
+    user_dict["hashed_password"] = hashed_password
+    del user_dict["password"]  # 평문 비밀번호 제거
     
-    await new_user.create()
+    new_user = User(**user_dict)
+    await new_user.save()
     
-    return UserResponse(
-        username=new_user.username,
-        email=new_user.email,
-        is_admin=new_user.is_admin
-    )
+    return {"message": "User created successfully"}
 
 @router.post("/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -72,39 +102,16 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         )
     
     # 3. JWT 토큰 생성
-    # sub(subject)에는 사용자 식별자(여기서는 username)를 넣습니다
     access_token = create_access_token(
-        data={"sub": user.username}
+        data={
+            "sub": user.username,
+            "is_admin": user.is_admin
+        }
     )
     
-    # 4. 토큰과 함께 사용자 정보 반환
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": UserResponse(
-            username=user.username,
-            email=user.email,
-            is_admin=user.is_admin
-        )
-    }
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @router.post("/logout")
 async def logout():
-    """로그아웃 처리. 클라이언트에서 토큰을 삭제하면 되므로, 성공 메시지만 반환"""
+    """사용자 로그아웃을 처리합니다."""
     return {"message": "Successfully logged out"}
-
-@router.get("/me", response_model=UserResponse)
-async def get_current_user_info(current_user: str = Depends(get_current_user)):
-    """현재 로그인한 사용자의 정보를 반환합니다."""
-    user = await User.find_one({"username": current_user})
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
-    return UserResponse(
-        username=user.username,
-        email=user.email,
-        is_admin=user.is_admin
-    )
