@@ -14,6 +14,11 @@ import {
   MenuItem,
   FormControl,
   InputLabel,
+  List,
+  ListItem,
+  ListItemText,
+  Paper,
+  Link
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -50,7 +55,8 @@ const CreateCVE = ({ onClose, onSuccess }) => {
     description: '',
     status: '미할당',
     pocs: [],
-    snortRules: []
+    snortRules: [],
+    references: []
   });
 
   const [newPoc, setNewPoc] = useState({ source: POC_SOURCES.Etc, url: '', description: '' });
@@ -59,6 +65,7 @@ const CreateCVE = ({ onClose, onSuccess }) => {
     type: SNORT_RULE_TYPES["사용자 정의"], 
     description: '' 
   });
+  const [newReference, setNewReference] = useState('');
   const [error, setError] = useState('');
 
   const handleInputChange = (e) => {
@@ -105,6 +112,23 @@ const CreateCVE = ({ onClose, onSuccess }) => {
     }));
   };
 
+  const handleAddReference = () => {
+    if (newReference.trim()) {
+      setFormData(prev => ({
+        ...prev,
+        references: [...prev.references, { url: newReference.trim(), dateAdded: new Date().toISOString() }]
+      }));
+      setNewReference('');
+    }
+  };
+
+  const handleRemoveReference = (index) => {
+    setFormData(prev => ({
+      ...prev,
+      references: prev.references.filter((_, i) => i !== index)
+    }));
+  };
+
   const handleSubmit = async () => {
     try {
       setError('');
@@ -130,6 +154,10 @@ const CreateCVE = ({ onClose, onSuccess }) => {
           rule: rule.rule,
           type: rule.type,
           description: rule.description || ''
+        })),
+        references: formData.references.map(ref => ({
+          url: ref.url,
+          dateAdded: ref.dateAdded
         })),
         affectedProducts: [],
         references: []
@@ -324,6 +352,31 @@ const CreateCVE = ({ onClose, onSuccess }) => {
                 <Typography variant="body2" sx={{ width: '30%' }}>{rule.type}</Typography>
                 <Typography variant="body2" sx={{ flexGrow: 1 }}>{rule.rule}</Typography>
                 <IconButton onClick={() => handleRemoveSnortRule(index)} size="small">
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </Box>
+            ))}
+          </Box>
+
+          {/* References */}
+          <Box>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>References</Typography>
+            <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
+              <TextField
+                size="small"
+                placeholder="Reference URL"
+                value={newReference}
+                onChange={(e) => setNewReference(e.target.value)}
+                sx={{ flexGrow: 1 }}
+              />
+              <IconButton onClick={handleAddReference} size="small">
+                <AddIcon />
+              </IconButton>
+            </Box>
+            {formData.references.map((ref, index) => (
+              <Box key={index} sx={{ display: 'flex', gap: 1, mb: 0.5, alignItems: 'center' }}>
+                <Typography variant="body2" sx={{ flexGrow: 1 }}>{ref.url}</Typography>
+                <IconButton onClick={() => handleRemoveReference(index)} size="small">
                   <DeleteIcon fontSize="small" />
                 </IconButton>
               </Box>

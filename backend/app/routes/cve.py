@@ -22,7 +22,6 @@ class CreateCVERequest(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     status: str = "미할당"
-    affectedProducts: List[str] = []
     references: List[dict] = []
     pocs: List[CreatePoCRequest] = []
     snortRules: List[CreateSnortRuleRequest] = []
@@ -45,7 +44,6 @@ class PatchCVERequest(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
-    affectedProducts: Optional[List[str]] = None
     references: Optional[List[Reference]] = None
     pocs: Optional[List[CreatePoCRequest]] = None
     snortRules: Optional[List[CreateSnortRuleRequest]] = None
@@ -102,7 +100,6 @@ async def create_single_cve(
             cveId=cve_data.cveId,
             title=cve_data.title,
             description=cve_data.description,
-            affectedProducts=cve_data.affectedProducts,
             references=cve_data.references,
             pocs=pocs,
             snortRules=snort_rules,
@@ -273,35 +270,38 @@ async def patch_cve(
             existing_cve.description = update_data["description"]
         if "status" in update_data:
             existing_cve.status = update_data["status"]
-        if "affectedProducts" in update_data:
-            existing_cve.affectedProducts = update_data["affectedProducts"]
         if "references" in update_data:
-            existing_cve.references = update_data["references"]
+            # Reference 객체 생성 시 _id 필드 추가
+            references = []
+            for ref in update_data["references"]:
+                if isinstance(ref, dict):
+                    references.append(Reference(**ref))
+                else:
+                    references.append(ref)
+            existing_cve.references = references
         
         # 4. PoC와 Snort Rule 처리
         if "pocs" in update_data:
-            pocs = update_data["pocs"]
-            for poc in pocs:
-                poc_data = PoC(
-                    source=poc.get("source", "Etc"),
-                    url=poc.get("url", ""),
-                    description=poc.get("description"),
-                    dateAdded=current_time,
-                    addedBy=modifier
-                )
-                existing_cve.pocs.append(poc_data)
+            pocs = []
+            for poc in update_data["pocs"]:
+                if isinstance(poc, dict):
+                    poc["addedBy"] = modifier
+                    poc["dateAdded"] = current_time
+                    pocs.append(PoC(**poc))
+                else:
+                    pocs.append(poc)
+            existing_cve.pocs = pocs
 
         if "snortRules" in update_data:
-            rules = update_data["snortRules"]
-            for rule in rules:
-                rule_data = SnortRule(
-                    rule=rule.get("rule", ""),
-                    type=rule.get("type", "사용자 정의"),
-                    description=rule.get("description"),
-                    dateAdded=current_time,
-                    addedBy=modifier
-                )
-                existing_cve.snortRules.append(rule_data)
+            snort_rules = []
+            for rule in update_data["snortRules"]:
+                if isinstance(rule, dict):
+                    rule["addedBy"] = modifier
+                    rule["dateAdded"] = current_time
+                    snort_rules.append(SnortRule(**rule))
+                else:
+                    snort_rules.append(rule)
+            existing_cve.snortRules = snort_rules
 
         # 5. 수정 이력 추가
         if not hasattr(existing_cve, "modificationHistory"):

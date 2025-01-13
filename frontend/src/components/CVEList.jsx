@@ -110,9 +110,29 @@ const CVEList = () => {
     setDetailOpen(true);
   };
 
-  const handleDetailClose = () => {
+  const handleDetailClose = async () => {
+    if (selectedCVE) {
+      try {
+        const response = await axios.get(`http://localhost:8000/api/cves/${selectedCVE.cveId}`);
+        setCves(prevCves => 
+          prevCves.map(cve => 
+            cve.cveId === selectedCVE.cveId ? response.data : cve
+          )
+        );
+      } catch (error) {
+        console.error('Error refreshing CVE:', error);
+      }
+    }
     setDetailOpen(false);
     setSelectedCVE(null);
+  };
+
+  const handleDetailSave = (updatedCVE) => {
+    setCves(prevCves => 
+      prevCves.map(cve => 
+        cve.cveId === updatedCVE.cveId ? updatedCVE : cve
+      )
+    );
   };
 
   const handleEditOpen = (cve) => {
@@ -282,6 +302,7 @@ const CVEList = () => {
       <CVEDetail
         open={detailOpen}
         onClose={handleDetailClose}
+        onSave={handleDetailSave}
         cve={selectedCVE}
       />
 

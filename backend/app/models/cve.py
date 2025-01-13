@@ -13,7 +13,7 @@ class PoC(BaseModel):
 
 class SnortRule(BaseModel):
     rule: str
-    type: Literal["IPS", "ONE", "UTM", "사용자 정의", "Emerging-Threats", "Snort Official"]
+    type: Literal["IPS", "ONE", "UTM", "USER_DEFINED", "EMERGING_THREATS", "SNORT_OFFICIAL"]
     description: Optional[str] = None
     dateAdded: datetime = datetime.now(ZoneInfo("Asia/Seoul"))
     addedBy: str
@@ -21,7 +21,6 @@ class SnortRule(BaseModel):
     lastModifiedBy: Optional[str] = None
 
 class Reference(BaseModel):
-    source: str
     url: str
 
 class Comment(BaseModel):
@@ -41,7 +40,6 @@ class CVEModel(Document):
     description: Optional[str] = None
     status: str = "미할당"  # 미할당, 분석중, 분석완료, 대응완료
     assignedTo: Optional[str] = None
-    affectedProducts: List[str] = []  # 영향받는 제품 목록 추가
     publishedDate: datetime
     lastModifiedDate: datetime = datetime.now(ZoneInfo("Asia/Seoul"))
     createdAt: datetime = datetime.now(ZoneInfo("Asia/Seoul"))
@@ -78,7 +76,6 @@ class CVEModel(Document):
                 "title": "Buffer overflow vulnerability in Example Software",
                 "description": "Buffer overflow vulnerability in Example Software",
                 "status": "미할당",
-                "affectedProducts": ["Example Software v1.0", "Example Software v1.1"],
                 "publishedDate": datetime.now(ZoneInfo("Asia/Seoul")),
                 "lastModifiedDate": datetime.now(ZoneInfo("Asia/Seoul")),
                 "createdAt": datetime.now(ZoneInfo("Asia/Seoul")),
