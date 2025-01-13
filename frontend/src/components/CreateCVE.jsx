@@ -28,10 +28,10 @@ const POC_SOURCES = {
 };
 
 const SNORT_RULE_TYPES = {
+  "사용자 정의": "사용자 정의",
   IPS: "IPS",
   ONE: "ONE",
   UTM: "UTM",
-  "사용자 정의": "사용자 정의",
   "Emerging-Threats": "Emerging-Threats",
   "Snort Official": "Snort Official"
 };
