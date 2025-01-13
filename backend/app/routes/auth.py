@@ -57,15 +57,23 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise credentials_exception
     return user
 
-@router.post("/register")
-async def register(user_data: UserCreate):
+@router.post("/signup", status_code=status.HTTP_201_CREATED)
+async def signup(user_data: UserCreate):
     """새로운 사용자를 등록합니다."""
-    # 이미 존재하는 사용자인지 확인
-    existing_user = await User.find_one({"username": user_data.username})
-    if existing_user:
+    # 이메일 중복 확인
+    existing_email = await User.find_one({"email": user_data.email})
+    if existing_email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already registered"
+            detail="이미 사용 중인 이메일입니다"
+        )
+
+    # 사용자 이름 중복 확인
+    existing_username = await User.find_one({"username": user_data.username})
+    if existing_username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="이미 사용 중인 사용자 이름입니다"
         )
     
     # 비밀번호 해싱
@@ -79,7 +87,15 @@ async def register(user_data: UserCreate):
     new_user = User(**user_dict)
     await new_user.save()
     
-    return {"message": "User created successfully"}
+    # 비밀번호를 제외한 사용자 정보 반환
+    return {
+        "message": "회원가입이 완료되었습니다",
+        "user": {
+            "username": new_user.username,
+            "email": new_user.email,
+            "is_admin": new_user.is_admin
+        }
+    }
 
 @router.post("/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):

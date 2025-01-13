@@ -19,7 +19,7 @@ app.add_middleware(
 )
 
 # 라우터 등록
-app.include_router(auth.router, prefix="/api", tags=["auth"])  # auth 라우터 등록
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])  # auth 라우터 prefix 수정
 app.include_router(cve.router, prefix="/api/cves", tags=["cves"])
 app.include_router(lock.router, prefix="/api", tags=["lock"])
 app.include_router(comment.router, prefix="/api/cves", tags=["comment"])
