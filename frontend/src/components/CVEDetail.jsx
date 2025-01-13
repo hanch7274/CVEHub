@@ -170,10 +170,10 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
   const [editingPocData, setEditingPocData] = useState(null);
   const [newReferenceUrl, setNewReferenceUrl] = useState('');
 
-  const POC_SOURCE_OPTIONS = {
-    Etc: 'Etc',
-    Metasploit: 'Metasploit',
-    'Nuclei-Templates': 'Nuclei-Templates'
+  const POC_SOURCES = {
+    Etc: { label: 'Etc', color: 'default' },
+    Metasploit: { label: 'Metasploit', color: 'secondary' },
+    'Nuclei-Templates': { label: 'Nuclei Templates', color: 'primary' }
   };
 
   const SNORT_RULE_TYPES = {
@@ -777,7 +777,13 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
                   <TableBody>
                     {(cve.pocs || []).map((poc, index) => (
                       <TableRow key={`poc-${index}`}>
-                        <TableCell>{POC_SOURCE_OPTIONS[poc.source] || poc.source}</TableCell>
+                        <TableCell>
+                          <Chip
+                            label={POC_SOURCES[poc.source]?.label || poc.source}
+                            color={POC_SOURCES[poc.source]?.color || 'default'}
+                            size="small"
+                          />
+                        </TableCell>
                         <TableCell>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             <Link
@@ -813,11 +819,14 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
                             </Tooltip>
                           </Box>
                         </TableCell>
-                        <TableCell>{poc.description}</TableCell>
+                        <TableCell sx={{ color: 'text.secondary' }}>
+                          {poc.description}
+                        </TableCell>
                         <TableCell align="right">
                           <IconButton 
                             onClick={() => handleDeletePoC(index)}
                             color="error"
+                            size="small"
                           >
                             <DeleteIcon />
                           </IconButton>
@@ -1008,6 +1017,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
                               handleDeleteReference(updatedReferences);
                             }} 
                             color="error"
+                            size="small"
                           >
                             <DeleteIcon />
                           </IconButton>
@@ -1044,7 +1054,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
               value={newPoc.source}
               onChange={(e) => setNewPoc({ ...newPoc, source: e.target.value })}
             >
-              {Object.entries(POC_SOURCE_OPTIONS).map(([value, label]) => (
+              {Object.entries(POC_SOURCES).map(([value, { label }]) => (
                 <MenuItem key={value} value={value}>
                   {label}
                 </MenuItem>
