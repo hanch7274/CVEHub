@@ -52,7 +52,8 @@ import {
   Close as CloseIcon,
   Save as SaveIcon,
   Cancel as CancelIcon,
-  OpenInNew as OpenInNewIcon
+  OpenInNew as OpenInNewIcon,
+  Circle as CircleIcon
 } from '@mui/icons-material';
 
 const TabPanel = (props) => {
@@ -224,15 +225,21 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
     setPocDialogOpen(true);
   };
 
+  const updateCVEState = (updatedCVE) => {
+    setCve(updatedCVE);
+    if (onSave) {
+      onSave(updatedCVE);
+    }
+  };
+
   const handlePocSubmit = async () => {
     try {
-      console.log('Submitting PoC:', newPoc);
       const response = await axios.patch(`http://localhost:8000/api/cves/${cve.cveId}`, {
         pocs: [...(cve.pocs || []), newPoc]
       });
       
       if (response.status === 200) {
-        setCve(response.data);
+        updateCVEState(response.data);
         setPocDialogOpen(false);
         setNewPoc({ source: 'Etc', url: '', description: '' });
       }
@@ -328,22 +335,31 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
     }
   };
 
-  const handleDeleteReference = async (references) => {
+  const handleDeleteReference = async (index) => {
     try {
+      // 즉시 UI 업데이트를 위한 낙관적 업데이트
+      const updatedReferences = cve.references.filter((_, i) => i !== index);
+      setCve(prevCve => ({
+        ...prevCve,
+        references: updatedReferences
+      }));
+
       const response = await axios.patch(`http://localhost:8000/api/cves/${cve.cveId}`, {
-        references
+        references: updatedReferences
       });
       
       if (response.status === 200) {
         const updatedCVE = response.data;
         console.log('Updated CVE references:', updatedCVE.references);  // 디버깅용 로그
-        setCve(updatedCVE);
-        if (onSave) {
-          onSave(updatedCVE);
-        }
+        updateCVEState(updatedCVE);
       }
     } catch (error) {
       console.error('Error deleting reference:', error);
+      // 에러 발생 시 원래 상태로 복구
+      setCve(prevCve => ({
+        ...prevCve,
+        references: [...prevCve.references]
+      }));
     }
   };
 
@@ -395,38 +411,42 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
   const handleDeletePoC = async (index) => {
     try {
       console.log('Deleting PoC at index:', index);
-      console.log('Current PoCs:', cve.pocs);
       
-      const updatedPoCs = [...cve.pocs];
-      updatedPoCs.splice(index, 1);
-      console.log('Updated PoCs after splice:', updatedPoCs);
+      // 즉시 UI 업데이트를 위한 낙관적 업데이트
+      const updatedPoCs = cve.pocs.filter((_, i) => i !== index);
+      setCve(prevCve => ({
+        ...prevCve,
+        pocs: updatedPoCs
+      }));
       
       const response = await axios.patch(`http://localhost:8000/api/cves/${cve.cveId}`, {
         pocs: updatedPoCs
       });
       
       if (response.status === 200) {
+        // 서버 응답으로 상태 동기화
         const updatedCVE = response.data;
-        console.log('Updated CVE after PoC deletion:', updatedCVE);
-        setCve(updatedCVE);
-        if (onSave) {
-          onSave(updatedCVE);
-        }
+        updateCVEState(updatedCVE);
       }
     } catch (error) {
       console.error('Error deleting PoC:', error);
+      // 에러 발생 시 원래 상태로 복구
+      setCve(prevCve => ({
+        ...prevCve,
+        pocs: [...prevCve.pocs]
+      }));
     }
   };
 
   const handleDeleteSnortRule = async (index) => {
     try {
-      console.log('Deleting Snort Rule at index:', index);
-      console.log('Current Snort Rules:', cve.snortRules);
-      
-      const updatedSnortRules = [...cve.snortRules];
-      updatedSnortRules.splice(index, 1);
-      console.log('Updated Snort Rules after splice:', updatedSnortRules);
-      
+      // 즉시 UI 업데이트를 위한 낙관적 업데이트
+      const updatedSnortRules = cve.snortRules.filter((_, i) => i !== index);
+      setCve(prevCve => ({
+        ...prevCve,
+        snortRules: updatedSnortRules
+      }));
+
       const response = await axios.patch(`http://localhost:8000/api/cves/${cve.cveId}`, {
         snortRules: updatedSnortRules
       });
@@ -434,13 +454,15 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
       if (response.status === 200) {
         const updatedCVE = response.data;
         console.log('Updated CVE after Snort Rule deletion:', updatedCVE);
-        setCve(updatedCVE);
-        if (onSave) {
-          onSave(updatedCVE);
-        }
+        updateCVEState(updatedCVE);
       }
     } catch (error) {
       console.error('Error deleting Snort Rule:', error);
+      // 에러 발생 시 원래 상태로 복구
+      setCve(prevCve => ({
+        ...prevCve,
+        snortRules: [...prevCve.snortRules]
+      }));
     }
   };
 
@@ -545,151 +567,209 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
   return (
     <>
       <Dialog open={open} onClose={handleClose} maxWidth="lg" fullWidth>
-        <DialogTitle>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="h6">
+        <DialogTitle sx={{ 
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+          bgcolor: 'primary.main',
+          color: 'white',
+          mb: 2
+        }}>
+          <Box sx={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center'
+          }}>
+            <Typography variant="h5" sx={{ 
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1
+            }}>
+              <SecurityIcon />
               {isEditMode ? 'Edit CVE: ' : 'CVE Details: '}{cve.cveId}
             </Typography>
             <Box>
               {!isEditMode ? (
-                <IconButton onClick={handleEditClick} sx={{ mr: 1 }}>
+                <IconButton 
+                  onClick={handleEditClick} 
+                  sx={{ 
+                    mr: 1,
+                    color: 'white',
+                    '&:hover': { bgcolor: 'primary.dark' }
+                  }}
+                >
                   <EditIcon />
                 </IconButton>
               ) : null}
-              <IconButton onClick={handleClose}>
+              <IconButton 
+                onClick={handleClose}
+                sx={{ 
+                  color: 'white',
+                  '&:hover': { bgcolor: 'primary.dark' }
+                }}
+              >
                 <CloseIcon />
               </IconButton>
             </Box>
           </Box>
         </DialogTitle>
+
         <DialogContent>
           <Box sx={{ width: '100%', mb: 3 }}>
             {isEditMode ? (
-              <Grid container spacing={2}>
+              <Grid container spacing={3}>
                 <Grid item xs={12} md={8}>
-                  <TextField
-                    fullWidth
-                    label="Title"
-                    value={cve.title}
-                    onChange={(e) => setCve(prev => ({ ...prev, title: e.target.value }))}
-                    variant="outlined"
-                    size="small"
-                    sx={{ mb: 2 }}
-                  />
-                  <TextField
-                    fullWidth
-                    label="Description"
-                    value={cve.description}
-                    onChange={(e) => setCve(prev => ({ ...prev, description: e.target.value }))}
-                    multiline
-                    rows={3}
-                    variant="outlined"
-                    size="small"
-                  />
+                  <Paper elevation={0} variant="outlined" sx={{ p: 3, mb: 3 }}>
+                    <Typography variant="h6" sx={{ mb: 2, color: 'primary.main', fontWeight: 600 }}>
+                      기본 정보
+                    </Typography>
+                    <TextField
+                      fullWidth
+                      label="Title"
+                      value={cve.title}
+                      onChange={(e) => setCve(prev => ({ ...prev, title: e.target.value }))}
+                      variant="outlined"
+                      size="medium"
+                      sx={{ mb: 3 }}
+                    />
+                    <TextField
+                      fullWidth
+                      label="Description"
+                      value={cve.description}
+                      onChange={(e) => setCve(prev => ({ ...prev, description: e.target.value }))}
+                      multiline
+                      rows={6}
+                      variant="outlined"
+                      size="medium"
+                    />
+                  </Paper>
                 </Grid>
                 <Grid item xs={12} md={4}>
-                  <FormControl fullWidth variant="outlined" size="small">
-                    <InputLabel>Status</InputLabel>
-                    <Select
-                      value={cve.status}
-                      onChange={(e) => setCve(prev => ({ ...prev, status: e.target.value }))}
-                      label="Status"
-                    >
-                      {STATUS_OPTIONS.map((option) => (
-                        <MenuItem key={option.value} value={option.value}>
-                          {option.label}
-                        </MenuItem>
-                      ))}
-                    </Select>
-                  </FormControl>
+                  <Paper elevation={0} variant="outlined" sx={{ p: 3 }}>
+                    <Typography variant="h6" sx={{ mb: 2, color: 'primary.main', fontWeight: 600 }}>
+                      상태
+                    </Typography>
+                    <FormControl fullWidth variant="outlined" size="medium">
+                      <InputLabel>Status</InputLabel>
+                      <Select
+                        value={cve.status}
+                        onChange={(e) => setCve(prev => ({ ...prev, status: e.target.value }))}
+                        label="Status"
+                      >
+                        {STATUS_OPTIONS.map((option) => (
+                          <MenuItem key={option.value} value={option.value}>
+                            {option.label}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Paper>
                 </Grid>
               </Grid>
             ) : (
-              <Box sx={{ 
-                display: 'flex', 
-                gap: 3,
-                p: 2,
-                borderRadius: 1,
-                bgcolor: 'background.paper',
-                boxShadow: 1
-              }}>
-                <Box sx={{ flex: 2 }}>
-                  <Box sx={{ mb: 2 }}>
-                    <Typography 
-                      variant="subtitle2" 
-                      color="text.secondary"
-                      sx={{ 
-                        mb: 0.5,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.5px',
-                        fontSize: '0.75rem'
-                      }}
-                    >
-                      Title
-                    </Typography>
-                    <Typography 
-                      variant="body1"
-                      sx={{ 
-                        fontWeight: 500,
-                        color: 'text.primary'
-                      }}
-                    >
-                      {cve.title}
-                    </Typography>
-                  </Box>
-                  <Box>
-                    <Typography 
-                      variant="subtitle2" 
-                      color="text.secondary"
-                      sx={{ 
-                        mb: 0.5,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.5px',
-                        fontSize: '0.75rem'
-                      }}
-                    >
-                      Description
-                    </Typography>
-                    <Typography 
-                      variant="body2"
-                      sx={{ 
-                        color: 'text.secondary',
-                        lineHeight: 1.6
-                      }}
-                    >
-                      {cve.description}
-                    </Typography>
-                  </Box>
-                </Box>
+              <Paper elevation={0} variant="outlined" sx={{ p: 3, mb: 3 }}>
                 <Box sx={{ 
-                  flex: 0.5,
                   display: 'flex',
                   flexDirection: 'column',
-                  alignItems: 'flex-start',
-                  borderLeft: '1px solid',
-                  borderColor: 'divider',
-                  pl: 3
+                  gap: 3
                 }}>
-                  <Typography 
-                    variant="subtitle2" 
-                    color="text.secondary"
-                    sx={{ 
-                      mb: 0.5,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.5px',
-                      fontSize: '0.75rem'
-                    }}
-                  >
-                    Status
-                  </Typography>
-                  <Chip
-                    label={cve.status}
-                    color={getStatusColor(cve.status)}
-                    size="small"
-                    sx={{ mr: 1 }}
-                  />
+                  <Box>
+                    <Typography variant="h6" sx={{ mb: 2, color: 'primary.main', fontWeight: 600 }}>
+                      기본 정보
+                    </Typography>
+                    <Grid container spacing={2}>
+                      <Grid item xs={12} md={8}>
+                        <Box sx={{ mb: 3 }}>
+                          <Typography 
+                            variant="subtitle2" 
+                            color="text.secondary"
+                            sx={{ 
+                              mb: 1,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.5px',
+                              fontSize: '0.875rem'
+                            }}
+                          >
+                            Title
+                          </Typography>
+                          <Typography 
+                            variant="h6"
+                            sx={{ 
+                              fontWeight: 500,
+                              color: 'text.primary',
+                              lineHeight: 1.4,
+                              p: 1.5,
+                              bgcolor: 'grey.50',
+                              borderRadius: 1
+                            }}
+                          >
+                            {cve.title}
+                          </Typography>
+                        </Box>
+                        <Box>
+                          <Typography 
+                            variant="subtitle2" 
+                            color="text.secondary"
+                            sx={{ 
+                              mb: 1,
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.5px',
+                              fontSize: '0.875rem'
+                            }}
+                          >
+                            Description
+                          </Typography>
+                          <Typography 
+                            variant="body1"
+                            sx={{ 
+                              color: 'text.secondary',
+                              lineHeight: 1.8,
+                              whiteSpace: 'pre-wrap',
+                              p: 1.5,
+                              bgcolor: 'grey.50',
+                              borderRadius: 1
+                            }}
+                          >
+                            {cve.description}
+                          </Typography>
+                        </Box>
+                      </Grid>
+                      <Grid item xs={12} md={4}>
+                        <Typography 
+                          variant="subtitle2" 
+                          color="text.secondary"
+                          sx={{ 
+                            mb: 1,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px',
+                            fontSize: '0.875rem'
+                          }}
+                        >
+                          Status
+                        </Typography>
+                        <Box sx={{ 
+                          p: 1.5, 
+                          bgcolor: 'grey.50',
+                          borderRadius: 1,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 1
+                        }}>
+                          <CircleIcon sx={{ 
+                            fontSize: 12, 
+                            color: cve.status === '대응완료' ? 'success.main' : 
+                                   cve.status === '분석완료' ? 'info.main' :
+                                   cve.status === '분석중' ? 'warning.main' : 'error.main'
+                          }} />
+                          <Typography variant="body1" sx={{ color: 'text.primary' }}>
+                            {cve.status}
+                          </Typography>
+                        </Box>
+                      </Grid>
+                    </Grid>
+                  </Box>
                 </Box>
-              </Box>
+              </Paper>
             )}
           </Box>
           <Box sx={{ width: '100%' }}>
@@ -747,7 +827,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
 
             <TabPanel value={tabValue} index={0}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                <Typography variant="subtitle1" color="text.secondary">
+                <Typography variant="h6" sx={{ fontSize: '1.4rem' }}>
                   {cve.pocs?.length || 0} POCs in total
                 </Typography>
                 <Button
@@ -820,7 +900,9 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
                           </Box>
                         </TableCell>
                         <TableCell sx={{ color: 'text.secondary' }}>
-                          {poc.description}
+                          <Typography variant="body1" sx={{ fontSize: '1.1rem' }}>
+                            {poc.description}
+                          </Typography>
                         </TableCell>
                         <TableCell align="right">
                           <IconButton 
@@ -841,7 +923,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
             {/* Snort Rules Tab */}
             <TabPanel value={tabValue} index={1}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                <Typography variant="subtitle1" color="text.secondary">
+                <Typography variant="h6" sx={{ fontSize: '1.4rem' }}>
                   {cve.snortRules?.length || 0} items in total
                 </Typography>
                 <Button
@@ -874,7 +956,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
                             component="span" 
                             sx={{ 
                               color: 'text.secondary',
-                              fontSize: '0.875rem'
+                              fontSize: '1.1rem'
                             }}
                           >
                             {rule.description}
@@ -937,7 +1019,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
             {/* References Tab */}
             <TabPanel value={tabValue} index={2}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                <Typography variant="subtitle1" color="text.secondary">
+                <Typography variant="h6" sx={{ fontSize: '1.4rem' }}>
                   {cve.references?.length || 0} references in total
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1 }}>
@@ -1010,12 +1092,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
                         </TableCell>
                         <TableCell align="right">
                           <IconButton 
-                            onClick={() => {
-                              console.log('Delete reference:', reference);
-                              const updatedReferences = [...cve.references];
-                              updatedReferences.splice(index, 1);
-                              handleDeleteReference(updatedReferences);
-                            }} 
+                            onClick={() => handleDeleteReference(index)} 
                             color="error"
                             size="small"
                           >

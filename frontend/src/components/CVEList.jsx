@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Box,
   Table,
   TableBody,
   TableCell,
@@ -8,27 +7,25 @@ import {
   TableHead,
   TableRow,
   Paper,
-  IconButton,
   TablePagination,
-  Typography,
+  IconButton,
   Button,
   Dialog,
   DialogTitle,
   DialogContent,
-  DialogContentText,
   DialogActions,
+  Typography,
+  Box,
   Chip
 } from '@mui/material';
 import {
-  Edit as EditIcon,
   Delete as DeleteIcon,
   Visibility as VisibilityIcon,
   ArrowUpward as ArrowUpwardIcon,
-  ArrowDownward as ArrowDownwardIcon,
+  ArrowDownward as ArrowDownwardIcon
 } from '@mui/icons-material';
 import { useTheme } from '@mui/material/styles';
 import axios from 'axios';
-import CVEEdit from './CVEEdit';
 import CVEDetail from './CVEDetail';
 import CreateCVE from './CreateCVE';
 
@@ -71,8 +68,8 @@ const CVEList = () => {
   const [page, setPage] = useState(0);
   const [orderBy, setOrderBy] = useState('publishedDate');
   const [order, setOrder] = useState('desc');
+  const [rowsPerPage, setRowsPerPage] = useState(10);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [selectedCVE, setSelectedCVE] = useState(null);
   const [cves, setCves] = useState(mockData);
@@ -95,14 +92,19 @@ const CVEList = () => {
     fetchCVEs();
   }, []);
 
+  const handleChangePage = (event, newPage) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
+
   const handleSort = (property) => {
     const isAsc = orderBy === property && order === 'asc';
     setOrder(isAsc ? 'desc' : 'asc');
     setOrderBy(property);
-  };
-
-  const handleChangePage = (event, newPage) => {
-    setPage(newPage);
   };
 
   const handleDetailOpen = (cve) => {
@@ -110,38 +112,8 @@ const CVEList = () => {
     setDetailOpen(true);
   };
 
-  const handleDetailClose = async () => {
-    if (selectedCVE) {
-      try {
-        const response = await axios.get(`http://localhost:8000/api/cves/${selectedCVE.cveId}`);
-        setCves(prevCves => 
-          prevCves.map(cve => 
-            cve.cveId === selectedCVE.cveId ? response.data : cve
-          )
-        );
-      } catch (error) {
-        console.error('Error refreshing CVE:', error);
-      }
-    }
+  const handleDetailClose = () => {
     setDetailOpen(false);
-    setSelectedCVE(null);
-  };
-
-  const handleDetailSave = (updatedCVE) => {
-    setCves(prevCves => 
-      prevCves.map(cve => 
-        cve.cveId === updatedCVE.cveId ? updatedCVE : cve
-      )
-    );
-  };
-
-  const handleEditOpen = (cve) => {
-    setSelectedCVE(cve);
-    setEditOpen(true);
-  };
-
-  const handleEditClose = () => {
-    setEditOpen(false);
     setSelectedCVE(null);
   };
 
@@ -159,8 +131,6 @@ const CVEList = () => {
   };
 
   const handleDeleteConfirm = async () => {
-    if (!cveToDelete) return;
-
     try {
       await axios.delete(`http://localhost:8000/api/cves/${cveToDelete.cveId}`);
       setCves(cves.filter(cve => cve.cveId !== cveToDelete.cveId));
@@ -186,157 +156,114 @@ const CVEList = () => {
     }
   };
 
-  const handleUpdateCVE = async (updatedCVE) => {
-    try {
-      const response = await axios.put(`http://localhost:8000/api/cves/${updatedCVE.cveId}`, updatedCVE);
-      setCves(cves.map(cve => cve.cveId === updatedCVE.cveId ? response.data : cve));
-      setEditOpen(false);
-    } catch (error) {
-      console.error('Error updating CVE:', error);
-    }
+  const handleCVEUpdate = (updatedCVE) => {
+    setCves(prevCves => 
+      prevCves.map(cve => 
+        cve.cveId === updatedCVE.cveId ? updatedCVE : cve
+      )
+    );
+    setSelectedCVE(updatedCVE);  // 현재 선택된 CVE도 업데이트
   };
 
   const sortedCVEs = [...cves].sort((a, b) => {
     const isAsc = order === 'asc';
     if (orderBy === 'publishedDate') {
-      return isAsc 
+      return isAsc
         ? new Date(a.publishedDate) - new Date(b.publishedDate)
         : new Date(b.publishedDate) - new Date(a.publishedDate);
     }
     return isAsc
-      ? a[orderBy].localeCompare(b[orderBy])
-      : b[orderBy].localeCompare(a[orderBy]);
+      ? (a[orderBy] < b[orderBy] ? -1 : 1)
+      : (b[orderBy] < a[orderBy] ? -1 : 1);
   });
 
   return (
-    <Box>
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          mb: 3
-        }}
-      >
-        <Typography variant="h5" component="h1">
-          CVE List
-        </Typography>
-        <Button
-          variant="contained"
-          color="primary"
-          onClick={handleCreateDialogOpen}
-          sx={{ textTransform: 'none' }}
-        >
-          CREATE NEW CVE
+    <Box sx={{ width: '100%' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+        <Button variant="contained" color="primary" onClick={handleCreateDialogOpen}>
+          Create CVE
         </Button>
       </Box>
-
       <TableContainer component={Paper}>
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell>
-                <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                  ID
-                  <IconButton size="small" onClick={() => handleSort('cveId')}>
-                    {orderBy === 'cveId' ? (
-                      order === 'asc' ? <ArrowUpwardIcon /> : <ArrowDownwardIcon />
-                    ) : null}
-                  </IconButton>
-                </Box>
+              <TableCell
+                onClick={() => handleSort('cveId')}
+                style={{ cursor: 'pointer' }}
+              >
+                CVE ID
+                {orderBy === 'cveId' && (
+                  order === 'asc' ? <ArrowUpwardIcon /> : <ArrowDownwardIcon />
+                )}
               </TableCell>
               <TableCell>Title</TableCell>
+              <TableCell>Description</TableCell>
               <TableCell>Status</TableCell>
-              <TableCell>
-                <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                  Published Date
-                  <IconButton size="small" onClick={() => handleSort('publishedDate')}>
-                    {orderBy === 'publishedDate' ? (
-                      order === 'asc' ? <ArrowUpwardIcon /> : <ArrowDownwardIcon />
-                    ) : null}
-                  </IconButton>
-                </Box>
-              </TableCell>
-              <TableCell align="right">Actions</TableCell>
+              <TableCell>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {sortedCVEs.map((cve) => (
-              <TableRow key={cve.cveId}>
-                <TableCell>{cve.cveId}</TableCell>
-                <TableCell>{cve.title}</TableCell>
-                <TableCell>
-                  <Chip 
-                    label={cve.status} 
-                    color={getStatusColor(cve.status)}
-                    size="small"
-                  />
-                </TableCell>
-                <TableCell>{new Date(cve.publishedDate).toLocaleDateString()}</TableCell>
-                <TableCell>
-                  <IconButton onClick={() => handleDetailOpen(cve)}>
-                    <VisibilityIcon />
-                  </IconButton>
-                  <IconButton onClick={() => handleEditOpen(cve)}>
-                    <EditIcon />
-                  </IconButton>
-                  <IconButton onClick={() => handleDeleteClick(cve)}>
-                    <DeleteIcon />
-                  </IconButton>
-                </TableCell>
-              </TableRow>
-            ))}
+            {sortedCVEs
+              .slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
+              .map((cve) => (
+                <TableRow key={cve.cveId}>
+                  <TableCell>{cve.cveId}</TableCell>
+                  <TableCell>{cve.title}</TableCell>
+                  <TableCell>{cve.description}</TableCell>
+                  <TableCell>
+                    <Chip
+                      label={cve.status}
+                      color={getStatusColor(cve.status)}
+                      size="small"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <IconButton onClick={() => handleDetailOpen(cve)}>
+                      <VisibilityIcon />
+                    </IconButton>
+                    <IconButton onClick={() => handleDeleteClick(cve)}>
+                      <DeleteIcon />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))}
           </TableBody>
         </Table>
+        <TablePagination
+          rowsPerPageOptions={[5, 10, 25]}
+          component="div"
+          count={cves.length}
+          rowsPerPage={rowsPerPage}
+          page={page}
+          onPageChange={handleChangePage}
+          onRowsPerPageChange={handleChangeRowsPerPage}
+        />
       </TableContainer>
-
-      <TablePagination
-        component="div"
-        count={cves.length}
-        page={page}
-        onPageChange={handleChangePage}
-        rowsPerPage={10}
-        rowsPerPageOptions={[10]}
-      />
 
       <CVEDetail
         open={detailOpen}
         onClose={handleDetailClose}
-        onSave={handleDetailSave}
         cve={selectedCVE}
-      />
-
-      <CVEEdit
-        open={editOpen}
-        onClose={handleEditClose}
-        cveId={selectedCVE?.cveId}
-        onSave={(updatedCVE) => {
-          setCves(prevCves => prevCves.map(cve => 
-            cve.cveId === updatedCVE.cveId ? updatedCVE : cve
-          ));
-          setEditOpen(false);
-        }}
+        onSave={handleCVEUpdate}
       />
 
       <Dialog open={createDialogOpen} onClose={handleCreateDialogClose} maxWidth="md" fullWidth>
         <CreateCVE 
           onClose={handleCreateDialogClose}
           onSuccess={(newCVE) => {
-            setCves(prevCves => [...prevCves, newCVE]);
+            setCves([...cves, newCVE]);
             handleCreateDialogClose();
           }}
         />
       </Dialog>
 
-      <Dialog
-        open={deleteDialogOpen}
-        onClose={handleDeleteCancel}
-      >
+      <Dialog open={deleteDialogOpen} onClose={handleDeleteCancel}>
         <DialogTitle>Delete CVE</DialogTitle>
         <DialogContent>
-          <DialogContentText>
-            Are you sure you want to delete this CVE? This action cannot be undone.
-          </DialogContentText>
+          <Typography>
+            Are you sure you want to delete {cveToDelete?.cveId}?
+          </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleDeleteCancel}>Cancel</Button>

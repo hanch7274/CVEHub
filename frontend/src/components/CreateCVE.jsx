@@ -226,73 +226,86 @@ const CreateCVE = ({ onClose, onSuccess }) => {
   };
 
   return (
-    <Dialog open={true} onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle>Create New CVE</DialogTitle>
+    <Dialog open={true} onClose={onClose} maxWidth="md" fullWidth PaperProps={{ sx: { minHeight: '80vh' } }}>
+      <DialogTitle>
+        <Typography variant="h5" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+          Create New CVE
+        </Typography>
+      </DialogTitle>
       <DialogContent>
         {error && (
-          <Alert severity="error" sx={{ mb: 2 }}>
+          <Alert severity="error" sx={{ mb: 3 }}>
             {error}
           </Alert>
         )}
 
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 2 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3, mt: 2 }}>
           {/* 기본 정보 */}
-          <Box sx={{ display: 'grid', gridTemplateColumns: '2fr 3fr 1fr', gap: 2 }}>
-            <TextField
-              required
-              label="CVE ID"
-              name="cveId"
-              value={formData.cveId}
-              onChange={handleInputChange}
-              helperText="Format: CVE-YYYY-NNNNN"
-              size="small"
-            />
-            
-            <TextField
-              label="Title"
-              name="title"
-              value={formData.title}
-              onChange={handleInputChange}
-              size="small"
-            />
-
-            <FormControl size="small" sx={{ minWidth: 100 }}>
-              <InputLabel>Status</InputLabel>
-              <Select
-                name="status"
-                value={formData.status}
+          <Paper elevation={0} variant="outlined" sx={{ p: 3 }}>
+            <Typography variant="h6" sx={{ mb: 2, color: 'text.primary' }}>기본 정보</Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '2fr 3fr 1fr', gap: 2 }}>
+              <TextField
+                required
+                label="CVE ID"
+                name="cveId"
+                value={formData.cveId}
                 onChange={handleInputChange}
-                sx={{ height: 40 }}
-              >
-                {STATUS_OPTIONS.map(option => (
-                  <MenuItem key={option.value} value={option.value}>
-                    {option.label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          </Box>
+                helperText="Format: CVE-YYYY-NNNNN"
+                size="medium"
+                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 1 } }}
+              />
+              
+              <TextField
+                label="Title"
+                name="title"
+                value={formData.title}
+                onChange={handleInputChange}
+                size="medium"
+                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 1 } }}
+              />
 
-          {/* Description */}
-          <TextField
-            label="Description"
-            name="description"
-            value={formData.description}
-            onChange={handleInputChange}
-            multiline
-            rows={3}
-            size="small"
-          />
+              <FormControl size="medium">
+                <InputLabel>Status</InputLabel>
+                <Select
+                  name="status"
+                  value={formData.status}
+                  onChange={handleInputChange}
+                  label="Status"
+                  sx={{ borderRadius: 1 }}
+                >
+                  {STATUS_OPTIONS.map(option => (
+                    <MenuItem key={option.value} value={option.value}>
+                      {option.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
+
+            <TextField
+              label="Description"
+              name="description"
+              value={formData.description}
+              onChange={handleInputChange}
+              multiline
+              rows={4}
+              size="medium"
+              fullWidth
+              sx={{ mt: 2, '& .MuiOutlinedInput-root': { borderRadius: 1 } }}
+            />
+          </Paper>
 
           {/* PoCs */}
-          <Box>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>Proof of Concepts (PoCs)</Typography>
-            <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
-              <FormControl size="small" sx={{ width: '25%', minWidth: 100 }}>
+          <Paper elevation={0} variant="outlined" sx={{ p: 3 }}>
+            <Typography variant="h6" sx={{ mb: 2, color: 'text.primary' }}>Proof of Concepts (PoCs)</Typography>
+            <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+              <FormControl size="medium" sx={{ width: '25%', minWidth: 100 }}>
+                <InputLabel>Source</InputLabel>
                 <Select
                   value={newPoc.source}
                   onChange={(e) => setNewPoc(prev => ({ ...prev, source: e.target.value }))}
-                  sx={{ height: 40 }}
+                  label="Source"
+                  sx={{ borderRadius: 1 }}
                 >
                   {Object.entries(POC_SOURCES).map(([key, value]) => (
                     <MenuItem key={key} value={value}>{value}</MenuItem>
@@ -300,36 +313,69 @@ const CreateCVE = ({ onClose, onSuccess }) => {
                 </Select>
               </FormControl>
               <TextField
-                size="small"
+                size="medium"
                 placeholder="URL"
                 value={newPoc.url}
                 onChange={(e) => setNewPoc(prev => ({ ...prev, url: e.target.value }))}
-                sx={{ flexGrow: 1 }}
+                sx={{ flexGrow: 1, '& .MuiOutlinedInput-root': { borderRadius: 1 } }}
               />
-              <IconButton onClick={handleAddPoc} size="small">
+              <IconButton 
+                onClick={handleAddPoc} 
+                sx={{ 
+                  bgcolor: 'primary.main', 
+                  color: 'white',
+                  '&:hover': { bgcolor: 'primary.dark' },
+                  borderRadius: 1
+                }}
+              >
                 <AddIcon />
               </IconButton>
             </Box>
-            {formData.pocs.map((poc, index) => (
-              <Box key={index} sx={{ display: 'flex', gap: 1, mb: 0.5, alignItems: 'center' }}>
-                <Typography variant="body2" sx={{ width: '30%' }}>{poc.source}</Typography>
-                <Typography variant="body2" sx={{ flexGrow: 1 }}>{poc.url}</Typography>
-                <IconButton onClick={() => handleRemovePoc(index)} size="small">
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
-              </Box>
-            ))}
-          </Box>
+            <Box sx={{ 
+              bgcolor: 'background.default', 
+              borderRadius: 1,
+              p: 2,
+              maxHeight: '200px',
+              overflowY: 'auto'
+            }}>
+              {formData.pocs.map((poc, index) => (
+                <Paper 
+                  key={index} 
+                  variant="outlined" 
+                  sx={{ 
+                    p: 2, 
+                    mb: 1, 
+                    display: 'flex', 
+                    gap: 1, 
+                    alignItems: 'center',
+                    '&:last-child': { mb: 0 }
+                  }}
+                >
+                  <Typography variant="body2" sx={{ width: '30%', fontWeight: 500 }}>{poc.source}</Typography>
+                  <Typography variant="body2" sx={{ flexGrow: 1 }}>{poc.url}</Typography>
+                  <IconButton 
+                    onClick={() => handleRemovePoc(index)} 
+                    size="small"
+                    sx={{ color: 'error.main' }}
+                  >
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </Paper>
+              ))}
+            </Box>
+          </Paper>
 
           {/* Snort Rules */}
-          <Box>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>Snort Rules</Typography>
-            <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
-              <FormControl size="small" sx={{ width: '25%', minWidth: 100 }}>
+          <Paper elevation={0} variant="outlined" sx={{ p: 3 }}>
+            <Typography variant="h6" sx={{ mb: 2, color: 'text.primary' }}>Snort Rules</Typography>
+            <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+              <FormControl size="medium" sx={{ width: '25%', minWidth: 100 }}>
+                <InputLabel>Type</InputLabel>
                 <Select
                   value={newSnortRule.type}
                   onChange={(e) => setNewSnortRule(prev => ({ ...prev, type: e.target.value }))}
-                  sx={{ height: 40 }}
+                  label="Type"
+                  sx={{ borderRadius: 1 }}
                 >
                   {Object.entries(SNORT_RULE_TYPES).map(([key, value]) => (
                     <MenuItem key={key} value={value}>{value}</MenuItem>
@@ -337,62 +383,136 @@ const CreateCVE = ({ onClose, onSuccess }) => {
                 </Select>
               </FormControl>
               <TextField
-                size="small"
+                size="medium"
                 placeholder="Rule"
                 value={newSnortRule.rule}
                 onChange={(e) => setNewSnortRule(prev => ({ ...prev, rule: e.target.value }))}
-                sx={{ flexGrow: 1 }}
+                sx={{ flexGrow: 1, '& .MuiOutlinedInput-root': { borderRadius: 1 } }}
               />
-              <IconButton onClick={handleAddSnortRule} size="small">
+              <IconButton 
+                onClick={handleAddSnortRule}
+                sx={{ 
+                  bgcolor: 'primary.main', 
+                  color: 'white',
+                  '&:hover': { bgcolor: 'primary.dark' },
+                  borderRadius: 1
+                }}
+              >
                 <AddIcon />
               </IconButton>
             </Box>
-            {formData.snortRules.map((rule, index) => (
-              <Box key={index} sx={{ display: 'flex', gap: 1, mb: 0.5, alignItems: 'center' }}>
-                <Typography variant="body2" sx={{ width: '30%' }}>{rule.type}</Typography>
-                <Typography variant="body2" sx={{ flexGrow: 1 }}>{rule.rule}</Typography>
-                <IconButton onClick={() => handleRemoveSnortRule(index)} size="small">
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
-              </Box>
-            ))}
-          </Box>
+            <Box sx={{ 
+              bgcolor: 'background.default', 
+              borderRadius: 1,
+              p: 2,
+              maxHeight: '200px',
+              overflowY: 'auto'
+            }}>
+              {formData.snortRules.map((rule, index) => (
+                <Paper 
+                  key={index} 
+                  variant="outlined" 
+                  sx={{ 
+                    p: 2, 
+                    mb: 1, 
+                    display: 'flex', 
+                    gap: 1, 
+                    alignItems: 'center',
+                    '&:last-child': { mb: 0 }
+                  }}
+                >
+                  <Typography variant="body2" sx={{ width: '30%', fontWeight: 500 }}>{rule.type}</Typography>
+                  <Typography variant="body2" sx={{ flexGrow: 1 }}>{rule.rule}</Typography>
+                  <IconButton 
+                    onClick={() => handleRemoveSnortRule(index)} 
+                    size="small"
+                    sx={{ color: 'error.main' }}
+                  >
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </Paper>
+              ))}
+            </Box>
+          </Paper>
 
           {/* References */}
-          <Box>
-            <Typography variant="subtitle2" sx={{ mb: 1 }}>References</Typography>
-            <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
+          <Paper elevation={0} variant="outlined" sx={{ p: 3 }}>
+            <Typography variant="h6" sx={{ mb: 2, color: 'text.primary' }}>References</Typography>
+            <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
               <TextField
-                size="small"
+                size="medium"
                 placeholder="Reference URL"
                 value={newReference}
                 onChange={(e) => setNewReference(e.target.value)}
-                sx={{ flexGrow: 1 }}
+                fullWidth
+                sx={{ '& .MuiOutlinedInput-root': { borderRadius: 1 } }}
               />
-              <IconButton onClick={handleAddReference} size="small">
+              <IconButton 
+                onClick={handleAddReference}
+                sx={{ 
+                  bgcolor: 'primary.main', 
+                  color: 'white',
+                  '&:hover': { bgcolor: 'primary.dark' },
+                  borderRadius: 1
+                }}
+              >
                 <AddIcon />
               </IconButton>
             </Box>
-            {formData.references.map((ref, index) => (
-              <Box key={index} sx={{ display: 'flex', gap: 1, mb: 0.5, alignItems: 'center' }}>
-                <Typography variant="body2" sx={{ flexGrow: 1 }}>{ref.url}</Typography>
-                <IconButton onClick={() => handleRemoveReference(index)} size="small">
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
-              </Box>
-            ))}
-          </Box>
+            <Box sx={{ 
+              bgcolor: 'background.default', 
+              borderRadius: 1,
+              p: 2,
+              maxHeight: '200px',
+              overflowY: 'auto'
+            }}>
+              {formData.references.map((ref, index) => (
+                <Paper 
+                  key={index} 
+                  variant="outlined" 
+                  sx={{ 
+                    p: 2, 
+                    mb: 1, 
+                    display: 'flex', 
+                    gap: 1, 
+                    alignItems: 'center',
+                    '&:last-child': { mb: 0 }
+                  }}
+                >
+                  <Typography variant="body2" sx={{ flexGrow: 1 }}>{ref.url}</Typography>
+                  <IconButton 
+                    onClick={() => handleRemoveReference(index)} 
+                    size="small"
+                    sx={{ color: 'error.main' }}
+                  >
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </Paper>
+              ))}
+            </Box>
+          </Paper>
         </Box>
       </DialogContent>
 
-      <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
+      <DialogActions sx={{ p: 3, gap: 1 }}>
+        <Button 
+          onClick={onClose}
+          variant="outlined"
+          sx={{ borderRadius: 1 }}
+        >
+          Cancel
+        </Button>
         <Button
           variant="contained"
           onClick={handleSubmit}
           disabled={!formData.cveId.trim()}
+          sx={{ 
+            borderRadius: 1,
+            bgcolor: 'success.main',
+            '&:hover': { bgcolor: 'success.dark' }
+          }}
         >
-          Create
+          Create CVE
         </Button>
       </DialogActions>
     </Dialog>
