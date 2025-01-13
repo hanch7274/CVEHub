@@ -29,7 +29,8 @@ import {
   TableHead,
   TableBody,
   TableRow,
-  TableCell
+  TableCell,
+  Tooltip
 } from '@mui/material';
 import {
   ContentCopy as ContentCopyIcon,
@@ -40,7 +41,11 @@ import {
   MoreVert as MoreVertIcon,
   KeyboardArrowUp as KeyboardArrowUpIcon,
   KeyboardArrowDown as KeyboardArrowDownIcon,
-  Launch as LaunchIcon
+  Launch as LaunchIcon,
+  BugReport as BugReportIcon,
+  Security as SecurityIcon,
+  Link as LinkIcon,
+  Close as CloseIcon
 } from '@mui/icons-material';
 import axios from 'axios';
 
@@ -51,12 +56,14 @@ const TabPanel = (props) => {
       role="tabpanel"
       hidden={value !== index}
       {...other}
+      style={{ 
+        backgroundColor: '#fff',
+        borderRadius: '0 0 8px 8px',
+        padding: '24px',
+        minHeight: '300px'
+      }}
     >
-      {value === index && (
-        <Box sx={{ p: 3 }}>
-          {children}
-        </Box>
-      )}
+      {value === index && <Box>{children}</Box>}
     </div>
   );
 };
@@ -108,88 +115,22 @@ const CommentActions = ({ comment, onEdit, onDelete }) => {
   );
 };
 
-const PocRow = ({ poc }) => {
-  const [open, setOpen] = useState(false);
-  
-  // URL 미리보기 텍스트 생성
-  const previewUrl = poc.url.length > 50 ? `${poc.url.substring(0, 50)}...` : poc.url;
-  const previewDescription = poc.description.length > 100 ? `${poc.description.substring(0, 100)}...` : poc.description;
-
-  return (
-    <>
-      <TableRow sx={{ '& > *': { borderBottom: 'unset' } }}>
-        <TableCell>
-          <IconButton
-            aria-label="expand row"
-            size="small"
-            onClick={() => setOpen(!open)}
-          >
-            {open ? <KeyboardArrowUpIcon /> : <KeyboardArrowDownIcon />}
-          </IconButton>
-        </TableCell>
-        <TableCell component="th" scope="row">
-          {poc.source}
-        </TableCell>
-        <TableCell>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            {previewUrl}
-            {poc.url && (
-              <IconButton size="small" href={poc.url} target="_blank">
-                <LaunchIcon fontSize="small" />
-              </IconButton>
-            )}
-          </Box>
-        </TableCell>
-        <TableCell>{previewDescription}</TableCell>
-      </TableRow>
-      <TableRow>
-        <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={4}>
-          <Collapse in={open} timeout="auto" unmountOnExit>
-            <Box sx={{ margin: 1 }}>
-              <Typography variant="h6" gutterBottom component="div">
-                상세 정보
-              </Typography>
-              <Table size="small">
-                <TableBody>
-                  <TableRow>
-                    <TableCell component="th" scope="row" sx={{ fontWeight: 'bold' }}>
-                      URL
-                    </TableCell>
-                    <TableCell>{poc.url}</TableCell>
-                  </TableRow>
-                  <TableRow>
-                    <TableCell component="th" scope="row" sx={{ fontWeight: 'bold' }}>
-                      설명
-                    </TableCell>
-                    <TableCell>{poc.description}</TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            </Box>
-          </Collapse>
-        </TableCell>
-      </TableRow>
-    </>
-  );
-};
-
 const CVEDetail = ({ open, onClose, cve: initialCve }) => {
   const [tabValue, setTabValue] = useState(0);
   const [newComment, setNewComment] = useState('');
   const [editingComment, setEditingComment] = useState(null);
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [expandedPoc, setExpandedPoc] = useState(null);
-  const [cve, setCve] = useState(initialCve); // cve와 setCve 정의
+  const [cve, setCve] = useState(initialCve); 
   const [pocDialogOpen, setPocDialogOpen] = useState(false);
   const [newPoc, setNewPoc] = useState({
-    source: 'ETC',  // 기본값 설정
+    source: 'ETC',  
     url: '',
     description: ''
   });
   const [snortRuleDialogOpen, setSnortRuleDialogOpen] = useState(false);
   const [newSnortRule, setNewSnortRule] = useState({
-    type: 'USER_DEFINED',  // 기본값을 사용자 정의로 설정
+    type: 'USER_DEFINED',  
     rule: '',
     description: ''
   });
@@ -198,15 +139,14 @@ const CVEDetail = ({ open, onClose, cve: initialCve }) => {
     source: '',
     url: ''
   });
+  const [showCopyTooltip, setShowCopyTooltip] = useState(false);
 
-  // POC Source 옵션 추가
   const POC_SOURCE_OPTIONS = [
     { value: 'ETC', label: 'ETC' },
     { value: 'Metasploit', label: 'Metasploit' },
     { value: 'Nuclei-Templates', label: 'Nuclei-Templates' }
   ];
 
-  // Snort Rule Type 옵션 추가
   const SNORT_RULE_TYPE_OPTIONS = [
     { value: 'IPS', label: 'IPS' },
     { value: 'ONE', label: 'ONE' },
@@ -320,6 +260,14 @@ const CVEDetail = ({ open, onClose, cve: initialCve }) => {
     setNewReference({ source: '', url: '' });
   };
 
+  const handleCopyUrl = (url) => {
+    navigator.clipboard.writeText(url);
+    setShowCopyTooltip(true);
+    setTimeout(() => {
+      setShowCopyTooltip(false);
+    }, 1500);
+  };
+
   const handleCopySnortRule = (rule) => {
     axios.post('/api/copy-rule', { rule })
       .then(() => {
@@ -368,8 +316,6 @@ const CVEDetail = ({ open, onClose, cve: initialCve }) => {
     }
   };
 
-
-
   const formatDate = (date) => {
     return new Date(date).toLocaleString();
   };
@@ -387,268 +333,319 @@ const CVEDetail = ({ open, onClose, cve: initialCve }) => {
     return { rules: relatedRules, refs: relatedRefs };
   };
 
+  const tabStyle = {
+    fontWeight: 'bold',
+    fontSize: '0.95rem',
+    minWidth: '120px',
+    textTransform: 'none',
+    '&.Mui-selected': {
+      backgroundColor: '#fff',
+      borderRadius: '8px 8px 0 0',
+    }
+  };
+
   if (!cve) {
     return null;
   }
 
   return (
     <>
-      <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+      <Dialog
+        open={open}
+        onClose={onClose}
+        maxWidth="lg"
+        fullWidth
+        PaperProps={{
+          sx: { 
+            borderRadius: '12px',
+            bgcolor: '#f5f5f5'  
+          }
+        }}
+      >
         <DialogTitle>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Box>
-              <Typography variant="h5" gutterBottom>
-                {cve.cveId}
-              </Typography>
-              <Typography variant="subtitle1" color="text.secondary">
-                {cve.title}
-              </Typography>
-            </Box>
-            <Box>
-              <Chip 
-                label={cve.status} 
-                color={
-                  cve.status === "미할당" ? "error" :
-                  cve.status === "분석중" ? "warning" :
-                  cve.status === "분석완료" ? "info" : "success"
-                }
-                sx={{ mr: 2 }}
-              />
-              <Button
-                variant="contained"
-                color="primary"
-                startIcon={<EditIcon />}
-              >
-                Edit
-              </Button>
-            </Box>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography variant="h6">CVE Details: {cve.cveId}</Typography>
+            <IconButton onClick={onClose}>
+              <CloseIcon />
+            </IconButton>
           </Box>
-          <Typography variant="body1" sx={{ mt: 2 }}>
-            {cve.description}
-          </Typography>
         </DialogTitle>
         <DialogContent>
-          <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-            <Tabs value={tabValue} onChange={handleTabChange}>
-              <Tab label={`PoCs (${(cve.pocs || []).length})`} />
-              <Tab label={`Snort Rules (${(cve.snortRules || []).length})`} />
-              <Tab label={`References (${(cve.references || []).length})`} />
-              <Tab label={`Comments (${comments.length})`} />
+          <Box sx={{ width: '100%' }}>
+            <Tabs 
+              value={tabValue} 
+              onChange={handleTabChange}
+              sx={{
+                bgcolor: 'transparent',
+                '& .MuiTabs-indicator': {
+                  height: '3px',
+                  borderRadius: '3px',
+                  background: 'linear-gradient(45deg, #2196f3 30%, #21CBF3 90%)',
+                },
+                '& .MuiTab-root': {
+                  transition: 'all 0.2s',
+                  '&:hover': {
+                    transform: 'translateY(-2px)',
+                    opacity: 0.8
+                  }
+                }
+              }}
+            >
+              <Tab 
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <BugReportIcon sx={{ fontSize: 20 }} />
+                    <span>POCs ({(cve.pocs || []).length})</span>
+                  </Box>
+                } 
+                sx={{ 
+                  ...tabStyle, 
+                  background: 'linear-gradient(45deg, #2196f3 30%, #21CBF3 90%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent'
+                }}
+              />
+              <Tab 
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <SecurityIcon sx={{ fontSize: 20 }} />
+                    <span>Snort Rules ({(cve.snortRules || []).length})</span>
+                  </Box>
+                }
+                sx={{ 
+                  ...tabStyle, 
+                  background: 'linear-gradient(45deg, #4caf50 30%, #8BC34A 90%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent'
+                }}
+              />
+              <Tab 
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <LinkIcon sx={{ fontSize: 20 }} />
+                    <span>References ({(cve.references || []).length})</span>
+                  </Box>
+                }
+                sx={{ 
+                  ...tabStyle, 
+                  background: 'linear-gradient(45deg, #ff9800 30%, #FFC107 90%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent'
+                }}
+              />
             </Tabs>
-          </Box>
 
-          {/* PoCs Tab */}
-          <TabPanel value={tabValue} index={0}>
-            <Box sx={{ mb: 2 }}>
-              <Button
-                variant="contained"
-                onClick={handleAddPoc}
-                startIcon={<AddIcon />}
-              >
-                Add POC
-              </Button>
-            </Box>
-            <TableContainer component={Paper}>
-              <Table aria-label="POCs table">
-                <TableHead>
-                  <TableRow>
-                    <TableCell style={{ width: '50px' }} />
-                    <TableCell style={{ width: '150px' }}>Source</TableCell>
-                    <TableCell style={{ width: '300px' }}>URL</TableCell>
-                    <TableCell>Description</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {cve.pocs && cve.pocs.length > 0 ? (
-                    cve.pocs.map((poc, index) => (
-                      <PocRow key={index} poc={poc} />
-                    ))
-                  ) : (
-                    <TableRow>
-                      <TableCell colSpan={4} align="center">
-                        No POCs available
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          </TabPanel>
-
-          {/* Snort Rules Tab */}
-          <TabPanel value={tabValue} index={1}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-              <Typography variant="subtitle1" color="text.secondary">
-                {cve.snortRules?.length || 0} rules in total
-              </Typography>
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                color="primary"
-                onClick={handleAddSnortRule}
-              >
-                Add Rule
-              </Button>
-            </Box>
-            <Grid container spacing={2}>
-              {(cve.snortRules || []).map((rule, index) => (
-                <Grid item xs={12} key={index}>
-                  <Paper sx={{ p: 2 }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                      <Box>
-                        <Chip
-                          label={rule.type}
-                          color={rule.type === 'custom' ? 'secondary' : 'primary'}
-                          size="small"
-                          sx={{ mr: 1 }}
-                        />
-                        <Typography variant="caption" color="text.secondary">
-                          Added by {rule.addedBy} on {formatDate(rule.dateAdded)}
-                        </Typography>
-                      </Box>
-                      <Box>
-                        <IconButton
-                          size="small"
-                          onClick={() => handleCopySnortRule(rule.rule)}
-                          sx={{ mr: 1 }}
-                        >
-                          <ContentCopyIcon />
-                        </IconButton>
-                        <IconButton size="small" sx={{ mr: 1 }}>
-                          <EditIcon />
-                        </IconButton>
-                        <IconButton size="small" color="error">
-                          <DeleteIcon />
-                        </IconButton>
-                      </Box>
-                    </Box>
-                    {rule.description && (
-                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                        {rule.description}
-                      </Typography>
-                    )}
-                    <Typography
-                      variant="body2"
-                      sx={{
-                        fontFamily: 'monospace',
-                        backgroundColor: 'grey.100',
-                        p: 1,
-                        borderRadius: 1,
-                        overflowX: 'auto'
-                      }}
-                    >
-                      {rule.rule}
-                    </Typography>
-                  </Paper>
-                </Grid>
-              ))}
-            </Grid>
-          </TabPanel>
-
-          {/* References Tab */}
-          <TabPanel value={tabValue} index={2}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-              <Typography variant="subtitle1" color="text.secondary">
-                {cve.references?.length || 0} references in total
-              </Typography>
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                color="primary"
-                onClick={handleAddReference}
-              >
-                Add Reference
-              </Button>
-            </Box>
-            <Grid container spacing={2}>
-              {(cve.references || []).map((ref, index) => (
-                <Grid item xs={12} md={6} key={index}>
-                  <Paper sx={{ p: 2, height: '100%' }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                      <Typography variant="caption" color="text.secondary">
-                        Added by {ref.addedBy} on {formatDate(ref.dateAdded)}
-                      </Typography>
-                      <Box>
-                        <IconButton size="small" sx={{ mr: 1 }}>
-                          <EditIcon />
-                        </IconButton>
-                        <IconButton size="small" color="error">
-                          <DeleteIcon />
-                        </IconButton>
-                      </Box>
-                    </Box>
-                    <Typography variant="body2" sx={{ mb: 1 }}>
-                      {ref.description}
-                    </Typography>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      href={ref.url}
-                      target="_blank"
-                      startIcon={<LaunchIcon />}
-                    >
-                      Visit Reference
-                    </Button>
-                  </Paper>
-                </Grid>
-              ))}
-            </Grid>
-          </TabPanel>
-
-          {/* Comments Tab */}
-          <TabPanel value={tabValue} index={3}>
-            <Box mt={2}>
-              <Typography variant="h6">Comments</Typography>
-              <List>
-                {comments.map((comment, index) => (
-                  <ListItem key={index}>
-                    <ListItemText primary={comment.content} />
-                    <CommentActions
-                      comment={comment}
-                      onEdit={() => setEditingComment(index)}
-                      onDelete={() => handleCommentDelete(index)}
-                    />
-                  </ListItem>
-                ))}
-              </List>
-              {editingComment !== null && (
-                <Box mt={2}>
-                  <TextField
-                    fullWidth
-                    value={comments[editingComment]?.content || ''}
-                    onChange={(e) => {
-                      const newComments = [...comments];
-                      newComments[editingComment] = { ...newComments[editingComment], content: e.target.value };
-                      setComments(newComments);
-                    }}
-                  />
-                  <Button onClick={() => handleCommentEdit(editingComment, comments[editingComment].content)}>
-                    Save
-                  </Button>
-                  <Button onClick={() => setEditingComment(null)}>
-                    Cancel
-                  </Button>
-                </Box>
-              )}
-              <Box mt={2}>
-                <TextField
-                  fullWidth
-                  value={newComment}
-                  onChange={(e) => setNewComment(e.target.value)}
-                  placeholder="Add a comment..."
-                />
-                <Button onClick={handleCommentSubmit}>
-                  Add Comment
+            <TabPanel value={tabValue} index={0}>
+              <Box sx={{ mb: 2 }}>
+                <Button
+                  variant="contained"
+                  onClick={handleAddPoc}
+                  startIcon={<AddIcon />}
+                  sx={{
+                    bgcolor: '#2196f3',
+                    '&:hover': {
+                      bgcolor: '#1976d2'
+                    }
+                  }}
+                >
+                  Add POC
                 </Button>
               </Box>
-            </Box>
-          </TabPanel>
+              <TableContainer component={Paper} sx={{ boxShadow: 2, borderRadius: 2 }}>
+                <Table aria-label="POCs table">
+                  <TableHead>
+                    <TableRow sx={{ bgcolor: '#f5f5f5' }}>
+                      <TableCell style={{ width: '150px', fontWeight: 'bold' }}>Source</TableCell>
+                      <TableCell style={{ width: '300px', fontWeight: 'bold' }}>URL</TableCell>
+                      <TableCell style={{ fontWeight: 'bold' }}>Description</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {cve.pocs && cve.pocs.length > 0 ? (
+                      cve.pocs.map((poc, index) => (
+                        <TableRow key={index} hover>
+                          <TableCell>{poc.source}</TableCell>
+                          <TableCell>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                              <Link
+                                href={poc.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                sx={{
+                                  color: '#2196f3',
+                                  textDecoration: 'none',
+                                  '&:hover': {
+                                    textDecoration: 'underline'
+                                  }
+                                }}
+                              >
+                                {poc.url}
+                              </Link>
+                              <Tooltip 
+                                title={showCopyTooltip ? "Copied!" : "Copy URL"} 
+                                placement="top"
+                              >
+                                <IconButton
+                                  size="small"
+                                  onClick={() => handleCopyUrl(poc.url)}
+                                  sx={{ 
+                                    color: '#2196f3',
+                                    '&:hover': {
+                                      backgroundColor: 'rgba(33, 150, 243, 0.1)'
+                                    }
+                                  }}
+                                >
+                                  <ContentCopyIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            </Box>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2">
+                              {poc.description}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={3} align="center">
+                          <Typography color="textSecondary">No POCs available</Typography>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </TabPanel>
+
+            {/* Snort Rules Tab */}
+            <TabPanel value={tabValue} index={1}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                <Typography variant="subtitle1" color="text.secondary">
+                  {cve.snortRules?.length || 0} rules in total
+                </Typography>
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  color="primary"
+                  onClick={handleAddSnortRule}
+                >
+                  Add Rule
+                </Button>
+              </Box>
+              <Grid container spacing={2}>
+                {(cve.snortRules || []).map((rule, index) => (
+                  <Grid item xs={12} key={index}>
+                    <Paper sx={{ p: 2 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                        <Box>
+                          <Chip
+                            label={rule.type}
+                            color={rule.type === 'custom' ? 'secondary' : 'primary'}
+                            size="small"
+                            sx={{ mr: 1 }}
+                          />
+                          <Typography variant="caption" color="text.secondary">
+                            Added by {rule.addedBy} on {formatDate(rule.dateAdded)}
+                          </Typography>
+                        </Box>
+                        <Box>
+                          <IconButton
+                            size="small"
+                            onClick={() => handleCopySnortRule(rule.rule)}
+                            sx={{ mr: 1 }}
+                          >
+                            <ContentCopyIcon />
+                          </IconButton>
+                          <IconButton size="small" sx={{ mr: 1 }}>
+                            <EditIcon />
+                          </IconButton>
+                          <IconButton size="small" color="error">
+                            <DeleteIcon />
+                          </IconButton>
+                        </Box>
+                      </Box>
+                      {rule.description && (
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                          {rule.description}
+                        </Typography>
+                      )}
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontFamily: 'monospace',
+                          backgroundColor: 'grey.100',
+                          p: 1,
+                          borderRadius: 1,
+                          overflowX: 'auto'
+                        }}
+                      >
+                        {rule.rule}
+                      </Typography>
+                    </Paper>
+                  </Grid>
+                ))}
+              </Grid>
+            </TabPanel>
+
+            {/* References Tab */}
+            <TabPanel value={tabValue} index={2}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                <Typography variant="subtitle1" color="text.secondary">
+                  {cve.references?.length || 0} references in total
+                </Typography>
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  color="primary"
+                  onClick={handleAddReference}
+                >
+                  Add Reference
+                </Button>
+              </Box>
+              <Grid container spacing={2}>
+                {(cve.references || []).map((ref, index) => (
+                  <Grid item xs={12} md={6} key={index}>
+                    <Paper sx={{ p: 2, height: '100%' }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          Added by {ref.addedBy} on {formatDate(ref.dateAdded)}
+                        </Typography>
+                        <Box>
+                          <IconButton size="small" sx={{ mr: 1 }}>
+                            <EditIcon />
+                          </IconButton>
+                          <IconButton size="small" color="error">
+                            <DeleteIcon />
+                          </IconButton>
+                        </Box>
+                      </Box>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        {ref.description}
+                      </Typography>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        href={ref.url}
+                        target="_blank"
+                        startIcon={<LaunchIcon />}
+                      >
+                        Visit Reference
+                      </Button>
+                    </Paper>
+                  </Grid>
+                ))}
+              </Grid>
+            </TabPanel>
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={onClose}>Close</Button>
         </DialogActions>
       </Dialog>
 
+      {/* Add POC Dialog */}
       <Dialog open={pocDialogOpen} onClose={handlePocDialogClose}>
         <DialogTitle>Add New PoC</DialogTitle>
         <DialogContent>
@@ -692,6 +689,8 @@ const CVEDetail = ({ open, onClose, cve: initialCve }) => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Add Snort Rule Dialog */}
       <Dialog open={snortRuleDialogOpen} onClose={handleSnortRuleDialogClose}>
         <DialogTitle>Add New Snort Rule</DialogTitle>
         <DialogContent>
@@ -737,6 +736,8 @@ const CVEDetail = ({ open, onClose, cve: initialCve }) => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Add Reference Dialog */}
       <Dialog open={referenceDialogOpen} onClose={handleReferenceDialogClose}>
         <DialogTitle>Add New Reference</DialogTitle>
         <DialogContent>
