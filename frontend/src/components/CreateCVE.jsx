@@ -14,11 +14,7 @@ import {
   MenuItem,
   FormControl,
   InputLabel,
-  List,
-  ListItem,
-  ListItemText,
-  Paper,
-  Link
+  Paper
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -155,12 +151,11 @@ const CreateCVE = ({ onClose, onSuccess }) => {
           type: rule.type,
           description: rule.description || ''
         })),
+        affectedProducts: [],
         references: formData.references.map(ref => ({
           url: ref.url,
           dateAdded: ref.dateAdded
-        })),
-        affectedProducts: [],
-        references: []
+        }))
       };
 
       console.log('Sending request with data:', requestData);
@@ -226,11 +221,15 @@ const CreateCVE = ({ onClose, onSuccess }) => {
   };
 
   return (
-    <Dialog open={true} onClose={onClose} maxWidth="md" fullWidth PaperProps={{ sx: { minHeight: '80vh' } }}>
+    <Dialog 
+      open={onClose !== undefined} 
+      onClose={onClose} 
+      maxWidth="md" 
+      fullWidth 
+      PaperProps={{ sx: { minHeight: '80vh' } }}
+    >
       <DialogTitle>
-        <Typography variant="h5" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
-          Create New CVE
-        </Typography>
+        Create New CVE
       </DialogTitle>
       <DialogContent>
         {error && (

@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import Box from '@mui/material/Box';
@@ -7,6 +7,8 @@ import Toolbar from '@mui/material/Toolbar';
 import Sidebar from './components/Sidebar';
 import CVEList from './components/CVEList';
 import Header from './components/Header';
+import Login from './components/Login';
+import { AuthProvider } from './contexts/AuthContext';
 
 const theme = createTheme({
   palette: {
@@ -56,16 +58,22 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Router>
-        <Box sx={{ display: 'flex', bgcolor: 'background.default', minHeight: '100vh' }}>
-          <Header />
-          <Sidebar />
-          <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
-            <Toolbar /> {/* 상단 바 아래 여백 */}
-            <CVEList />
+      <AuthProvider>
+        <Router>
+          <Box sx={{ display: 'flex', bgcolor: 'background.default', minHeight: '100vh' }}>
+            <Header />
+            <Sidebar />
+            <Box component="main" sx={{ flexGrow: 1, p: 3 }}>
+              <Toolbar /> {/* 상단 바 아래 여백 */}
+              <Routes>
+                <Route path="/login" element={<Login />} />
+                <Route path="/cves" element={<CVEList />} />
+                <Route path="/" element={<Navigate to="/cves" replace />} />
+              </Routes>
+            </Box>
           </Box>
-        </Box>
-      </Router>
+        </Router>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

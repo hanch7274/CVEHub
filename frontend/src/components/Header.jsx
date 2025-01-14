@@ -4,21 +4,25 @@ import {
   Toolbar,
   IconButton,
   Typography,
-  Button,
   Avatar,
   Menu,
   MenuItem,
   Box,
-  InputBase,
-  alpha,
+  Tooltip,
+  Divider,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import SearchIcon from '@mui/icons-material/Search';
 import NotificationsIcon from '@mui/icons-material/Notifications';
+import LogoutIcon from '@mui/icons-material/Logout';
+import SettingsIcon from '@mui/icons-material/Settings';
+import PersonIcon from '@mui/icons-material/Person';
 import Badge from '@mui/material/Badge';
+import { useAuth } from '../contexts/AuthContext';
+import { getAnimalEmoji } from '../utils/avatarUtils';
 
 const Header = () => {
   const theme = useTheme();
+  const { user, logout } = useAuth();
   const [anchorEl, setAnchorEl] = useState(null);
 
   const handleMenu = (event) => {
@@ -28,6 +32,13 @@ const Header = () => {
   const handleClose = () => {
     setAnchorEl(null);
   };
+
+  const handleLogout = () => {
+    handleClose();
+    logout();
+  };
+
+  const animalEmoji = user ? getAnimalEmoji(user.username) : '👤';
 
   return (
     <AppBar 
@@ -39,48 +50,34 @@ const Header = () => {
       }}
     >
       <Toolbar>
-        {/* 검색 바 */}
-        <Box
+        <Typography
+          variant="h6"
           sx={{
-            position: 'relative',
-            borderRadius: 1,
-            backgroundColor: alpha(theme.palette.common.black, 0.04),
-            '&:hover': {
-              backgroundColor: alpha(theme.palette.common.black, 0.08),
-            },
-            marginRight: 2,
-            marginLeft: 0,
-            width: '100%',
-            maxWidth: '600px',
+            color: theme.palette.primary.main,
+            fontWeight: 600,
+            letterSpacing: '0.5px'
           }}
         >
-          <Box sx={{ position: 'absolute', p: 2, height: '100%', display: 'flex', alignItems: 'center' }}>
-            <SearchIcon sx={{ color: theme.palette.text.secondary }} />
-          </Box>
-          <InputBase
-            placeholder="Search CVEs..."
-            sx={{
-              color: theme.palette.text.primary,
-              pl: 6,
-              pr: 1,
-              py: 1,
-              width: '100%',
-            }}
-          />
-        </Box>
+          CVEHub
+        </Typography>
 
         <Box sx={{ flexGrow: 1 }} />
 
         {/* 알림 아이콘 */}
-        <IconButton 
-          size="large" 
-          sx={{ mr: 2 }}
-          color="primary"
-        >
-          <Badge badgeContent={4} color="error">
-            <NotificationsIcon />
-          </Badge>
-        </IconButton>
+        <Tooltip title="알림">
+          <IconButton 
+            size="small" 
+            sx={{ 
+              mr: 2,
+              bgcolor: 'action.hover',
+              '&:hover': { bgcolor: 'action.selected' }
+            }}
+          >
+            <Badge badgeContent={4} color="error">
+              <NotificationsIcon fontSize="small" />
+            </Badge>
+          </IconButton>
+        </Tooltip>
 
         {/* 사용자 메뉴 */}
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -88,39 +85,70 @@ const Header = () => {
             variant="body1" 
             sx={{ 
               mr: 1,
-              color: theme.palette.text.primary 
+              color: theme.palette.text.primary,
+              fontWeight: 500
             }}
           >
-            John Doe
+            {user?.username || 'Guest'}
           </Typography>
-          <IconButton
-            onClick={handleMenu}
-            size="small"
-            sx={{ ml: 1 }}
-          >
-            <Avatar 
+          <Tooltip title="계정 메뉴">
+            <IconButton
+              onClick={handleMenu}
+              size="small"
               sx={{ 
-                width: 32, 
-                height: 32,
-                backgroundColor: theme.palette.primary.main 
+                ml: 1,
+                bgcolor: 'action.hover',
+                '&:hover': { bgcolor: 'action.selected' }
               }}
             >
-              JD
-            </Avatar>
-          </IconButton>
-          <Menu
-            anchorEl={anchorEl}
-            open={Boolean(anchorEl)}
-            onClose={handleClose}
-            onClick={handleClose}
-            transformOrigin={{ horizontal: 'right', vertical: 'top' }}
-            anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
-          >
-            <MenuItem>Profile</MenuItem>
-            <MenuItem>Settings</MenuItem>
-            <MenuItem>Logout</MenuItem>
-          </Menu>
+              <Avatar 
+                sx={{ 
+                  width: 32, 
+                  height: 32,
+                  bgcolor: 'primary.light',
+                  fontSize: '1.2rem'
+                }}
+              >
+                {animalEmoji}
+              </Avatar>
+            </IconButton>
+          </Tooltip>
         </Box>
+
+        <Menu
+          anchorEl={anchorEl}
+          open={Boolean(anchorEl)}
+          onClose={handleClose}
+          onClick={handleClose}
+          PaperProps={{
+            sx: {
+              mt: 1.5,
+              minWidth: 200,
+              boxShadow: '0px 2px 8px rgba(0,0,0,0.1)',
+              '& .MuiMenuItem-root': {
+                px: 2,
+                py: 1.5,
+                gap: 1.5,
+              },
+            },
+          }}
+          transformOrigin={{ horizontal: 'right', vertical: 'top' }}
+          anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
+        >
+          <MenuItem onClick={handleClose}>
+            <PersonIcon fontSize="small" />
+            프로필
+          </MenuItem>
+          <MenuItem onClick={handleClose}>
+            <SettingsIcon fontSize="small" />
+            설정
+          </MenuItem>
+          <Divider sx={{ my: 1 }} />
+          <MenuItem onClick={handleLogout} sx={{ color: 'error.main' }}>
+            <LogoutIcon fontSize="small" />
+            로그아웃
+          </MenuItem>
+        </Menu>
       </Toolbar>
     </AppBar>
   );

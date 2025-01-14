@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
+import api from '../api/axios';
 import {
   Dialog,
   DialogTitle,
@@ -50,11 +50,10 @@ import {
   Security as SecurityIcon,
   Link as LinkIcon,
   Close as CloseIcon,
-  Save as SaveIcon,
-  Cancel as CancelIcon,
-  OpenInNew as OpenInNewIcon,
+  Comment as CommentIcon,
   Circle as CircleIcon
 } from '@mui/icons-material';
+import Comments from './CVEDetail/Comments';
 
 const TabPanel = (props) => {
   const { children, value, index, ...other } = props;
@@ -201,7 +200,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
   const loadComments = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`http://localhost:8000/api/cves/${cve.cveId}/comments`);
+      const response = await api.get(`/api/cves/${cve.cveId}/comments`);
       setComments(response.data || []);
     } catch (error) {
       console.error('Failed to load comments:', error);
@@ -234,7 +233,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
 
   const handlePocSubmit = async () => {
     try {
-      const response = await axios.patch(`http://localhost:8000/api/cves/${cve.cveId}`, {
+      const response = await api.patch(`/api/cves/${cve.cveId}`, {
         pocs: [...(cve.pocs || []), newPoc]
       });
       
@@ -285,7 +284,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
         updatedSnortRules.push(snortRuleData);
       }
 
-      const response = await axios.patch(`http://localhost:8000/api/cves/${cve.cveId}`, {
+      const response = await api.patch(`/api/cves/${cve.cveId}`, {
         snortRules: updatedSnortRules
       });
       
@@ -310,20 +309,19 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
 
   const handleAddReference = async () => {
     try {
-      // 새로운 reference 객체에 임시 ID 생성
       const newReference = {
-        _id: new Date().getTime().toString(),  // 임시 ID로 타임스탬프 사용
+        _id: new Date().getTime().toString(),
         url: newReferenceUrl
       };
-      console.log('Adding new reference:', newReference);  // 디버깅용 로그
+      console.log('Adding new reference:', newReference);
 
-      const response = await axios.patch(`http://localhost:8000/api/cves/${cve.cveId}`, {
+      const response = await api.patch(`/api/cves/${cve.cveId}`, {
         references: [...(cve.references || []), newReference]
       });
       
       if (response.status === 200) {
         const updatedCVE = response.data;
-        console.log('Updated CVE references:', updatedCVE.references);  // 디버깅용 로그
+        console.log('Updated CVE references:', updatedCVE.references);
         setCve(updatedCVE);
         if (onSave) {
           onSave(updatedCVE);
@@ -337,25 +335,23 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
 
   const handleDeleteReference = async (index) => {
     try {
-      // 즉시 UI 업데이트를 위한 낙관적 업데이트
       const updatedReferences = cve.references.filter((_, i) => i !== index);
       setCve(prevCve => ({
         ...prevCve,
         references: updatedReferences
       }));
 
-      const response = await axios.patch(`http://localhost:8000/api/cves/${cve.cveId}`, {
+      const response = await api.patch(`/api/cves/${cve.cveId}`, {
         references: updatedReferences
       });
       
       if (response.status === 200) {
         const updatedCVE = response.data;
-        console.log('Updated CVE references:', updatedCVE.references);  // 디버깅용 로그
+        console.log('Updated CVE references:', updatedCVE.references);
         updateCVEState(updatedCVE);
       }
     } catch (error) {
       console.error('Error deleting reference:', error);
-      // 에러 발생 시 원래 상태로 복구
       setCve(prevCve => ({
         ...prevCve,
         references: [...prevCve.references]
@@ -375,7 +371,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
     if (!newComment.trim()) return;
 
     try {
-      const response = await axios.post(`http://localhost:8000/api/cves/${cve.cveId}/comments`, {
+      const response = await api.post(`/api/cves/${cve.cveId}/comments`, {
         content: newComment.trim()
       });
       setComments([...comments, response.data]);
@@ -387,7 +383,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
 
   const handleCommentEdit = async (index, content) => {
     try {
-      const response = await axios.put(`http://localhost:8000/api/cves/${cve.cveId}/comments/${index}`, {
+      const response = await api.put(`/api/cves/${cve.cveId}/comments/${index}`, {
         content: content.trim()
       });
       const newComments = [...comments];
@@ -401,7 +397,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
 
   const handleCommentDelete = async (index) => {
     try {
-      await axios.delete(`http://localhost:8000/api/cves/${cve.cveId}/comments/${index}`);
+      await api.delete(`/api/cves/${cve.cveId}/comments/${index}`);
       setComments(comments.filter((_, i) => i !== index));
     } catch (error) {
       console.error('Failed to delete comment:', error);
@@ -410,27 +406,22 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
 
   const handleDeletePoC = async (index) => {
     try {
-      console.log('Deleting PoC at index:', index);
-      
-      // 즉시 UI 업데이트를 위한 낙관적 업데이트
       const updatedPoCs = cve.pocs.filter((_, i) => i !== index);
       setCve(prevCve => ({
         ...prevCve,
         pocs: updatedPoCs
       }));
       
-      const response = await axios.patch(`http://localhost:8000/api/cves/${cve.cveId}`, {
+      const response = await api.patch(`/api/cves/${cve.cveId}`, {
         pocs: updatedPoCs
       });
       
       if (response.status === 200) {
-        // 서버 응답으로 상태 동기화
         const updatedCVE = response.data;
         updateCVEState(updatedCVE);
       }
     } catch (error) {
       console.error('Error deleting PoC:', error);
-      // 에러 발생 시 원래 상태로 복구
       setCve(prevCve => ({
         ...prevCve,
         pocs: [...prevCve.pocs]
@@ -440,14 +431,13 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
 
   const handleDeleteSnortRule = async (index) => {
     try {
-      // 즉시 UI 업데이트를 위한 낙관적 업데이트
       const updatedSnortRules = cve.snortRules.filter((_, i) => i !== index);
       setCve(prevCve => ({
         ...prevCve,
         snortRules: updatedSnortRules
       }));
 
-      const response = await axios.patch(`http://localhost:8000/api/cves/${cve.cveId}`, {
+      const response = await api.patch(`/api/cves/${cve.cveId}`, {
         snortRules: updatedSnortRules
       });
       
@@ -458,7 +448,6 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
       }
     } catch (error) {
       console.error('Error deleting Snort Rule:', error);
-      // 에러 발생 시 원래 상태로 복구
       setCve(prevCve => ({
         ...prevCve,
         snortRules: [...prevCve.snortRules]
@@ -514,8 +503,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
         snortRules: cve.snortRules
       };
       
-      // API 호출
-      const response = await axios.put(`http://localhost:8000/api/cves/${cve.cveId}`, updatedData);
+      const response = await api.put(`/api/cves/${cve.cveId}`, updatedData);
       
       setCve(response.data);
       setIsEditMode(false);
@@ -524,7 +512,6 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
       }
     } catch (error) {
       console.error('Failed to update CVE:', error);
-      // 에러 처리
     }
   };
 
@@ -535,7 +522,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
 
   const handleSavePocEdit = async () => {
     try {
-      const response = await axios.put(`http://localhost:8000/api/cves/${cve.cveId}/pocs/${editingPocId}`, editingPocData);
+      const response = await api.put(`/api/cves/${cve.cveId}/pocs/${editingPocId}`, editingPocData);
       if (response.status === 200) {
         setCve(response.data);
         setEditingPocId(null);
@@ -556,7 +543,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
       onClose();
     }
     if (onSave) {
-      onSave(cve);  // 현재 상태를 부모 컴포넌트에 전달
+      onSave(cve);  
     }
   };
 
@@ -819,6 +806,20 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
                 sx={{ 
                   ...tabStyle,
                   background: 'linear-gradient(45deg, #ff9800 30%, #ffc107 90%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent'
+                }}
+              />
+              <Tab 
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <CommentIcon sx={{ fontSize: 20 }} />
+                    <span>Comments</span>
+                  </Box>
+                }
+                sx={{ 
+                  ...tabStyle,
+                  background: 'linear-gradient(45deg, #9C27B0 30%, #CE93D8 90%)',
                   WebkitBackgroundClip: 'text',
                   WebkitTextFillColor: 'transparent'
                 }}
@@ -1104,6 +1105,10 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
                   </TableBody>
                 </Table>
               </TableContainer>
+            </TabPanel>
+
+            <TabPanel value={tabValue} index={3}>
+              <Comments cveId={cve.cveId} />
             </TabPanel>
           </Box>
         </DialogContent>

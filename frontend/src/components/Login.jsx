@@ -1,36 +1,43 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link, useLocation } from 'react-router-dom';
-import axios from 'axios';
+import { useNavigate, Link } from 'react-router-dom';
 import {
   Container,
-  Paper,
+  Box,
+  Typography,
   TextField,
   Button,
-  Typography,
-  Box,
+  CircularProgress,
   Alert,
-  CircularProgress
+  FormControlLabel,
+  Checkbox,
+  Paper,
+  InputAdornment,
+  IconButton,
+  Divider
 } from '@mui/material';
+import { Email, Lock, Visibility, VisibilityOff } from '@mui/icons-material';
+import { useAuth } from '../contexts/AuthContext';
 
 const Login = () => {
-  const [formData, setFormData] = useState({
-    username: '',
-    password: '',
-  });
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
-  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
-  const location = useLocation();
+  const { login } = useAuth();
+  
+  const [formData, setFormData] = useState({
+    email: '',
+    password: ''
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [saveId, setSaveId] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
-    // 로그아웃이나 회원가입 성공 메시지 표시
-    if (location.state?.message) {
-      setSuccess(location.state.message);
-      // 메시지를 표시한 후 location state 초기화
-      window.history.replaceState({}, document.title);
+    const savedEmail = localStorage.getItem('savedEmail');
+    if (savedEmail) {
+      setFormData(prev => ({ ...prev, email: savedEmail }));
+      setSaveId(true);
     }
-  }, [location]);
+  }, []);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -40,113 +47,216 @@ const Login = () => {
     }));
   };
 
+  const handleSaveIdChange = (e) => {
+    const checked = e.target.checked;
+    setSaveId(checked);
+    if (!checked) {
+      localStorage.removeItem('savedEmail');
+    } else {
+      localStorage.setItem('savedEmail', formData.email);
+    }
+  };
+
+  const handleClickShowPassword = () => {
+    setShowPassword(!showPassword);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
     try {
-      const response = await axios.post('/api/login', 
-        new URLSearchParams({
-          username: formData.username,
-          password: formData.password,
-        }),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        }
-      );
-
-      localStorage.setItem('token', response.data.access_token);
-      localStorage.setItem('user', JSON.stringify(response.data.user));
+      await login(formData.email, formData.password);
       navigate('/cves');
     } catch (err) {
       console.error('Login error:', err);
-      setError(
-        err.response?.data?.detail || 
-        'An error occurred during login. Please try again.'
-      );
+      setError(typeof err === 'string' ? err : '로그인 중 오류가 발생했습니다. 다시 시도해주세요.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <Container component="main" maxWidth="xs">
-      <Box
-        sx={{
-          marginTop: 8,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-        }}
-      >
-        <Paper elevation={3} sx={{ p: 4, width: '100%' }}>
-          <Typography component="h1" variant="h4" align="center" gutterBottom>
-            CVE Hub
+    <Box
+      sx={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        bgcolor: '#F8F9FA',
+        py: 4
+      }}
+    >
+      <Container maxWidth="sm">
+        <Paper
+          elevation={3}
+          sx={{
+            p: 4,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            borderRadius: 2
+          }}
+        >
+          <Typography
+            component="h1"
+            variant="h4"
+            sx={{
+              mb: 3,
+              fontWeight: 700,
+              color: '#1976d2'
+            }}
+          >
+            CVEHub
           </Typography>
-          <Typography component="h2" variant="h6" align="center" gutterBottom>
-            Welcome Back!
+          <Typography
+            component="h2"
+            variant="h5"
+            sx={{
+              mb: 3,
+              color: 'text.secondary'
+            }}
+          >
+            로그인
           </Typography>
-
           {error && (
-            <Alert severity="error" sx={{ mb: 2 }}>
+            <Alert 
+              severity="error" 
+              sx={{ 
+                width: '100%', 
+                mb: 2,
+                borderRadius: 1
+              }}
+            >
               {error}
             </Alert>
           )}
-
-          {success && (
-            <Alert severity="success" sx={{ mb: 2 }}>
-              {success}
-            </Alert>
-          )}
-
-          <form onSubmit={handleSubmit}>
+          <Box 
+            component="form" 
+            onSubmit={handleSubmit} 
+            sx={{ 
+              width: '100%',
+              mt: 1 
+            }}
+          >
             <TextField
               margin="normal"
               required
               fullWidth
-              id="username"
-              label="Username"
-              name="username"
-              autoComplete="username"
+              id="email"
+              label="이메일"
+              name="email"
+              autoComplete="email"
               autoFocus
-              value={formData.username}
+              value={formData.email}
               onChange={handleChange}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <Email color="action" />
+                  </InputAdornment>
+                ),
+              }}
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: 1
+                }
+              }}
             />
             <TextField
               margin="normal"
               required
               fullWidth
               name="password"
-              label="Password"
-              type="password"
+              label="비밀번호"
+              type={showPassword ? 'text' : 'password'}
               id="password"
               autoComplete="current-password"
               value={formData.password}
               onChange={handleChange}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <Lock color="action" />
+                  </InputAdornment>
+                ),
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton
+                      aria-label="toggle password visibility"
+                      onClick={handleClickShowPassword}
+                      edge="end"
+                    >
+                      {showPassword ? <VisibilityOff /> : <Visibility />}
+                    </IconButton>
+                  </InputAdornment>
+                )
+              }}
+              sx={{
+                '& .MuiOutlinedInput-root': {
+                  borderRadius: 1
+                }
+              }}
+            />
+            <FormControlLabel
+              control={
+                <Checkbox 
+                  checked={saveId}
+                  onChange={handleSaveIdChange}
+                  color="primary"
+                />
+              }
+              label="이메일 저장"
+              sx={{ mt: 1 }}
             />
             <Button
               type="submit"
               fullWidth
               variant="contained"
-              sx={{ mt: 3, mb: 2 }}
               disabled={loading}
+              sx={{
+                mt: 3,
+                mb: 2,
+                py: 1.5,
+                borderRadius: 1.5,
+                fontSize: '1rem',
+                textTransform: 'none',
+                boxShadow: 2,
+                '&:hover': {
+                  boxShadow: 4
+                }
+              }}
             >
-              {loading ? <CircularProgress size={24} /> : 'Login'}
+              {loading ? (
+                <CircularProgress size={24} color="inherit" />
+              ) : (
+                '로그인'
+              )}
             </Button>
+            <Divider sx={{ my: 2 }}>
+              <Typography variant="body2" color="text.secondary">
+                또는
+              </Typography>
+            </Divider>
             <Box sx={{ textAlign: 'center' }}>
-              <Link to="/register" style={{ textDecoration: 'none' }}>
-                <Typography variant="body2" color="primary">
-                  New to CVE Hub? Create an account
-                </Typography>
-              </Link>
+              <Typography variant="body2" color="text.secondary">
+                아직 계정이 없으신가요?{' '}
+                <Link 
+                  to="/signup" 
+                  style={{ 
+                    color: '#1976d2',
+                    textDecoration: 'none',
+                    fontWeight: 500
+                  }}
+                >
+                  회원가입
+                </Link>
+              </Typography>
             </Box>
-          </form>
+          </Box>
         </Paper>
-      </Box>
-    </Container>
+      </Container>
+    </Box>
   );
 };
 

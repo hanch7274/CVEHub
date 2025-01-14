@@ -7,8 +7,7 @@ import {
   ListItemText,
   Typography,
   Box,
-  ListItemButton,
-  Divider
+  ListItemButton
 } from '@mui/material';
 import SecurityIcon from '@mui/icons-material/Security';
 import DashboardIcon from '@mui/icons-material/Dashboard';
