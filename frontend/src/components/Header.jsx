@@ -38,7 +38,8 @@ const Header = () => {
     logout();
   };
 
-  const animalEmoji = user ? getAnimalEmoji(user.username) : '👤';
+  // 이메일이 없는 경우 기본 아바타 사용
+  const animalEmoji = user?.email ? getAnimalEmoji(user.email) : '👤';
 
   return (
     <AppBar 

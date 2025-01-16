@@ -18,7 +18,7 @@ import {
   Delete as DeleteIcon,
   Send as SendIcon,
 } from '@mui/icons-material';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow, parseISO } from 'date-fns';
 import { ko } from 'date-fns/locale';
 
 const Comment = memo(({
@@ -38,6 +38,17 @@ const Comment = memo(({
   
   const isAuthor = comment.author === currentUser?.username;
   const isReply = comment.parent_id !== null;
+
+  const formatDate = (dateString) => {
+    try {
+      if (!dateString) return '';
+      const date = parseISO(dateString);
+      return formatDistanceToNow(date, { addSuffix: true, locale: ko });
+    } catch (error) {
+      console.error('Invalid date:', dateString);
+      return '';
+    }
+  };
 
   const handleMenuOpen = (event) => {
     event.stopPropagation();
@@ -99,37 +110,34 @@ const Comment = memo(({
           '&::before': isReply ? {
             content: '""',
             position: 'absolute',
-            left: -20,
             top: 0,
-            bottom: 0,
-            width: 16,
-            borderLeft: `2px solid ${depthColors[Math.min(comment.depth - 1, 4)]}`,
-            borderBottom: `2px solid ${depthColors[Math.min(comment.depth - 1, 4)]}`,
-            borderBottomLeftRadius: 8,
-          } : undefined,
+            left: -1,
+            width: '2px',
+            height: '100%',
+            backgroundColor: depthColors[Math.min(comment.depth - 1, 4)]
+          } : {}
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-          <Typography variant="subtitle2">
+        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+          <Typography variant="subtitle2" color="textPrimary">
             {comment.author}
           </Typography>
-          {isReply && comment.parent_author && (
+          <Typography variant="caption" color="textSecondary" sx={{ ml: 1 }}>
+            {formatDate(comment.created_at)}
+          </Typography>
+          <Box sx={{ flexGrow: 1 }} />
+          {currentUser && (
             <>
-              <Typography variant="caption" color="text.secondary">
-                →
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                @{comment.parent_author}
-              </Typography>
+              <IconButton size="small" onClick={handleReplyClick}>
+                <ReplyIcon fontSize="small" />
+              </IconButton>
+              {isAuthor && (
+                <IconButton size="small" onClick={handleMenuOpen}>
+                  <MoreVertIcon fontSize="small" />
+                </IconButton>
+              )}
             </>
           )}
-          <Typography variant="caption" color="text.secondary">
-            {formatDistanceToNow(new Date(comment.created_at), {
-              addSuffix: true,
-              locale: ko
-            })}
-            {comment.updated_at && ' (수정됨)'}
-          </Typography>
         </Box>
 
         {isEditing ? (
@@ -137,17 +145,14 @@ const Comment = memo(({
             <TextField
               fullWidth
               multiline
-              size="small"
+              minRows={2}
               value={editContent}
               onChange={(e) => setEditContent(e.target.value)}
-              sx={{ mb: 1 }}
-              autoFocus
+              variant="outlined"
+              size="small"
             />
-            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
-              <Button
-                size="small"
-                onClick={handleEditCancel}
-              >
+            <Box sx={{ mt: 1, display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+              <Button size="small" onClick={handleEditCancel}>
                 취소
               </Button>
               <Button
@@ -156,45 +161,43 @@ const Comment = memo(({
                 onClick={handleEditSubmit}
                 disabled={!editContent.trim()}
               >
-                저장
+                수정
               </Button>
             </Box>
           </Box>
         ) : (
-          <>
-            <Typography
-              variant="body2"
-              sx={{
-                whiteSpace: 'pre-wrap',
-                color: 'text.primary'
-              }}
-            >
-              {comment.content}
-            </Typography>
-            
-            <Box sx={{ display: 'flex', alignItems: 'center', mt: 1, gap: 1 }}>
-              {currentUser && (
-                <Button
-                  size="small"
-                  startIcon={<ReplyIcon fontSize="small" />}
-                  onClick={handleReplyClick}
-                  color={isReplyMode ? "primary" : "inherit"}
-                >
-                  답글 {isReplyMode ? "취소" : "작성"}
-                </Button>
-              )}
+          <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+            {comment.content}
+          </Typography>
+        )}
 
-              {isAuthor && (
-                <IconButton
-                  size="small"
-                  edge="end"
-                  onClick={handleMenuOpen}
-                >
-                  <MoreVertIcon fontSize="small" />
-                </IconButton>
-              )}
+        {isReplyMode && (
+          <Box sx={{ mt: 2 }}>
+            <TextField
+              fullWidth
+              multiline
+              minRows={2}
+              value={replyContent}
+              onChange={(e) => setReplyContent(e.target.value)}
+              placeholder="답글을 입력하세요..."
+              variant="outlined"
+              size="small"
+            />
+            <Box sx={{ mt: 1, display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+              <Button size="small" onClick={() => onReplyModeChange(null)}>
+                취소
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={handleReplySubmit}
+                disabled={!replyContent.trim()}
+                endIcon={<SendIcon />}
+              >
+                답글
+              </Button>
             </Box>
-          </>
+          </Box>
         )}
 
         <Menu
@@ -208,63 +211,16 @@ const Comment = memo(({
             </ListItemIcon>
             <ListItemText>수정</ListItemText>
           </MenuItem>
-          <MenuItem onClick={handleDeleteClick}>
+          <MenuItem onClick={handleDeleteClick} sx={{ color: 'error.main' }}>
             <ListItemIcon>
-              <DeleteIcon fontSize="small" />
+              <DeleteIcon fontSize="small" sx={{ color: 'error.main' }} />
             </ListItemIcon>
             <ListItemText>삭제</ListItemText>
           </MenuItem>
         </Menu>
       </Paper>
-
-      {isReplyMode && (
-        <Box sx={{ mt: 1, ml: 4 }}>
-          <Paper 
-            elevation={0} 
-            variant="outlined" 
-            sx={{ 
-              p: 2,
-              borderLeft: `3px solid ${depthColors[Math.min(comment.depth, 4)]}`,
-              bgcolor: 'action.hover'
-            }}
-          >
-            <TextField
-              fullWidth
-              multiline
-              rows={2}
-              placeholder={`@${comment.author}님에게 답글 작성...`}
-              value={replyContent}
-              onChange={(e) => setReplyContent(e.target.value)}
-              sx={{ mb: 1 }}
-              autoFocus
-            />
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
-              <Button
-                size="small"
-                onClick={() => {
-                  setReplyContent('');
-                  onReplyModeChange(null);
-                }}
-              >
-                취소
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                onClick={handleReplySubmit}
-                disabled={!replyContent.trim()}
-                endIcon={<SendIcon />}
-              >
-                답글
-              </Button>
-            </Box>
-          </Paper>
-        </Box>
-      )}
     </Box>
   );
 });
-
-Comment.displayName = 'Comment';
 
 export default Comment;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import api from '../api/axios';
+import { api } from '../utils/auth';
 import {
   Dialog,
   DialogTitle,
@@ -200,10 +200,11 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
   const loadComments = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await api.get(`/api/cves/${cve.cveId}/comments`);
+      const response = await api.get(`/cves/${cve.cveId}/comments`);
       setComments(response.data || []);
     } catch (error) {
       console.error('Failed to load comments:', error);
+      // 401 에러는 auth.js의 인터셉터에서 처리됨
       setComments([]);
     } finally {
       setLoading(false);
@@ -233,17 +234,16 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
 
   const handlePocSubmit = async () => {
     try {
-      const response = await api.patch(`/api/cves/${cve.cveId}`, {
+      const response = await api.patch(`/cves/${cve.cveId}`, {
         pocs: [...(cve.pocs || []), newPoc]
       });
       
-      if (response.status === 200) {
-        updateCVEState(response.data);
-        setPocDialogOpen(false);
-        setNewPoc({ source: 'Etc', url: '', description: '' });
-      }
+      updateCVEState(response.data);
+      setPocDialogOpen(false);
+      setNewPoc({ source: 'Etc', url: '', description: '' });
     } catch (error) {
       console.error('Failed to add PoC:', error);
+      alert(error.response?.data?.detail || 'PoC 추가 중 오류가 발생했습니다.');
     }
   };
 
@@ -284,19 +284,18 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
         updatedSnortRules.push(snortRuleData);
       }
 
-      const response = await api.patch(`/api/cves/${cve.cveId}`, {
+      const response = await api.patch(`/cves/${cve.cveId}`, {
         snortRules: updatedSnortRules
       });
       
-      if (response.status === 200) {
-        setCve(response.data);
-        setSnortRuleDialogOpen(false);
-        setNewSnortRule({ type: 'USER_DEFINED', rule: '', description: '' });
-        setEditingSnortRule(null);
-        setEditingSnortRuleIndex(null);
-      }
+      updateCVEState(response.data);
+      setSnortRuleDialogOpen(false);
+      setNewSnortRule({ type: 'USER_DEFINED', rule: '', description: '' });
+      setEditingSnortRule(null);
+      setEditingSnortRuleIndex(null);
     } catch (error) {
       console.error('Failed to submit Snort Rule:', error);
+      alert(error.response?.data?.detail || 'Snort 규칙 추가 중 오류가 발생했습니다.');
     }
   };
 
@@ -308,28 +307,18 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
   };
 
   const handleAddReference = async () => {
-    try {
-      const newReference = {
-        _id: new Date().getTime().toString(),
-        url: newReferenceUrl
-      };
-      console.log('Adding new reference:', newReference);
+    if (!newReferenceUrl.trim()) return;
 
-      const response = await api.patch(`/api/cves/${cve.cveId}`, {
-        references: [...(cve.references || []), newReference]
+    try {
+      const response = await api.patch(`/cves/${cve.cveId}`, {
+        references: [...(cve.references || []), { url: newReferenceUrl }]
       });
-      
-      if (response.status === 200) {
-        const updatedCVE = response.data;
-        console.log('Updated CVE references:', updatedCVE.references);
-        setCve(updatedCVE);
-        if (onSave) {
-          onSave(updatedCVE);
-        }
-        setNewReferenceUrl('');
-      }
+
+      updateCVEState(response.data);
+      setNewReferenceUrl('');
     } catch (error) {
-      console.error('Error adding reference:', error);
+      console.error('Failed to add reference:', error);
+      alert(error.response?.data?.detail || '참조 URL 추가 중 오류가 발생했습니다.');
     }
   };
 
@@ -341,7 +330,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
         references: updatedReferences
       }));
 
-      const response = await api.patch(`/api/cves/${cve.cveId}`, {
+      const response = await api.patch(`/cves/${cve.cveId}`, {
         references: updatedReferences
       });
       
@@ -371,19 +360,20 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
     if (!newComment.trim()) return;
 
     try {
-      const response = await api.post(`/api/cves/${cve.cveId}/comments`, {
+      const response = await api.post(`/cves/${cve.cveId}/comments`, {
         content: newComment.trim()
       });
       setComments([...comments, response.data]);
       setNewComment('');
     } catch (error) {
       console.error('Failed to add comment:', error);
+      alert(error.response?.data?.detail || '댓글 추가 중 오류가 발생했습니다.');
     }
   };
 
   const handleCommentEdit = async (index, content) => {
     try {
-      const response = await api.put(`/api/cves/${cve.cveId}/comments/${index}`, {
+      const response = await api.put(`/cves/${cve.cveId}/comments/${index}`, {
         content: content.trim()
       });
       const newComments = [...comments];
@@ -392,15 +382,17 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
       setEditingComment(null);
     } catch (error) {
       console.error('Failed to edit comment:', error);
+      alert(error.response?.data?.detail || '댓글 수정 중 오류가 발생했습니다.');
     }
   };
 
   const handleCommentDelete = async (index) => {
     try {
-      await api.delete(`/api/cves/${cve.cveId}/comments/${index}`);
+      await api.delete(`/cves/${cve.cveId}/comments/${index}`);
       setComments(comments.filter((_, i) => i !== index));
     } catch (error) {
       console.error('Failed to delete comment:', error);
+      alert(error.response?.data?.detail || '댓글 삭제 중 오류가 발생했습니다.');
     }
   };
 
@@ -412,7 +404,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
         pocs: updatedPoCs
       }));
       
-      const response = await api.patch(`/api/cves/${cve.cveId}`, {
+      const response = await api.patch(`/cves/${cve.cveId}`, {
         pocs: updatedPoCs
       });
       
@@ -437,7 +429,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
         snortRules: updatedSnortRules
       }));
 
-      const response = await api.patch(`/api/cves/${cve.cveId}`, {
+      const response = await api.patch(`/cves/${cve.cveId}`, {
         snortRules: updatedSnortRules
       });
       
@@ -503,7 +495,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
         snortRules: cve.snortRules
       };
       
-      const response = await api.put(`/api/cves/${cve.cveId}`, updatedData);
+      const response = await api.put(`/cves/${cve.cveId}`, updatedData);
       
       setCve(response.data);
       setIsEditMode(false);
@@ -512,6 +504,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
       }
     } catch (error) {
       console.error('Failed to update CVE:', error);
+      alert(error.response?.data?.detail || 'CVE 정보 수정 중 오류가 발생했습니다.');
     }
   };
 
@@ -522,7 +515,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
 
   const handleSavePocEdit = async () => {
     try {
-      const response = await api.put(`/api/cves/${cve.cveId}/pocs/${editingPocId}`, editingPocData);
+      const response = await api.put(`/cves/${cve.cveId}/pocs/${editingPocId}`, editingPocData);
       if (response.status === 200) {
         setCve(response.data);
         setEditingPocId(null);
@@ -530,6 +523,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
       }
     } catch (error) {
       console.error('Error updating POC:', error);
+      alert(error.response?.data?.detail || 'POC 수정 중 오류가 발생했습니다.');
     }
   };
 

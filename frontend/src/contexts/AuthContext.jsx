@@ -18,8 +18,12 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        const currentUser = await getCurrentUser();
-        setUser(currentUser);
+        // 토큰이 있을 때만 사용자 정보 요청
+        const token = localStorage.getItem('token');
+        if (token) {
+          const currentUser = await getCurrentUser();
+          setUser(currentUser);
+        }
       } catch (error) {
         console.error('Failed to initialize auth:', error);
       } finally {
@@ -33,7 +37,8 @@ export const AuthProvider = ({ children }) => {
   const login = async (email, password) => {
     try {
       const userData = await authLogin(email, password);
-      setUser(userData);
+      const currentUser = await getCurrentUser();
+      setUser(currentUser);
       return userData;
     } catch (error) {
       throw error;

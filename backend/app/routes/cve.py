@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, status as http_status
 from typing import List, Optional
 from app.models.cve import CVEModel, PoC, SnortRule, Reference, ModificationHistory
 from datetime import datetime
@@ -182,22 +182,49 @@ async def update_single_cve(
             "error": str(e)
         }
 
-@router.get("/", response_model=List[CVEModel])
+@router.get("/", response_model=dict)
 async def get_cves(
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=100),
     status: Optional[str] = None
 ):
     """모든 CVE를 조회합니다."""
-    query = {}
-    if status:
-        query["status"] = status
-    
     try:
-        cves = await CVEModel.find(query).skip(skip).limit(limit).to_list()
-        return cves
+        # 기본 쿼리 생성
+        query = CVEModel.find()
+        if status:
+            query = query.find({"status": status})
+            
+        # 전체 CVE 수 조회
+        total = await query.count()
+        
+        # CVE 목록 조회 (페이지네이션 적용)
+        items = await query.sort([("lastModifiedDate", -1)]).skip(skip).limit(limit).to_list()
+        
+        # 필수 필드가 없는 데이터 처리
+        for item in items:
+            # PoC 데이터 처리
+            if hasattr(item, 'pocs'):
+                for poc in item.pocs:
+                    if not hasattr(poc, 'addedBy'):
+                        poc.addedBy = item.createdBy
+            
+            # SnortRule 데이터 처리
+            if hasattr(item, 'snortRules'):
+                for rule in item.snortRules:
+                    if not hasattr(rule, 'addedBy'):
+                        rule.addedBy = item.createdBy
+        
+        return {
+            "total": total,
+            "items": items
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error in get_cves: {str(e)}")  # 디버깅을 위한 로그 추가
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
 
 @router.get("/{cve_id}", response_model=CVEModel)
 async def get_cve(cve_id: str):
@@ -206,14 +233,14 @@ async def get_cve(cve_id: str):
         cve = await CVEModel.find_one({"cveId": cve_id})
         if not cve:
             raise HTTPException(
-                status_code=404,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=f"CVE with ID {cve_id} not found"
             )
         return cve
     except Exception as e:
         if isinstance(e, HTTPException):
             raise e
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 @router.post("/", response_model=CVEModel)
 async def create_cve(
@@ -230,7 +257,7 @@ async def create_cve(
     )
     
     if error:
-        raise HTTPException(status_code=400, detail=error["error"])
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=error["error"])
     return cve
 
 @router.patch("/{cve_id}", response_model=CVEModel)
@@ -249,7 +276,7 @@ async def patch_cve(
         existing_cve = await CVEModel.find_one({"cveId": cve_id})
         if not existing_cve:
             raise HTTPException(
-                status_code=404,
+                status_code=http_status.HTTP_404_NOT_FOUND,
                 detail=f"CVE with ID {cve_id} not found"
             )
 
@@ -320,7 +347,7 @@ async def patch_cve(
         # 7. 업데이트된 CVE 반환
         updated_cve = await CVEModel.find_one({"cveId": cve_id})
         if not updated_cve:
-            raise HTTPException(status_code=500, detail="Failed to update CVE")
+            raise HTTPException(status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update CVE")
         
         return updated_cve
 
@@ -332,7 +359,7 @@ async def patch_cve(
         import traceback
         print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
-            status_code=500,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Internal server error: {str(e)}"
         )
 
@@ -341,7 +368,7 @@ async def add_poc(cve_id: str, poc: CreatePoCRequest):
     try:
         cve = await CVEModel.find_one({"cveId": cve_id})
         if not cve:
-            raise HTTPException(status_code=404, detail="CVE not found")
+            raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="CVE not found")
         
         current_time = datetime.now(ZoneInfo("Asia/Seoul"))
         new_poc = PoC(
@@ -354,14 +381,14 @@ async def add_poc(cve_id: str, poc: CreatePoCRequest):
         await cve.save()
         return cve
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 @router.post("/{cve_id}/snort-rule", response_model=CVEModel)
 async def add_snort_rule(cve_id: str, rule: CreateSnortRuleRequest):
     try:
         cve = await CVEModel.find_one({"cveId": cve_id})
         if not cve:
-            raise HTTPException(status_code=404, detail="CVE not found")
+            raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail="CVE not found")
         
         current_time = datetime.now(ZoneInfo("Asia/Seoul"))
         new_rule = SnortRule(
@@ -374,25 +401,41 @@ async def add_snort_rule(cve_id: str, rule: CreateSnortRuleRequest):
         await cve.save()
         return cve
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-@router.get("/search", response_model=List[CVEModel])
+@router.get("/search", response_model=dict)
 async def search_cves(
     query: str,
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=100)
 ):
-    # Text search in description and cveId
-    cves = await CVEModel.find(
-        {
+    """CVE를 검색합니다."""
+    try:
+        # 기본 쿼리 생성
+        search_query = {
             "$or": [
-                {"description": {"$regex": query, "$options": "i"}},
-                {"cveId": {"$regex": query, "$options": "i"}}
+                {"cveId": {"$regex": query, "$options": "i"}},
+                {"title": {"$regex": query, "$options": "i"}},
+                {"description": {"$regex": query, "$options": "i"}}
             ]
         }
-    ).skip(skip).limit(limit).to_list()
-    
-    return cves
+        
+        # 전체 CVE 수 조회
+        total = await CVEModel.find(search_query).count()
+        
+        # CVE 목록 조회 (페이지네이션 적용)
+        items = await CVEModel.find(search_query).sort([("lastModifiedDate", -1)]).skip(skip).limit(limit).to_list()
+        
+        return {
+            "total": total,
+            "items": items
+        }
+    except Exception as e:
+        print(f"Error in search_cves: {str(e)}")
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
 
 @router.post("/bulk")
 async def bulk_create_cves(
@@ -479,13 +522,13 @@ async def update_snort_rule(
     cve = await CVEModel.find_one({"cveId": cve_id})
     if not cve:
         raise HTTPException(
-            status_code=404,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="CVE not found"
         )
     
     if rule_index >= len(cve.snortRules):
         raise HTTPException(
-            status_code=404,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="Snort rule not found"
         )
     
@@ -522,7 +565,7 @@ async def update_snort_rule(
         
         if not updated_cve:
             raise HTTPException(
-                status_code=500,
+                status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to update CVE"
             )
             
@@ -531,7 +574,7 @@ async def update_snort_rule(
     except Exception as mongo_error:
         print(f"MongoDB error: {str(mongo_error)}")
         raise HTTPException(
-            status_code=500,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(mongo_error)}"
         )
 
@@ -543,7 +586,7 @@ async def delete_cve(
     cve = await CVEModel.find_one({"cveId": cve_id})
     if not cve:
         raise HTTPException(
-            status_code=404,
+            status_code=http_status.HTTP_404_NOT_FOUND,
             detail="CVE not found"
         )
     

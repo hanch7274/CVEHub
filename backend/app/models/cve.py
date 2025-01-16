@@ -1,22 +1,22 @@
 from datetime import datetime
 from typing import List, Optional, Literal
 from beanie import Document
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from zoneinfo import ZoneInfo
 
 class PoC(BaseModel):
     source: Literal["Etc", "Metasploit", "Nuclei-Templates"]
     url: str
     description: Optional[str] = None
-    dateAdded: datetime = datetime.now(ZoneInfo("Asia/Seoul"))
-    addedBy: str
+    dateAdded: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
+    addedBy: str = "anonymous"
 
 class SnortRule(BaseModel):
     rule: str
     type: Literal["IPS", "ONE", "UTM", "USER_DEFINED", "EMERGING_THREATS", "SNORT_OFFICIAL"]
     description: Optional[str] = None
-    dateAdded: datetime = datetime.now(ZoneInfo("Asia/Seoul"))
-    addedBy: str
+    dateAdded: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
+    addedBy: str = "anonymous"
     lastModifiedAt: Optional[datetime] = None
     lastModifiedBy: Optional[str] = None
 
@@ -26,13 +26,13 @@ class Reference(BaseModel):
 class Comment(BaseModel):
     content: str
     author: str
-    createdAt: datetime = datetime.now(ZoneInfo("Asia/Seoul"))
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
     updatedAt: Optional[datetime] = None
     isEdited: bool = False
 
 class ModificationHistory(BaseModel):
     modifiedBy: str
-    modifiedAt: datetime = datetime.now(ZoneInfo("Asia/Seoul"))
+    modifiedAt: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
 
 class CVEModel(Document):
     cveId: str
@@ -41,9 +41,9 @@ class CVEModel(Document):
     status: str = "미할당"  # 미할당, 분석중, 분석완료, 대응완료
     assignedTo: Optional[str] = None
     publishedDate: datetime
-    lastModifiedDate: datetime = datetime.now(ZoneInfo("Asia/Seoul"))
-    createdAt: datetime = datetime.now(ZoneInfo("Asia/Seoul"))
-    createdBy: str
+    lastModifiedDate: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
+    createdAt: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
+    createdBy: str = "anonymous"
     modificationHistory: List[ModificationHistory] = []
     pocs: List[PoC] = []
     snortRules: List[SnortRule] = []

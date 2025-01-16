@@ -25,8 +25,7 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
-  DialogActions,
-  Fade
+  DialogActions
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -65,29 +64,75 @@ const CVEList = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [cveToDelete, setCveToDelete] = useState(null);
 
-  // debounce 함수를 useRef로 저장하여 리렌더링 시에도 유지
-  const debouncedSearch = useRef(
-    debounce(async (query) => {
-      try {
-        setLoading(true);
-        setError('');
-        const response = await api.get('/cves/search', {
-          params: {
-            query,
-            skip: page * rowsPerPage,
-            limit: rowsPerPage
-          }
-        });
-        setCves(response.data.items || []);
+  const fetchCVEs = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError('');
+      const response = await api.get('/cves', {
+        params: {
+          skip: page * rowsPerPage,
+          limit: rowsPerPage
+        }
+      });
+      
+      if (response.data && Array.isArray(response.data.items)) {
+        setCves(response.data.items);
         setTotalCount(response.data.total || 0);
-      } catch (error) {
-        console.error('Error searching CVEs:', error);
-        setError('CVE 검색 중 오류가 발생했습니다.');
-      } finally {
-        setLoading(false);
+      } else {
+        throw new Error('Invalid response format');
       }
-    }, 300)
-  ).current;
+    } catch (error) {
+      console.error('Error fetching CVEs:', error);
+      setError(error.response?.data?.detail || 'CVE 목록을 가져오는 중 오류가 발생했습니다.');
+      if (error.response?.status === 401) {
+        navigate('/login');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [page, rowsPerPage, navigate]);
+
+  const debouncedSearchRef = useRef(null);
+
+  const debouncedSearch = useCallback(
+    debounce(async (query) => {
+      if (query.trim()) {
+        try {
+          setLoading(true);
+          setError('');
+          const response = await api.get('/cves/search', {
+            params: {
+              query,
+              skip: page * rowsPerPage,
+              limit: rowsPerPage
+            }
+          });
+          
+          if (response.data && Array.isArray(response.data.items)) {
+            setCves(response.data.items);
+            setTotalCount(response.data.total || 0);
+          } else {
+            throw new Error('Invalid response format');
+          }
+        } catch (error) {
+          console.error('Error searching CVEs:', error);
+          setError(error.response?.data?.detail || 'CVE 검색 중 오류가 발생했습니다.');
+          if (error.response?.status === 401) {
+            navigate('/login');
+          }
+        } finally {
+          setLoading(false);
+        }
+      } else {
+        fetchCVEs();
+      }
+    }, 300),
+    [page, rowsPerPage, navigate, fetchCVEs]
+  );
+
+  useEffect(() => {
+    debouncedSearchRef.current = debouncedSearch;
+  }, [debouncedSearch]);
 
   useEffect(() => {
     if (!user) {
@@ -95,34 +140,11 @@ const CVEList = () => {
       return;
     }
     if (searchQuery) {
-      debouncedSearch(searchQuery);
+      debouncedSearchRef.current(searchQuery);
     } else {
       fetchCVEs();
     }
-  }, [page, rowsPerPage, user, refreshKey, searchQuery]);
-
-  const fetchCVEs = async () => {
-    try {
-      setLoading(true);
-      setError('');
-      const response = await api.get('/cves/', {
-        params: {
-          skip: page * rowsPerPage,
-          limit: rowsPerPage
-        }
-      });
-      setCves(response.data.items || []);
-      setTotalCount(response.data.total || 0);
-    } catch (error) {
-      console.error('Error fetching CVEs:', error);
-      setError('CVE 목록을 불러오는 중 오류가 발생했습니다.');
-      if (error.response?.status === 401) {
-        navigate('/login');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [user, searchQuery, page, rowsPerPage, fetchCVEs, navigate]);
 
   const handleSearch = (e) => {
     setSearchQuery(e.target.value);
@@ -413,50 +435,23 @@ const CVEList = () => {
         <CreateCVE
           onClose={handleCloseCreate}
           onSuccess={handleCVECreated}
+          currentUser={user}
         />
       )}
 
       <Dialog
         open={deleteDialogOpen}
         onClose={handleDeleteCancel}
-        PaperProps={{
-          sx: {
-            borderRadius: 2,
-            width: '100%',
-            maxWidth: 400
-          }
-        }}
       >
-        <DialogTitle>
-          CVE 삭제 확인
-        </DialogTitle>
-        <DialogContent sx={{ pb: 2 }}>
+        <DialogTitle>CVE 삭제 확인</DialogTitle>
+        <DialogContent>
           <Typography>
-            정말로 <strong>{cveToDelete?.cveId}</strong>를 삭제하시겠습니까?
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            이 작업은 되돌릴 수 없습니다.
+            정말로 이 CVE를 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.
           </Typography>
         </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button 
-            onClick={handleDeleteCancel}
-            sx={{ 
-              color: 'text.primary',
-              '&:hover': { bgcolor: 'action.hover' }
-            }}
-          >
-            취소
-          </Button>
-          <Button 
-            onClick={handleDeleteConfirm}
-            variant="contained"
-            color="error"
-            sx={{ 
-              borderRadius: 1,
-              textTransform: 'none'
-            }}
-          >
+        <DialogActions>
+          <Button onClick={handleDeleteCancel}>취소</Button>
+          <Button onClick={handleDeleteConfirm} color="error" variant="contained">
             삭제
           </Button>
         </DialogActions>

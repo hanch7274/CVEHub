@@ -15,7 +15,7 @@ import {
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon
 } from '@mui/icons-material';
-import axios from 'axios';
+import { api } from '../utils/auth';
 import { useNavigate } from 'react-router-dom';
 
 const SignUp = () => {
@@ -56,8 +56,6 @@ const SignUp = () => {
     // 비밀번호 검증
     if (!formData.password) {
       newErrors.password = '비밀번호를 입력해주세요';
-    } else if (formData.password.length < 8) {
-      newErrors.password = '비밀번호는 최소 8자 이상이어야 합니다';
     }
 
     // 비밀번호 확인 검증
@@ -79,7 +77,7 @@ const SignUp = () => {
     }
 
     try {
-      const response = await axios.post('http://localhost:8000/api/auth/signup', {
+      const response = await api.post('/auth/signup', {
         username: formData.username,
         email: formData.email,
         password: formData.password

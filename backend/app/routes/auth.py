@@ -22,7 +22,7 @@ class UserCreateWithAdmin(UserCreate):
     is_admin: bool = False
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -32,7 +32,7 @@ def get_password_hash(password):
 
 def create_access_token(data: dict):
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.utcnow() + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
     return encoded_jwt
@@ -52,7 +52,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     except JWTError:
         raise credentials_exception
     
-    user = await User.find_one({"username": token_data.username})
+    user = await User.find_one({"email": token_data.username})
     if user is None:
         raise credentials_exception
     return user
@@ -100,12 +100,12 @@ async def signup(user_data: UserCreate):
 @router.post("/login")
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     """사용자 로그인을 처리하고 JWT 토큰을 발급합니다."""
-    # 1. 사용자 찾기
-    user = await User.find_one({"username": form_data.username})
+    # 1. 이메일로 사용자 찾기
+    user = await User.find_one({"email": form_data.username})  # OAuth2 form에서는 email이 username 필드로 전송됨
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -113,19 +113,28 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     if not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
     # 3. JWT 토큰 생성
     access_token = create_access_token(
         data={
-            "sub": user.username,
+            "sub": user.email,  # email을 토큰의 subject로 사용
             "is_admin": user.is_admin
         }
     )
     
     return {"access_token": access_token, "token_type": "bearer"}
+
+@router.get("/me")
+async def get_current_user_info(current_user: User = Depends(get_current_user)):
+    """현재 로그인한 사용자의 정보를 반환합니다."""
+    return {
+        "email": current_user.email,
+        "username": current_user.username,
+        "is_admin": current_user.is_admin
+    }
 
 @router.post("/logout")
 async def logout():

@@ -1,10 +1,10 @@
 from typing import Optional
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from beanie import Document
 
 class UserBase(BaseModel):
     username: str
-    email: EmailStr
+    email: str
 
 class UserCreate(UserBase):
     password: str
@@ -14,7 +14,7 @@ class UserResponse(UserBase):
 
 class User(Document):
     username: str
-    email: EmailStr
+    email: str
     hashed_password: str
     is_admin: bool = False
     
