@@ -176,10 +176,11 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
       setLoading(true);
       setError('');
 
-      const response = await api.post(
-        `/cves/${cve.cveId}/snort-rule`,
-        newSnortRule
-      );
+      const updatedSnortRules = [...(cve.snortRules || []), newSnortRule];
+      const response = await api.patch(`/cves/${cve.cveId}`, {
+        snortRules: updatedSnortRules
+      });
+
       setCve(response.data);
       setSnortRuleDialogOpen(false);
       setNewSnortRule({
@@ -203,10 +204,13 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
       setLoading(true);
       setError('');
 
-      const response = await api.patch(
-        `/cves/${cve.cveId}/snort-rule/${index}`,
-        editingSnortRule
-      );
+      const updatedSnortRules = [...cve.snortRules];
+      updatedSnortRules[index] = editingSnortRule;
+
+      const response = await api.patch(`/cves/${cve.cveId}`, {
+        snortRules: updatedSnortRules
+      });
+
       setCve(response.data);
       setEditingSnortRuleIndex(null);
       setEditingSnortRule(null);
@@ -224,7 +228,11 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
       setLoading(true);
       setError('');
 
-      const response = await api.delete(`/cves/${cve.cveId}/snort-rule/${index}`);
+      const updatedSnortRules = cve.snortRules.filter((_, i) => i !== index);
+      const response = await api.patch(`/cves/${cve.cveId}`, {
+        snortRules: updatedSnortRules
+      });
+
       setCve(response.data);
       if (onSave) onSave(response.data);
     } catch (error) {

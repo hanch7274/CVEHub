@@ -47,6 +47,7 @@ class PatchCVERequest(BaseModel):
     references: Optional[List[Reference]] = None
     pocs: Optional[List[CreatePoCRequest]] = None
     snortRules: Optional[List[CreateSnortRuleRequest]] = None
+    snort_rules: Optional[List[CreateSnortRuleRequest]] = None
 
     class Config:
         extra = "allow"  # 추가 필드 허용
@@ -282,6 +283,11 @@ async def patch_cve(
 
         # 2. 업데이트할 데이터 준비
         update_data = cve_data.dict(exclude_unset=True, exclude={"cveId"})
+        
+        # snort_rules가 있으면 snortRules로 복사
+        if "snort_rules" in update_data:
+            update_data["snortRules"] = update_data.pop("snort_rules")
+            
         print(f"Update data after processing: {update_data}")
         
         if not update_data:
@@ -323,9 +329,15 @@ async def patch_cve(
             snort_rules = []
             for rule in update_data["snortRules"]:
                 if isinstance(rule, dict):
-                    rule["addedBy"] = modifier
-                    rule["dateAdded"] = current_time
-                    snort_rules.append(SnortRule(**rule))
+                    # 기존 필드 유지하면서 새로운 필드 추가
+                    rule_data = {
+                        "addedBy": modifier,
+                        "dateAdded": current_time,
+                        "lastModifiedAt": current_time,
+                        "lastModifiedBy": modifier,
+                        **rule
+                    }
+                    snort_rules.append(SnortRule(**rule_data))
                 else:
                     snort_rules.append(rule)
             existing_cve.snortRules = snort_rules
@@ -336,10 +348,10 @@ async def patch_cve(
             
         modification = ModificationHistory(
             modifiedBy=modifier,
-            modifiedAt=current_time,
-            modifiedFields=list(update_data.keys())
+            modifiedAt=current_time
         )
         existing_cve.modificationHistory.append(modification)
+        existing_cve.lastModifiedDate = current_time
 
         # 6. 저장
         await existing_cve.save()
@@ -352,15 +364,10 @@ async def patch_cve(
         return updated_cve
 
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
         print(f"Error updating CVE: {str(e)}")
-        print(f"Error type: {type(e)}")
-        import traceback
-        print(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
+            detail=str(e)
         )
 
 @router.post("/{cve_id}/poc", response_model=CVEModel)
