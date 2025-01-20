@@ -56,9 +56,9 @@ const theme = createTheme({
 
 function App() {
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      <AuthProvider>
+    <AuthProvider>
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
         <Router>
           <Box sx={{ display: 'flex', bgcolor: 'background.default', minHeight: '100vh' }}>
             <Header />
@@ -73,8 +73,8 @@ function App() {
             </Box>
           </Box>
         </Router>
-      </AuthProvider>
-    </ThemeProvider>
+      </ThemeProvider>
+    </AuthProvider>
   );
 }
 

@@ -1,5 +1,6 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
-import { login as authLogin, logout as authLogout, getCurrentUser } from '../utils/auth';
+import React, { createContext, useContext, useEffect } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+import { loginThunk, getCurrentUserThunk, logout as logoutAction } from '../store/authSlice';
 
 const AuthContext = createContext(null);
 
@@ -12,34 +13,23 @@ export const useAuth = () => {
 };
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const dispatch = useDispatch();
+  const { user, loading, isAuthenticated, error, token } = useSelector(state => state.auth);
 
   useEffect(() => {
     const initAuth = async () => {
-      try {
-        // 토큰이 있을 때만 사용자 정보 요청
-        const token = localStorage.getItem('token');
-        if (token) {
-          const currentUser = await getCurrentUser();
-          setUser(currentUser);
-        }
-      } catch (error) {
-        console.error('Failed to initialize auth:', error);
-      } finally {
-        setLoading(false);
+      if (token && !user) {
+        await dispatch(getCurrentUserThunk());
       }
     };
 
     initAuth();
-  }, []);
+  }, [dispatch, token, user]);
 
   const login = async (email, password) => {
     try {
-      const userData = await authLogin(email, password);
-      const currentUser = await getCurrentUser();
-      setUser(currentUser);
-      return userData;
+      await dispatch(loginThunk({ email, password })).unwrap();
+      await dispatch(getCurrentUserThunk());
     } catch (error) {
       throw error;
     }
@@ -47,8 +37,7 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
-      await authLogout();
-      setUser(null);
+      dispatch(logoutAction());
     } catch (error) {
       console.error('Logout error:', error);
       throw error;
@@ -64,7 +53,8 @@ export const AuthProvider = ({ children }) => {
     login,
     logout,
     loading,
-    isAuthenticated: !!user
+    error,
+    isAuthenticated
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

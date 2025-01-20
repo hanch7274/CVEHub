@@ -1,7 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
-import {
+import { 
   AppBar,
   Box,
   Toolbar,
@@ -11,6 +10,7 @@ import {
   Tooltip
 } from '@mui/material';
 import { Menu as MenuIcon, ExitToApp as LogoutIcon } from '@mui/icons-material';
+import { api } from '../utils/auth';
 
 const Navbar = () => {
   const navigate = useNavigate();
@@ -18,7 +18,7 @@ const Navbar = () => {
   const handleLogout = async () => {
     try {
       // 백엔드 로그아웃 API 호출
-      await axios.post('/api/logout');
+      await api.post('/auth/logout');
       
       // 로컬 스토리지에서 인증 정보 삭제
       localStorage.removeItem('token');

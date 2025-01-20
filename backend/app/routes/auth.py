@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import APIRouter, Depends, HTTPException, status, Form
+from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from ..models.user import User, UserCreate
@@ -15,7 +15,7 @@ class Token(BaseModel):
     token_type: str
 
 class TokenData(BaseModel):
-    username: Optional[str] = None
+    email: Optional[str] = None
     is_admin: Optional[bool] = None
 
 class UserCreateWithAdmin(UserCreate):
@@ -45,49 +45,42 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     )
     try:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+        email: str = payload.get("sub")
+        if email is None:
             raise credentials_exception
-        token_data = TokenData(username=username)
+        token_data = TokenData(email=email)
     except JWTError:
         raise credentials_exception
     
-    user = await User.find_one({"email": token_data.username})
+    user = await User.find_one({"email": email})
     if user is None:
         raise credentials_exception
     return user
 
-@router.post("/signup", status_code=status.HTTP_201_CREATED)
+@router.post("/signup")
 async def signup(user_data: UserCreate):
     """새로운 사용자를 등록합니다."""
     # 이메일 중복 확인
-    existing_email = await User.find_one({"email": user_data.email})
-    if existing_email:
+    if await User.find_one({"email": user_data.email}):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="이미 사용 중인 이메일입니다"
-        )
-
-    # 사용자 이름 중복 확인
-    existing_username = await User.find_one({"username": user_data.username})
-    if existing_username:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="이미 사용 중인 사용자 이름입니다"
+            detail="Email already registered"
         )
     
     # 비밀번호 해싱
     hashed_password = get_password_hash(user_data.password)
     
     # 새 사용자 생성
-    user_dict = user_data.dict()
-    user_dict["hashed_password"] = hashed_password
-    del user_dict["password"]  # 평문 비밀번호 제거
+    new_user = User(
+        email=user_data.email,
+        username=user_data.username,
+        hashed_password=hashed_password,
+        is_admin=False
+    )
     
-    new_user = User(**user_dict)
-    await new_user.save()
+    # DB에 저장
+    await new_user.insert()
     
-    # 비밀번호를 제외한 사용자 정보 반환
     return {
         "message": "회원가입이 완료되었습니다",
         "user": {
@@ -98,10 +91,10 @@ async def signup(user_data: UserCreate):
     }
 
 @router.post("/login")
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+async def login(email: str = Form(...), password: str = Form(...)):
     """사용자 로그인을 처리하고 JWT 토큰을 발급합니다."""
     # 1. 이메일로 사용자 찾기
-    user = await User.find_one({"email": form_data.username})  # OAuth2 form에서는 email이 username 필드로 전송됨
+    user = await User.find_one({"email": email})
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -110,7 +103,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
         )
     
     # 2. 비밀번호 확인
-    if not verify_password(form_data.password, user.hashed_password):
+    if not verify_password(password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -120,7 +113,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     # 3. JWT 토큰 생성
     access_token = create_access_token(
         data={
-            "sub": user.email,  # email을 토큰의 subject로 사용
+            "sub": user.email,
             "is_admin": user.is_admin
         }
     )

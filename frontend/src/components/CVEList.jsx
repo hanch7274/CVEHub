@@ -16,7 +16,6 @@ import {
   TablePagination,
   TextField,
   InputAdornment,
-  CircularProgress,
   Alert,
   Card,
   CardContent,
@@ -60,7 +59,6 @@ const CVEList = () => {
   const [selectedCVE, setSelectedCVE] = useState(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
-  const [refreshKey, setRefreshKey] = useState(0);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [cveToDelete, setCveToDelete] = useState(null);
 
@@ -127,7 +125,7 @@ const CVEList = () => {
         fetchCVEs();
       }
     }, 300),
-    [page, rowsPerPage, navigate, fetchCVEs]
+    [fetchCVEs]
   );
 
   useEffect(() => {
@@ -152,7 +150,7 @@ const CVEList = () => {
   };
 
   const handleRefresh = () => {
-    setRefreshKey(prev => prev + 1);
+    fetchCVEs();
   };
 
   const handleChangePage = (event, newPage) => {

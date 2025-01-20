@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import axios from 'axios';
 import {
   Container,
   Paper,
@@ -16,6 +15,7 @@ import {
   IconButton
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
+import { api } from '../utils/auth';
 
 const Register = () => {
   const [formData, setFormData] = useState({
@@ -44,7 +44,7 @@ const Register = () => {
     setError('');
 
     try {
-      await axios.post('/api/register', {
+      await api.post('/auth/register', {
         username: formData.username,
         password: formData.password,
         is_admin: isAdmin
