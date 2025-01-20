@@ -8,81 +8,88 @@ class PoC(BaseModel):
     source: Literal["Etc", "Metasploit", "Nuclei-Templates"]
     url: str
     description: Optional[str] = None
-    dateAdded: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
-    addedBy: str = "anonymous"
+    date_added: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
+    added_by: str = "anonymous"
 
 class SnortRule(BaseModel):
     rule: str
     type: Literal["IPS", "ONE", "UTM", "USER_DEFINED", "EMERGING_THREATS", "SNORT_OFFICIAL"]
     description: Optional[str] = None
-    dateAdded: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
-    addedBy: str = "anonymous"
-    lastModifiedAt: Optional[datetime] = None
-    lastModifiedBy: Optional[str] = None
+    date_added: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
+    added_by: str = "anonymous"
+    last_modified_at: Optional[datetime] = None
+    last_modified_by: Optional[str] = None
 
 class Reference(BaseModel):
     url: str
 
 class Comment(BaseModel):
+    # YYYYMMDDHHmmSSfff 형식 (년월일시분초밀리초)
+    id: str = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d%H%M%S%f")[:17])
     content: str
-    author: str
-    createdAt: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
-    updatedAt: Optional[datetime] = None
-    isEdited: bool = False
+    username: str  # 작성자 이름
+    parent_id: Optional[str] = None  # 부모 댓글 ID
+    depth: int = 0  # 댓글 깊이 (0: 최상위, 1: 대댓글, 2: 대대댓글, ...)
+    is_deleted: bool = False  # 삭제 여부
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
+    updated_at: Optional[datetime] = None
 
 class ModificationHistory(BaseModel):
-    modifiedBy: str
-    modifiedAt: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
+    modified_by: str
+    modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
 
 class CVEModel(Document):
-    cveId: str
+    cve_id: str
     title: Optional[str] = None
     description: Optional[str] = None
     status: str = "미할당"  # 미할당, 분석중, 분석완료, 대응완료
-    assignedTo: Optional[str] = None
-    publishedDate: datetime
-    lastModifiedDate: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
-    createdAt: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
-    createdBy: str = "anonymous"
-    modificationHistory: List[ModificationHistory] = []
+    assigned_to: Optional[str] = None
+    published_date: datetime
+    last_modified_date: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
+    created_by: str = "anonymous"
+    modification_history: List[ModificationHistory] = []
     pocs: List[PoC] = []
-    snortRules: List[SnortRule] = []
+    snort_rules: List[SnortRule] = []
     references: List[Reference] = []
     comments: List[Comment] = []  # 댓글 필드 추가
     notes: Optional[str] = None
     
     # 편집 잠금 관련 필드
-    isLocked: bool = False
-    lockedBy: Optional[str] = None
-    lockTimestamp: Optional[datetime] = None
-    lockExpiresAt: Optional[datetime] = None  # 30분 후 자동 잠금 해제
+    is_locked: bool = False
+    locked_by: Optional[str] = None
+    lock_timestamp: Optional[datetime] = None
+    lock_expires_at: Optional[datetime] = None  # 30분 후 자동 잠금 해제
 
     class Settings:
         name = "cves"
         indexes = [
-            "cveId",
+            "cve_id",
             "status",
-            "assignedTo",
-            "publishedDate",
-            "lastModifiedDate",
-            "createdAt",
-            "createdBy"
+            "assigned_to",
+            "published_date",
+            "last_modified_date",
+            "created_at",
+            "created_by"
         ]
 
     class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat() if v else None
+        }
         json_schema_extra = {
             "example": {
-                "cveId": "CVE-2023-1234",
+                "cve_id": "CVE-2023-1234",
                 "title": "Buffer overflow vulnerability in Example Software",
                 "description": "Buffer overflow vulnerability in Example Software",
                 "status": "미할당",
-                "publishedDate": datetime.now(ZoneInfo("Asia/Seoul")),
-                "lastModifiedDate": datetime.now(ZoneInfo("Asia/Seoul")),
-                "createdAt": datetime.now(ZoneInfo("Asia/Seoul")),
-                "createdBy": "anonymous",
-                "modificationHistory": [],
+                "published_date": datetime.now(ZoneInfo("Asia/Seoul")),
+                "last_modified_date": datetime.now(ZoneInfo("Asia/Seoul")),
+                "created_at": datetime.now(ZoneInfo("Asia/Seoul")),
+                "created_by": "anonymous",
+                "modification_history": [],
                 "pocs": [],
-                "snortRules": [],
+                "snort_rules": [],
                 "references": [],
                 "comments": []
             }

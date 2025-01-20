@@ -23,17 +23,19 @@ api.interceptors.request.use((config) => {
   }
 
   // 토큰이 있으면 헤더에 추가
-  const token = store?.getState()?.auth?.token;
+  const token = localStorage.getItem('token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
 
-  // 데이터가 있고 JSON 요청인 경우에만 snake_case로 변환
-  if (config.data && config.headers['Content-Type'] === 'application/json') {
+  // snake_case로 변환
+  if (config.data && typeof config.data === 'object') {
     config.data = toSnakeCase(config.data);
   }
 
   return config;
+}, (error) => {
+  return Promise.reject(error);
 });
 
 // 응답 인터셉터
@@ -48,6 +50,7 @@ api.interceptors.response.use(
   (error) => {
     // 401 에러 처리 (인증 실패)
     if (error.response?.status === 401) {
+      localStorage.removeItem('token');
       store?.dispatch({ type: 'auth/logout' });
     }
     return Promise.reject(error);
@@ -60,12 +63,13 @@ export const login = async (email, password) => {
   formData.append('email', email);
   formData.append('password', password);
 
-  const response = await api.post('/auth/login', formData, {
+  const response = await api.post('/auth/login', formData.toString(), {
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
   });
 
+  // 응답 데이터를 그대로 반환 (이미 camelCase로 변환되어 있음)
   return response.data;
 };
 

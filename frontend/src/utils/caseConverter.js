@@ -9,7 +9,10 @@ const toSnakeCase = (obj) => {
   }
 
   return Object.keys(obj).reduce((acc, key) => {
-    const snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+    // 첫 번째 대문자 앞에도 언더스코어를 추가하되, 문자열 시작이 아닌 경우에만
+    const snakeKey = key.replace(/([A-Z])/g, (match, letter, offset) => {
+      return (offset > 0 ? '_' : '') + letter.toLowerCase();
+    });
     acc[snakeKey] = toSnakeCase(obj[key]);
     return acc;
   }, {});

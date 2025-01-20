@@ -28,8 +28,14 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
-      await dispatch(loginThunk({ email, password })).unwrap();
-      await dispatch(getCurrentUserThunk());
+      const loginResult = await dispatch(loginThunk({ email, password })).unwrap();
+      if (!loginResult.accessToken) {
+        throw new Error('로그인 응답에 토큰이 없습니다.');
+      }
+      const userResult = await dispatch(getCurrentUserThunk()).unwrap();
+      if (!userResult) {
+        throw new Error('사용자 정보를 가져올 수 없습니다.');
+      }
     } catch (error) {
       throw error;
     }

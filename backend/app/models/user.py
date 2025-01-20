@@ -1,6 +1,7 @@
 from typing import Optional
 from pydantic import BaseModel
 from beanie import Document
+from datetime import datetime
 
 class UserBase(BaseModel):
     username: str
@@ -17,6 +18,7 @@ class User(Document):
     email: str
     hashed_password: str
     is_admin: bool = False
+    created_at: datetime = datetime.utcnow()
     
     class Settings:
         name = "users"
@@ -29,4 +31,12 @@ class User(Document):
                 "hashed_password": "hashedversion",
                 "is_admin": False
             }
+        }
+        
+    def to_dict(self):
+        """User 객체를 dictionary로 변환"""
+        return {
+            "username": self.username,
+            "email": self.email,
+            "is_admin": self.is_admin
         }

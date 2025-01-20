@@ -48,6 +48,12 @@ export const authSlice = createSlice({
     setToken: (state, action) => {
       state.token = action.payload;
       state.isAuthenticated = !!action.payload;
+      // localStorage에도 토큰 저장
+      if (action.payload) {
+        localStorage.setItem('token', action.payload);
+      } else {
+        localStorage.removeItem('token');
+      }
     },
     setUser: (state, action) => {
       state.user = action.payload;
@@ -57,7 +63,7 @@ export const authSlice = createSlice({
       state.token = null;
       state.user = null;
       state.isAuthenticated = false;
-      state.error = null;
+      localStorage.removeItem('token');
     },
     clearError: (state) => {
       state.error = null;
@@ -65,7 +71,7 @@ export const authSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder
-      // 로그인
+      // 로그인 Thunk
       .addCase(loginThunk.pending, (state) => {
         state.loading = true;
         state.error = null;
@@ -74,26 +80,33 @@ export const authSlice = createSlice({
         state.loading = false;
         state.token = action.payload.accessToken;
         state.isAuthenticated = true;
+        localStorage.setItem('token', action.payload.accessToken);
       })
       .addCase(loginThunk.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
+        state.token = null;
+        state.isAuthenticated = false;
       })
-      // 사용자 정보 조회
+      // 현재 사용자 정보 조회 Thunk
       .addCase(getCurrentUserThunk.pending, (state) => {
         state.loading = true;
+        state.error = null;
       })
       .addCase(getCurrentUserThunk.fulfilled, (state, action) => {
         state.loading = false;
         state.user = action.payload;
-        state.isAuthenticated = true;
       })
       .addCase(getCurrentUserThunk.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
-        state.token = null;
         state.user = null;
-        state.isAuthenticated = false;
+        // 토큰이 유효하지 않은 경우 로그아웃
+        if (action.payload === '토큰이 없습니다.' || action.payload?.includes('401')) {
+          state.token = null;
+          state.isAuthenticated = false;
+          localStorage.removeItem('token');
+        }
       });
   }
 });

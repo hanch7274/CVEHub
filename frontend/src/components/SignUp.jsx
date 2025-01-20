@@ -9,7 +9,9 @@ import {
   Alert,
   IconButton,
   InputAdornment,
-  Snackbar
+  Snackbar,
+  Checkbox,
+  FormControlLabel
 } from '@mui/material';
 import {
   Visibility as VisibilityIcon,
@@ -24,7 +26,8 @@ const SignUp = () => {
     username: '',
     email: '',
     password: '',
-    confirmPassword: ''
+    confirmPassword: '',
+    is_admin: false
   });
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -77,23 +80,24 @@ const SignUp = () => {
     }
 
     try {
-      const response = await api.post('/auth/signup', {
-        username: formData.username,
-        email: formData.email,
-        password: formData.password
-      });
+      // FormData 객체 생성
+      const formDataToSend = new FormData();
+      formDataToSend.append('username', formData.username);
+      formDataToSend.append('email', formData.email);
+      formDataToSend.append('password', formData.password);
+      formDataToSend.append('is_admin', formData.is_admin);
 
-      if (response.status === 201) {
+      const response = await api.post('/auth/signup', formDataToSend);
+
+      if (response.status === 200 || response.status === 201) {
         setSnackbar({
           open: true,
           message: '회원가입이 완료되었습니다!',
           severity: 'success'
         });
         
-        // 3초 후 로그인 페이지로 이동
-        setTimeout(() => {
-          navigate('/login');
-        }, 3000);
+        // 로그인 페이지로 즉시 이동
+        navigate('/login');
       }
     } catch (error) {
       const errorMessage = error.response?.data?.detail || '회원가입 중 오류가 발생했습니다';
@@ -118,6 +122,13 @@ const SignUp = () => {
         [name]: ''
       }));
     }
+  };
+
+  const handleCheckboxChange = (e) => {
+    setFormData(prev => ({
+      ...prev,
+      is_admin: e.target.checked
+    }));
   };
 
   const handleCloseSnackbar = () => {
@@ -248,7 +259,18 @@ const SignUp = () => {
                   </InputAdornment>
                 ),
               }}
-              sx={{ mb: 3 }}
+              sx={{ mb: 2 }}
+            />
+
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={formData.is_admin}
+                  onChange={handleCheckboxChange}
+                  name="is_admin"
+                />
+              }
+              label="관리자 계정으로 가입"
             />
 
             <Button

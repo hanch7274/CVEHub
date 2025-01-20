@@ -77,11 +77,12 @@ const CVEList = () => {
         setCves(response.data.items);
         setTotalCount(response.data.total || 0);
       } else {
-        throw new Error('Invalid response format');
+        throw new Error('서버 응답 형식이 올바르지 않습니다.');
       }
     } catch (error) {
       console.error('Error fetching CVEs:', error);
-      setError(error.response?.data?.detail || 'CVE 목록을 가져오는 중 오류가 발생했습니다.');
+      const errorMessage = error.response?.data?.detail || 'CVE 목록을 가져오는 중 오류가 발생했습니다.';
+      setError(errorMessage);
       if (error.response?.status === 401) {
         navigate('/login');
       }
@@ -131,6 +132,12 @@ const CVEList = () => {
   useEffect(() => {
     debouncedSearchRef.current = debouncedSearch;
   }, [debouncedSearch]);
+
+  useEffect(() => {
+    if (user) {
+      fetchCVEs();
+    }
+  }, [fetchCVEs, user]);
 
   useEffect(() => {
     if (!user) {

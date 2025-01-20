@@ -68,7 +68,14 @@ const Login = () => {
 
     try {
       await login(formData.email, formData.password);
-      navigate('/cves');
+      
+      // 로그인 성공 후 saveId 설정 처리
+      if (saveId) {
+        localStorage.setItem('savedEmail', formData.email);
+      }
+      
+      // 리다이렉트
+      navigate('/cves', { replace: true });
     } catch (err) {
       console.error('Login error:', err);
       setError(typeof err === 'string' ? err : '로그인 중 오류가 발생했습니다. 다시 시도해주세요.');

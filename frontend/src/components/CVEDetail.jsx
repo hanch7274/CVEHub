@@ -53,7 +53,7 @@ import {
   Comment as CommentIcon,
   Circle as CircleIcon
 } from '@mui/icons-material';
-import Comments from './CVEDetail/Comments';
+import CommentsTab from './CVEDetail/CommentsTab';
 
 const TabPanel = (props) => {
   const { children, value, index, ...other } = props;
@@ -144,31 +144,29 @@ const getStatusColor = (status) => {
 };
 
 const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
+  const [cve, setCve] = useState(initialCve);
+  const [isEditMode, setIsEditMode] = useState(false);
   const [tabValue, setTabValue] = useState(0);
-  const [newComment, setNewComment] = useState('');
-  const [editingComment, setEditingComment] = useState(null);
-  const [comments, setComments] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [cve, setCve] = useState(initialCve); 
   const [pocDialogOpen, setPocDialogOpen] = useState(false);
+  const [snortRuleDialogOpen, setSnortRuleDialogOpen] = useState(false);
+  const [showCopyTooltip, setShowCopyTooltip] = useState(false);
+  const [newReferenceUrl, setNewReferenceUrl] = useState('');
   const [newPoc, setNewPoc] = useState({
     source: 'Etc',
     url: '',
     description: ''
   });
-  const [snortRuleDialogOpen, setSnortRuleDialogOpen] = useState(false);
-  const [editingSnortRule, setEditingSnortRule] = useState(null);
-  const [editingSnortRuleIndex, setEditingSnortRuleIndex] = useState(null);
   const [newSnortRule, setNewSnortRule] = useState({
     type: 'USER_DEFINED',
     rule: '',
     description: ''
   });
-  const [showCopyTooltip, setShowCopyTooltip] = useState(false);
-  const [isEditMode, setIsEditMode] = useState(false);
+  const [editingSnortRule, setEditingSnortRule] = useState(null);
+  const [editingSnortRuleIndex, setEditingSnortRuleIndex] = useState(null);
+  const [activeComments, setActiveComments] = useState([]); 
   const [editingPocId, setEditingPocId] = useState(null);
   const [editingPocData, setEditingPocData] = useState(null);
-  const [newReferenceUrl, setNewReferenceUrl] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const POC_SOURCES = {
     Etc: { label: 'Etc', color: 'default' },
@@ -186,6 +184,14 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
   };
 
   useEffect(() => {
+    console.log('CVE 상세 데이터:', cve);
+    if (Array.isArray(cve?.comments)) {
+      console.log('전체 댓글 수:', cve.comments.length);
+      console.log('활성화된 댓글 수:', countActiveComments(cve.comments));
+    }
+  }, [cve]);
+
+  useEffect(() => {
     if (initialCve) {
       setCve(initialCve);
     }
@@ -197,25 +203,32 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
     }
   }, [open]);
 
-  const loadComments = useCallback(async () => {
-    try {
-      setLoading(true);
-      const response = await api.get(`/cves/${cve.cveId}/comments`);
-      setComments(response.data || []);
-    } catch (error) {
-      console.error('Failed to load comments:', error);
-      // 401 에러는 auth.js의 인터셉터에서 처리됨
-      setComments([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [cve]);
-
   useEffect(() => {
-    if (open && cve) {
-      loadComments();
+    const loadInitialComments = async () => {
+      if (!cve?.cveId) return;
+      
+      try {
+        const response = await api.get(`/cves/${cve.cveId}/comments`);
+        const comments = response.data;
+        
+        if (comments && Array.isArray(comments)) {
+          const activeComments = comments.filter(comment => !comment.is_deleted);
+          setActiveComments(activeComments);
+        }
+      } catch (err) {
+        console.error('Failed to load initial comments:', err);
+      }
+    };
+
+    loadInitialComments();
+  }, [cve?.cveId]);
+
+  const updateCVEState = (updatedCVE) => {
+    setCve(updatedCVE);
+    if (onSave) {
+      onSave(updatedCVE);
     }
-  }, [open, cve, loadComments]);
+  };
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
@@ -223,13 +236,6 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
 
   const handleAddPoc = async () => {
     setPocDialogOpen(true);
-  };
-
-  const updateCVEState = (updatedCVE) => {
-    setCve(updatedCVE);
-    if (onSave) {
-      onSave(updatedCVE);
-    }
   };
 
   const handlePocSubmit = async () => {
@@ -357,43 +363,15 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
   };
 
   const handleCommentSubmit = async () => {
-    if (!newComment.trim()) return;
-
-    try {
-      const response = await api.post(`/cves/${cve.cveId}/comments`, {
-        content: newComment.trim()
-      });
-      setComments([...comments, response.data]);
-      setNewComment('');
-    } catch (error) {
-      console.error('Failed to add comment:', error);
-      alert(error.response?.data?.detail || '댓글 추가 중 오류가 발생했습니다.');
-    }
+    // TODO: 댓글 추가 로직 구현
   };
 
   const handleCommentEdit = async (index, content) => {
-    try {
-      const response = await api.put(`/cves/${cve.cveId}/comments/${index}`, {
-        content: content.trim()
-      });
-      const newComments = [...comments];
-      newComments[index] = response.data;
-      setComments(newComments);
-      setEditingComment(null);
-    } catch (error) {
-      console.error('Failed to edit comment:', error);
-      alert(error.response?.data?.detail || '댓글 수정 중 오류가 발생했습니다.');
-    }
+    // TODO: 댓글 수정 로직 구현
   };
 
   const handleCommentDelete = async (index) => {
-    try {
-      await api.delete(`/cves/${cve.cveId}/comments/${index}`);
-      setComments(comments.filter((_, i) => i !== index));
-    } catch (error) {
-      console.error('Failed to delete comment:', error);
-      alert(error.response?.data?.detail || '댓글 삭제 중 오류가 발생했습니다.');
-    }
+    // TODO: 댓글 삭제 로직 구현
   };
 
   const handleDeletePoC = async (index) => {
@@ -499,9 +477,6 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
       
       setCve(response.data);
       setIsEditMode(false);
-      if (onSave) {
-        onSave(response.data);
-      }
     } catch (error) {
       console.error('Failed to update CVE:', error);
       alert(error.response?.data?.detail || 'CVE 정보 수정 중 오류가 발생했습니다.');
@@ -537,9 +512,26 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
       onClose();
     }
     if (onSave) {
-      onSave(cve);  
+      onSave(cve);
     }
   };
+
+  const handleCommentsUpdate = (comments) => {
+    setActiveComments(comments);
+  };
+
+  const countActiveComments = (comments) => {
+    if (!Array.isArray(comments)) return 0;
+    
+    return comments.reduce((count, comment) => {
+      if (!comment) return count;
+      // 삭제되지 않은 댓글만 카운트 (is_deleted 또는 isDeleted 체크)
+      const currentCount = (comment.is_deleted || comment.isDeleted) ? 0 : 1;
+      // 대댓글이 있다면 재귀적으로 카운트
+      const childCount = comment.children ? countActiveComments(comment.children) : 0;
+      return count + currentCount + childCount;
+    }, 0);
+};
 
   if (!cve) {
     return null;
@@ -808,7 +800,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
                 label={
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <CommentIcon sx={{ fontSize: 20 }} />
-                    <span>Comments</span>
+                    <span>Comments ({countActiveComments(activeComments)})</span>
                   </Box>
                 }
                 sx={{ 
@@ -827,16 +819,10 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
                 </Typography>
                 <Button
                   variant="contained"
-                  onClick={handleAddPoc}
                   startIcon={<AddIcon />}
-                  sx={{
-                    background: 'linear-gradient(45deg, #2196f3 30%, #21CBF3 90%)',
-                    '&:hover': {
-                      background: 'linear-gradient(45deg, #1976d2 30%, #21CBF3 90%)'
-                    }
-                  }}
+                  onClick={() => setPocDialogOpen(true)}
                 >
-                  Add POC
+                  Add PoC
                 </Button>
               </Box>
               <TableContainer component={Paper}>
@@ -915,7 +901,6 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
               </TableContainer>
             </TabPanel>
 
-            {/* Snort Rules Tab */}
             <TabPanel value={tabValue} index={1}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
                 <Typography variant="h6" sx={{ fontSize: '1.4rem' }}>
@@ -1011,7 +996,6 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
               </Grid>
             </TabPanel>
 
-            {/* References Tab */}
             <TabPanel value={tabValue} index={2}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
                 <Typography variant="h6" sx={{ fontSize: '1.4rem' }}>
@@ -1102,7 +1086,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
             </TabPanel>
 
             <TabPanel value={tabValue} index={3}>
-              <Comments cveId={cve.cveId} />
+              <CommentsTab cve={cve} onCommentsUpdate={handleCommentsUpdate} />
             </TabPanel>
           </Box>
         </DialogContent>

@@ -20,7 +20,7 @@ import {
   Add as AddIcon,
   Delete as DeleteIcon,
 } from '@mui/icons-material';
-import axios from 'axios';
+import { api } from '../utils/auth';
 
 const POC_SOURCES = {
   Etc: "Etc",
@@ -50,6 +50,7 @@ const CreateCVE = ({ onClose, onSuccess }) => {
     title: '',
     description: '',
     status: '미할당',
+    publishedDate: new Date(new Date().getTime() + (9 * 60 * 60 * 1000)).toISOString(),
     pocs: [],
     snortRules: [],
     references: []
@@ -63,6 +64,7 @@ const CreateCVE = ({ onClose, onSuccess }) => {
   });
   const [newReference, setNewReference] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -125,22 +127,30 @@ const CreateCVE = ({ onClose, onSuccess }) => {
     }));
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+
     try {
-      setError('');
-      
-      // CVE ID 형식 검증
-      const cvePattern = /^CVE-\d{4}-\d{4,}$/;
-      if (!cvePattern.test(formData.cveId)) {
-        setError('Invalid CVE ID format. Must be in format: CVE-YYYY-NNNNN');
-        return;
-      }
+      console.log('Form data: ', formData);
+      console.log('Request data:', {
+        cveId: formData.cveId,
+        title: formData.title,
+        description: formData.description,
+        status: formData.status,
+        publishedDate: formData.publishedDate,
+        pocs: formData.pocs,
+        snortRules: formData.snortRules,
+        references: formData.references
+      });
 
       const requestData = {
         cveId: formData.cveId,
         title: formData.title,
         description: formData.description,
         status: formData.status,
+        publishedDate: formData.publishedDate,
         pocs: formData.pocs.map(poc => ({
           source: poc.source,
           url: poc.url,
@@ -151,72 +161,29 @@ const CreateCVE = ({ onClose, onSuccess }) => {
           type: rule.type,
           description: rule.description || ''
         })),
-        affectedProducts: [],
         references: formData.references.map(ref => ({
-          url: ref.url,
-          dateAdded: ref.dateAdded
+          url: ref.url
         }))
       };
 
-      console.log('Sending request with data:', requestData);
+      const response = await api.post('/cves', requestData);
 
-      const response = await axios.post(
-        'http://localhost:8000/api/cves',
-        requestData,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          validateStatus: function (status) {
-            return status >= 200 && status < 300;
-          }
-        }
-      );
+      console.log('Received response:', response.data);
 
-      console.log('Received response:', {
-        status: response.status,
-        statusText: response.statusText,
-        data: response.data,
-        headers: response.headers
-      });
-
-      // CVE가 성공적으로 생성됨
-      onSuccess(response.data);
-      onClose();
-    } catch (error) {
-      console.error('Error details:', {
-        message: error.message,
-        name: error.name,
-        stack: error.stack,
-        response: error.response ? {
-          status: error.response.status,
-          statusText: error.response.statusText,
-          data: error.response.data,
-          headers: error.response.headers
-        } : 'No response',
-        request: error.request ? 'Request was made but no response received' : 'No request was made'
-      });
-
-      let errorMessage;
-      if (!error.response) {
-        // 네트워크 오류 또는 요청이 전송되지 않음
-        errorMessage = 'Network error. Please check your connection.';
-      } else if (error.response.status === 400) {
-        // 잘못된 요청
-        errorMessage = error.response.data.detail || 'Invalid CVE data';
-      } else if (error.response.status === 409) {
-        // 충돌 (중복된 CVE ID 등)
-        errorMessage = 'CVE ID already exists';
-      } else if (error.response.status >= 500) {
-        // 서버 오류
-        errorMessage = 'Server error. Please try again later.';
-      } else {
-        // 기타 오류
-        errorMessage = `Error creating CVE: ${error.message}`;
+      if (onSuccess) {
+        onSuccess(response.data);
       }
-      
-      setError(errorMessage);
+      onClose();
+    } catch (err) {
+      console.log('Error details: ', err);
+      if (err.response) {
+        console.log('Response data:', err.response.data);
+        console.log('Response status:', err.response.status);
+        console.log('Response headers:', err.response.headers);
+      }
+      setError(err.response?.data?.detail || err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -504,7 +471,7 @@ const CreateCVE = ({ onClose, onSuccess }) => {
         <Button
           variant="contained"
           onClick={handleSubmit}
-          disabled={!formData.cveId.trim()}
+          disabled={!formData.cveId.trim() || loading}
           sx={{ 
             borderRadius: 1,
             bgcolor: 'success.main',

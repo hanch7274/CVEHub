@@ -75,7 +75,7 @@ async def signup(user_data: UserCreate):
         email=user_data.email,
         username=user_data.username,
         hashed_password=hashed_password,
-        is_admin=False
+        is_admin=user_data.is_admin
     )
     
     # DB에 저장
@@ -90,7 +90,7 @@ async def signup(user_data: UserCreate):
         }
     }
 
-@router.post("/login")
+@router.post("/login", response_model=Token)
 async def login(email: str = Form(...), password: str = Form(...)):
     """사용자 로그인을 처리하고 JWT 토큰을 발급합니다."""
     # 1. 이메일로 사용자 찾기
