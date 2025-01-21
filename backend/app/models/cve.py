@@ -3,6 +3,8 @@ from typing import List, Optional, Literal
 from beanie import Document
 from pydantic import BaseModel, Field
 from zoneinfo import ZoneInfo
+import re
+from bson import ObjectId
 
 class PoC(BaseModel):
     source: Literal["Etc", "Metasploit", "Nuclei-Templates"]
@@ -24,8 +26,7 @@ class Reference(BaseModel):
     url: str
 
 class Comment(BaseModel):
-    # YYYYMMDDHHmmSSfff 형식 (년월일시분초밀리초)
-    id: str = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d%H%M%S%f")[:17])
+    id: str = Field(default_factory=lambda: str(ObjectId()))  # ObjectId 사용
     content: str
     username: str  # 작성자 이름
     parent_id: Optional[str] = None  # 부모 댓글 ID
@@ -33,6 +34,47 @@ class Comment(BaseModel):
     is_deleted: bool = False  # 삭제 여부
     created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
     updated_at: Optional[datetime] = None
+
+    @property
+    def mentions(self) -> List[str]:
+        """댓글 내용에서 멘션된 사용자명을 추출합니다."""
+        if not self.content:
+            return []
+        # @username 패턴 찾기
+        pattern = r'@(\w+)'
+        matches = re.findall(pattern, self.content)
+        # 중복 제거 및 @ 기호 추가
+        return [f"@{username}" for username in set(matches)]
+
+class CommentCreate(BaseModel):
+    content: str
+    parent_id: Optional[str] = None
+    depth: int = 0
+
+    @property
+    def extract_mentions(self) -> List[str]:
+        """댓글 내용에서 멘션된 사용자명을 추출합니다."""
+        if not self.content:
+            return []
+        # @username 패턴 찾기
+        pattern = r'@(\w+)'
+        matches = re.findall(pattern, self.content)
+        # 중복 제거 및 @ 기호 추가
+        return [f"@{username}" for username in set(matches)]
+
+class CommentUpdate(BaseModel):
+    content: str
+
+    @property
+    def extract_mentions(self) -> List[str]:
+        """댓글 내용에서 멘션된 사용자명을 추출합니다."""
+        if not self.content:
+            return []
+        # @username 패턴 찾기
+        pattern = r'@(\w+)'
+        matches = re.findall(pattern, self.content)
+        # 중복 제거 및 @ 기호 추가
+        return [f"@{username}" for username in set(matches)]
 
 class ModificationHistory(BaseModel):
     modified_by: str
@@ -42,7 +84,7 @@ class CVEModel(Document):
     cve_id: str
     title: Optional[str] = None
     description: Optional[str] = None
-    status: str = "미할당"  # 미할당, 분석중, 분석완료, 대응완료
+    status: str = "신규등록"  # 신규등록, 분석중, 릴리즈 완료, 분석불가
     assigned_to: Optional[str] = None
     published_date: datetime
     last_modified_date: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
@@ -82,7 +124,7 @@ class CVEModel(Document):
                 "cve_id": "CVE-2023-1234",
                 "title": "Buffer overflow vulnerability in Example Software",
                 "description": "Buffer overflow vulnerability in Example Software",
-                "status": "미할당",
+                "status": "신규등록",
                 "published_date": datetime.now(ZoneInfo("Asia/Seoul")),
                 "last_modified_date": datetime.now(ZoneInfo("Asia/Seoul")),
                 "created_at": datetime.now(ZoneInfo("Asia/Seoul")),

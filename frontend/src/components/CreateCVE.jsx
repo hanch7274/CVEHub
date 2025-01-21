@@ -38,10 +38,10 @@ const SNORT_RULE_TYPES = {
 };
 
 const STATUS_OPTIONS = [
-  { value: "미할당", label: "미할당" },
-  { value: "분석중", label: "분석중" },
-  { value: "분석완료", label: "분석완료" },
-  { value: "대응완료", label: "대응완료" }
+  { value: '신규등록', label: '신규등록' },
+  { value: '분석중', label: '분석중' },
+  { value: '릴리즈 완료', label: '릴리즈 완료' },
+  { value: '분석불가', label: '분석불가' }
 ];
 
 const CreateCVE = ({ onClose, onSuccess }) => {
@@ -49,7 +49,7 @@ const CreateCVE = ({ onClose, onSuccess }) => {
     cveId: '',
     title: '',
     description: '',
-    status: '미할당',
+    status: '신규등록',
     publishedDate: new Date(new Date().getTime() + (9 * 60 * 60 * 1000)).toISOString(),
     pocs: [],
     snortRules: [],

@@ -47,7 +47,7 @@ const STATUS_COLORS = {
   '대응완료': 'success'
 };
 
-const CVEList = () => {
+const CVEList = ({ selectedCVE, setSelectedCVE }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [cves, setCves] = useState([]);
@@ -56,11 +56,17 @@ const CVEList = () => {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCVE, setSelectedCVE] = useState(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [cveToDelete, setCveToDelete] = useState(null);
+
+  useEffect(() => {
+    if (selectedCVE?.id) {
+      navigate(`/cves/${selectedCVE.id}`);
+      setSelectedCVE(null);
+    }
+  }, [selectedCVE, navigate, setSelectedCVE]);
 
   const fetchCVEs = useCallback(async () => {
     try {
@@ -220,6 +226,17 @@ const CVEList = () => {
     setDeleteDialogOpen(false);
     setCveToDelete(null);
   };
+
+  const openCVEDetail = useCallback(async (cveId) => {
+    try {
+      const response = await api.get(`/cves/${cveId}`);
+      setSelectedCVE(response.data);
+    } catch (error) {
+      console.error('Error fetching CVE details:', error);
+      const errorMessage = error.response?.data?.detail || 'CVE 상세 정보를 가져오는 중 오류가 발생했습니다.';
+      setError(errorMessage);
+    }
+  }, []);
 
   const renderSkeletons = () => (
     Array(rowsPerPage).fill(0).map((_, index) => (

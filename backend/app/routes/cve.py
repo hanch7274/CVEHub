@@ -3,9 +3,15 @@ from typing import List, Optional
 from app.models.cve import CVEModel, PoC, SnortRule, Reference, ModificationHistory, Comment
 from app.models.user import User
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
 from zoneinfo import ZoneInfo
+from beanie import PydanticObjectId
+from app.models.notification import Notification, NotificationCreate
 from app.routes.auth import get_current_user
+import re
+from bson import ObjectId
+import traceback
+import logging
 
 router = APIRouter()
 
@@ -23,7 +29,7 @@ class CreateCVERequest(BaseModel):
     cve_id: str
     title: Optional[str] = None
     description: Optional[str] = None
-    status: str = "미할당"
+    status: str = "신규등록"
     published_date: datetime
     references: List[dict] = []
     pocs: List[CreatePoCRequest] = []
@@ -59,12 +65,47 @@ class PatchCVERequest(BaseModel):
     class Config:
         extra = "allow"  # 추가 필드 허용
 
-class CreateCommentRequest(BaseModel):
+class CommentCreate(BaseModel):
     content: str
     parent_id: Optional[str] = None
 
-class UpdateCommentRequest(BaseModel):
+    @property
+    def extract_mentions(self) -> List[str]:
+        """댓글 내용에서 멘션된 사용자명을 추출합니다."""
+        mentions = []
+        if self.content:
+            # @username 패턴 찾기
+            pattern = r'@(\w+)'
+            mentions = list(set(re.findall(pattern, self.content)))
+        return mentions
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "content": "댓글 내용 @username",
+                "parent_id": None
+            }
+        }
+
+class CommentUpdate(BaseModel):
     content: str
+
+    @property
+    def extract_mentions(self) -> List[str]:
+        """댓글 내용에서 멘션된 사용자명을 추출합니다."""
+        mentions = []
+        if self.content:
+            # @username 패턴 찾기
+            pattern = r'@(\w+)'
+            mentions = list(set(re.findall(pattern, self.content)))
+        return mentions
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "content": "수정된 댓글 내용 @username"
+            }
+        }
 
 async def create_single_cve(
     cve_data: CreateCVERequest,
@@ -229,20 +270,38 @@ async def get_cves(
         )
 
 @router.get("/{cve_id}", response_model=CVEModel)
-async def get_cve(cve_id: str):
-    """특정 CVE를 조회합니다."""
+async def get_cve(
+    cve_id: str,
+    notification_id: str = None,
+    current_user: User = Depends(get_current_user)
+):
+    """CVE 상세 정보를 조회합니다. notification_id가 제공되면 해당 알림을 읽음 처리합니다."""
     try:
+        # CVE 찾기
         cve = await CVEModel.find_one({"cve_id": cve_id})
         if not cve:
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=f"CVE with ID {cve_id} not found"
-            )
+            raise HTTPException(status_code=404, detail="CVE를 찾을 수 없습니다.")
+
+        # 알림 처리 (notification_id가 제공된 경우)
+        if notification_id:
+            try:
+                from bson import ObjectId
+                notification = await Notification.get(ObjectId(notification_id))
+                if notification and notification.recipient_id == current_user.id:
+                    notification.is_read = True
+                    await notification.save()
+                    logging.info(f"Marked notification {notification_id} as read while fetching CVE {cve_id}")
+            except Exception as e:
+                logging.error(f"Error processing notification {notification_id}: {str(e)}")
+                # 알림 처리 실패해도 CVE 정보는 계속 반환
+
         return cve
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        raise HTTPException(status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        logging.error(f"Error fetching CVE: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="CVE 정보를 가져오는 중 오류가 발생했습니다."
+        )
 
 @router.post("/", response_model=CVEModel)
 async def create_cve(
@@ -602,179 +661,259 @@ async def delete_cve(
     await cve.delete()
     return {"message": f"CVE {cve_id} has been deleted"}
 
-@router.post("/{cve_id}/comments", response_model=CVEModel)
+async def create_mention_notifications(mentions: List[str], cve_id: str, comment_id: str, sender_id: PydanticObjectId):
+    """멘션된 사용자들에게 알림을 생성합니다."""
+    logging.info("=== Starting create_mention_notifications ===")
+    logging.info(f"Parameters: mentions={mentions}, cve_id={cve_id}, comment_id={comment_id}, sender_id={sender_id}")
+    
+    notifications_created = 0
+    
+    for mention in mentions:
+        try:
+            # @ 기호 제거
+            username = mention.replace("@", "")
+            logging.info(f"Processing mention for user: {username}")
+            
+            # 멘션된 사용자 찾기
+            mentioned_user = await User.find_one({"username": username})
+            if not mentioned_user:
+                logging.warning(f"User not found: {username}")
+                continue
+            logging.info(f"Found mentioned user: {mentioned_user.id} ({mentioned_user.username})")
+
+            # 자기 자신을 멘션한 경우 알림 생성하지 않음
+            if mentioned_user.id == sender_id:
+                logging.info(f"Skipping self mention for user: {username}")
+                continue
+            
+            try:
+                # 알림 생성
+                notification_data = {
+                    "recipient_id": mentioned_user.id,
+                    "sender_id": sender_id,
+                    "cve_id": cve_id,
+                    "comment_id": PydanticObjectId(comment_id),
+                    "content": f"{username}님이 멘션되었습니다."
+                }
+                logging.info(f"Creating notification with data: {notification_data}")
+                
+                # create_notification 클래스 메서드를 사용하여 알림 생성
+                notification = await Notification.create_notification(**notification_data)
+                
+                if notification and notification.id:
+                    logging.info(f"Successfully created notification: {notification.id}")
+                    notifications_created += 1
+                else:
+                    logging.error("Failed to create notification: No ID returned")
+                
+            except Exception as e:
+                logging.error(f"Error creating notification: {str(e)}")
+                logging.error(f"Error type: {type(e)}")
+                logging.error(f"Full error details: {e.__dict__ if hasattr(e, '__dict__') else 'No details available'}")
+                logging.error(f"Traceback: {traceback.format_exc()}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"알림 생성 중 오류가 발생했습니다: {str(e)}"
+                )
+                
+        except Exception as e:
+            logging.error(f"Outer error in mention processing: {str(e)}")
+            logging.error(f"Error type: {type(e)}")
+            logging.error(f"Traceback: {traceback.format_exc()}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"알림 처리 중 오류가 발생했습니다: {str(e)}"
+            )
+    
+    logging.info(f"=== Finished create_mention_notifications: Created {notifications_created} notifications ===")
+
+@router.post("/{cve_id}/comments", response_model=Comment)
 async def create_comment(
     cve_id: str,
-    comment_data: CreateCommentRequest,
+    comment_data: CommentCreate,
     current_user: User = Depends(get_current_user)
 ):
-    """CVE에 새 댓글을 추가합니다."""
-    try:
-        # 1. CVE 존재 여부 확인
-        cve = await CVEModel.find_one({"cve_id": cve_id})
-        if not cve:
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=f"CVE {cve_id}를 찾을 수 없습니다."
-            )
-
-        # 2. 새 댓글 생성
-        new_comment = Comment(
-            content=comment_data.content,
-            username=current_user.username,
-            parent_id=comment_data.parent_id,
-            created_at=datetime.now(ZoneInfo("Asia/Seoul"))
-        )
-
-        # 3. 부모 댓글이 있는 경우 depth 설정
-        if comment_data.parent_id:
-            parent_comment = next(
-                (c for c in cve.comments if c.id == comment_data.parent_id),
-                None
-            )
-            if not parent_comment:
-                raise HTTPException(
-                    status_code=http_status.HTTP_404_NOT_FOUND,
-                    detail=f"부모 댓글 {comment_data.parent_id}를 찾을 수 없습니다."
-                )
-            new_comment.depth = parent_comment.depth + 1
-
-        # 4. 댓글 추가 및 CVE 업데이트
-        cve.comments.append(new_comment)
-        current_time = datetime.now(ZoneInfo("Asia/Seoul"))
-        cve.last_modified_date = current_time
-        
-        # 5. 수정 이력 추가
-        cve.modification_history.append(
-            ModificationHistory(
-                modified_by=current_user.username,
-                modified_at=current_time
-            )
-        )
-        
-        await cve.save()
-        return cve
-
-    except Exception as e:
-        print(f"Error in create_comment: {str(e)}")
+    """새로운 댓글을 작성합니다."""
+    print(f"[DEBUG] Creating comment with data: {comment_data}")
+    print(f"[DEBUG] Current user: {current_user.username} (ID: {current_user.id})")
+    
+    # CVE 문서를 찾습니다
+    cve = await CVEModel.find_one({"cve_id": cve_id})
+    if not cve:
         raise HTTPException(
-            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"댓글 생성 중 오류가 발생했습니다: {str(e)}"
+            status_code=404,
+            detail="CVE를 찾을 수 없습니다."
         )
+    
+    # 새 댓글을 생성합니다
+    new_comment = Comment(
+        content=comment_data.content,
+        username=current_user.username,
+        parent_id=comment_data.parent_id,
+        depth=comment_data.depth
+    )
+    print(f"[DEBUG] Created new comment: {new_comment.dict()}")
+    
+    # 댓글에서 멘션된 사용자들을 추출합니다
+    mentions = comment_data.extract_mentions()
+    print(f"[DEBUG] Extracted mentions: {mentions}")
+    
+    # 댓글을 CVE 문서에 추가합니다
+    cve.comments.append(new_comment)
+    await cve.save()
+    print(f"[DEBUG] Saved comment to CVE document")
+    
+    # 멘션된 사용자들에게 알림을 생성합니다
+    if mentions:
+        try:
+            print(f"[DEBUG] Attempting to create notifications for mentions: {mentions}")
+            await create_mention_notifications(mentions, cve_id, str(new_comment.id), current_user.id)
+            print(f"[DEBUG] Successfully created notifications")
+        except Exception as e:
+            print(f"[DEBUG] Error in notification creation: {str(e)}")
+            print(f"[DEBUG] Error type: {type(e)}")
+            # 알림 생성 실패는 댓글 작성에 영향을 주지 않도록 함
+            pass
+    
+    return new_comment
 
-@router.patch("/{cve_id}/comments/{comment_id}", response_model=CVEModel)
+@router.patch("/{cve_id}/comments/{comment_id}", response_model=Comment)
 async def update_comment(
     cve_id: str,
     comment_id: str,
-    comment_data: UpdateCommentRequest,
-    current_user: dict = Depends(get_current_user)
+    comment_data: dict,
+    current_user: User = Depends(get_current_user)
 ):
-    """CVE의 특정 댓글을 수정합니다."""
+    """댓글을 수정합니다."""
+    print(f"[DEBUG] Updating comment {comment_id} with data: {comment_data}")
+    
+    # CommentUpdate 모델로 변환
     try:
-        # 1. CVE 존재 여부 확인
-        cve = await CVEModel.find_one({"cve_id": cve_id})
-        if not cve:
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=f"CVE with ID {cve_id} not found"
-            )
-
-        # 2. 댓글 찾기
-        comment = next((c for c in cve.comments if c.id == comment_id), None)
-        if not comment:
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=f"Comment with ID {comment_id} not found"
-            )
-
-        # 3. 권한 확인
-        if comment.username != current_user["username"]:
-            raise HTTPException(
-                status_code=http_status.HTTP_403_FORBIDDEN,
-                detail="You can only update your own comments"
-            )
-
-        # 4. 댓글 수정
-        comment.content = comment_data.content
-        comment.updated_at = datetime.now(ZoneInfo("Asia/Seoul"))
-        cve.last_modified_at = datetime.now(ZoneInfo("Asia/Seoul"))
-        await cve.save()
-
-        return cve
-
-    except Exception as e:
+        comment_update = CommentUpdate(content=comment_data.get("content", ""))
+    except ValidationError as e:
         raise HTTPException(
-            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=422,
             detail=str(e)
         )
 
+    # CVE 문서를 찾습니다
+    cve = await CVEModel.find_one({"cve_id": cve_id})
+    if not cve:
+        raise HTTPException(
+            status_code=404,
+            detail="CVE를 찾을 수 없습니다."
+        )
+    
+    # 댓글을 찾습니다
+    comment = next(
+        (comment for comment in cve.comments if comment.id == comment_id),
+        None
+    )
+    if not comment:
+        raise HTTPException(
+            status_code=404,
+            detail="댓글을 찾을 수 없습니다."
+        )
+    
+    # 권한을 확인합니다
+    if comment.username != current_user.username and current_user.username != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="댓글을 수정할 권한이 없습니다."
+        )
+    
+    try:
+        # 이전 멘션 목록을 저장
+        old_mentions = set(comment.mentions)
+        print(f"[DEBUG] Old mentions: {old_mentions}")
+        
+        # 댓글을 수정합니다
+        comment.content = comment_update.content
+        comment.updated_at = datetime.now(ZoneInfo("Asia/Seoul"))
+        
+        # 새로운 멘션 목록을 가져옵니다
+        new_mentions = set(comment.mentions)
+        print(f"[DEBUG] New mentions: {new_mentions}")
+        
+        # 새로 추가된 멘션에 대해서만 알림을 생성
+        added_mentions = new_mentions - old_mentions
+        print(f"[DEBUG] Added mentions: {added_mentions}")
+        
+        if added_mentions:
+            await create_mention_notifications(list(added_mentions), cve_id, comment.id, current_user.id)
+        
+        # CVE 문서를 저장합니다
+        await cve.save()
+        
+        return comment
+    except Exception as e:
+        print(f"[DEBUG] Error updating comment: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"댓글 수정 중 오류가 발생했습니다: {str(e)}"
+        )
 
-@router.delete("/{cve_id}/comments/{comment_id}", response_model=CVEModel)
+@router.delete("/{cve_id}/comments/{comment_id}")
 async def delete_comment(
     cve_id: str,
     comment_id: str,
-    current_user: dict = Depends(get_current_user)
+    permanent: bool = False,
+    current_user: User = Depends(get_current_user)
 ):
-    """CVE의 특정 댓글을 삭제합니다."""
-    try:
-        # 1. CVE 존재 여부 확인
-        cve = await CVEModel.find_one({"cve_id": cve_id})
-        if not cve:
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=f"CVE with ID {cve_id} not found"
-            )
-
-        # 2. 댓글 찾기
-        comment = next((c for c in cve.comments if c.id == comment_id), None)
-        if not comment:
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=f"Comment with ID {comment_id} not found"
-            )
-
-        # 3. 권한 확인
-        if comment.username != current_user["username"]:
-            raise HTTPException(
-                status_code=http_status.HTTP_403_FORBIDDEN,
-                detail="You can only delete your own comments"
-            )
-
-        # 4. 댓글 삭제 (실제로 삭제하지 않고 is_deleted 플래그만 설정)
+    """댓글을 삭제합니다."""
+    # CVE 문서를 찾습니다
+    cve = await CVEModel.find_one({"cve_id": cve_id})
+    if not cve:
+        raise HTTPException(
+            status_code=404,
+            detail="CVE를 찾을 수 없습니다."
+        )
+    
+    # 댓글을 찾습니다
+    comment = next(
+        (comment for comment in cve.comments if comment.id == comment_id),
+        None
+    )
+    if not comment:
+        raise HTTPException(
+            status_code=404,
+            detail="댓글을 찾을 수 없습니다."
+        )
+    
+    # 권한을 확인합니다
+    if comment.username != current_user.username and current_user.username != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="댓글을 삭제할 권한이 없습니다."
+        )
+    
+    if permanent:
+        # 댓글을 완전히 삭제합니다
+        cve.comments = [c for c in cve.comments if c.id != comment_id]
+    else:
+        # 댓글을 소프트 삭제합니다
         comment.is_deleted = True
         comment.updated_at = datetime.now(ZoneInfo("Asia/Seoul"))
-        cve.last_modified_at = datetime.now(ZoneInfo("Asia/Seoul"))
-        await cve.save()
+    
+    # CVE 문서를 저장합니다
+    await cve.save()
+    
+    return {"message": "댓글이 삭제되었습니다."}
 
-        return cve
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-@router.get("/{cve_id}/comments")
+@router.get("/{cve_id}/comments", response_model=List[Comment])
 async def get_comments(cve_id: str):
-    """특정 CVE의 모든 댓글을 조회합니다."""
-    try:
-        cve = await CVEModel.find_one({"cve_id": cve_id})
-        if not cve:
-            raise HTTPException(
-                status_code=http_status.HTTP_404_NOT_FOUND,
-                detail=f"CVE {cve_id}를 찾을 수 없습니다."
-            )
-        
-        # 삭제되지 않은 댓글만 필터링
-        active_comments = [c for c in cve.comments if not c.is_deleted]
-        
-        return {
-            "comments": active_comments,  # 삭제되지 않은 댓글만 반환
-            "total": len(active_comments),  # 삭제되지 않은 댓글 수
-            "active_total": len(active_comments)  # 삭제되지 않은 댓글 수 (total과 동일)
-        }
-    except Exception as e:
+    """CVE의 모든 댓글을 조회합니다."""
+    # CVE 문서를 찾습니다
+    cve = await CVEModel.find_one({"cve_id": cve_id})
+    if not cve:
         raise HTTPException(
-            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"댓글 목록을 가져오는 중 오류가 발생했습니다: {str(e)}"
+            status_code=404,
+            detail="CVE를 찾을 수 없습니다."
         )
+    
+    # 댓글이 없는 경우 빈 리스트 반환
+    if not cve.comments:
+        return []
+    
+    # 삭제되지 않은 댓글만 필터링하여 반환
+    return [comment for comment in cve.comments if not comment.is_deleted]

@@ -14,12 +14,14 @@ import {
 } from '@mui/material';
 import { useSelector } from 'react-redux';
 import Comment from './Comment';
+import MentionInput from '../common/MentionInput';
 import { api } from '../../utils/auth';
 
 const CommentsTab = ({ cve }) => {
   const [comments, setComments] = useState([]);
   const [activeCommentCount, setActiveCommentCount] = useState(0);
   const [newComment, setNewComment] = useState('');
+  const [parentCommentId, setParentCommentId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null);
   const [snackbar, setSnackbar] = useState({
@@ -99,23 +101,28 @@ const CommentsTab = ({ cve }) => {
 
     setLoading(true);
     try {
-      await api.post(`/cves/${cve.cveId}/comments`, {
-        content: newComment.trim()
-      });
+      const commentData = {
+        content: newComment,
+        ...(parentCommentId && { parent_id: parentCommentId })
+      };
+
+      console.log('댓글 요청 데이터:', commentData);
+      const response = await api.post(`/cves/${cve.cveId}/comments`, commentData);
+      console.log('댓글 응답:', response.data);
       
       setNewComment('');
-      refreshComments();
+      await refreshComments();
       
       setSnackbar({
         open: true,
-        message: '댓글이 작성되었습니다.',
+        message: '댓글이 등록되었습니다.',
         severity: 'success'
       });
     } catch (error) {
-      console.error('Error posting comment:', error);
+      console.error('댓글 등록 에러:', error.response?.data || error);
       setSnackbar({
         open: true,
-        message: error.response?.data?.detail || '댓글 작성에 실패했습니다.',
+        message: error.response?.data?.detail?.[0]?.msg || '댓글 등록에 실패했습니다.',
         severity: 'error'
       });
     } finally {
@@ -128,24 +135,24 @@ const CommentsTab = ({ cve }) => {
 
     setLoading(true);
     try {
-      await api.post(`/cves/${cve.cveId}/comments`, {
-        content: content.trim(),
+      const response = await api.post(`/cves/${cve.cveId}/comments`, {
+        content,
         parent_id: parentId
       });
       
       setReplyingTo(null);
-      refreshComments();
+      await refreshComments();
       
       setSnackbar({
         open: true,
-        message: '답글이 작성되었습니다.',
+        message: '답글이 등록되었습니다.',
         severity: 'success'
       });
     } catch (error) {
-      console.error('Error posting reply:', error);
+      console.error('답글 등록 에러:', error);
       setSnackbar({
         open: true,
-        message: error.response?.data?.detail || '답글 작성에 실패했습니다.',
+        message: '답글 등록에 실패했습니다.',
         severity: 'error'
       });
     } finally {
@@ -153,13 +160,13 @@ const CommentsTab = ({ cve }) => {
     }
   };
 
-  const handleEdit = async (commentId, content) => {
+  const handleEdit = async (commentId, newContent) => {
     try {
-      await api.patch(`/cves/${cve.cveId}/comments/${commentId}`, {
-        content: content.trim()
+      const response = await api.patch(`/cves/${cve.cveId}/comments/${commentId}`, {
+        content: newContent
       });
       
-      refreshComments();
+      await refreshComments();
       
       setSnackbar({
         open: true,
@@ -167,10 +174,10 @@ const CommentsTab = ({ cve }) => {
         severity: 'success'
       });
     } catch (error) {
-      console.error('Error editing comment:', error);
+      console.error('댓글 수정 에러:', error);
       setSnackbar({
         open: true,
-        message: error.response?.data?.detail || '댓글 수정에 실패했습니다.',
+        message: '댓글 수정에 실패했습니다.',
         severity: 'error'
       });
     }
@@ -226,13 +233,13 @@ const CommentsTab = ({ cve }) => {
           <Comment
             comment={comment}
             currentUsername={currentUser?.username}
-            onReply={(commentId) => setReplyingTo(commentId)}
+            onReply={(commentId) => setParentCommentId(commentId)}  
             onEdit={handleEdit}
             onDelete={handleDelete}
             depth={comment.depth || 0}
-            replyMode={replyingTo === comment.id}
+            replyMode={parentCommentId === comment.id}  
             onReplySubmit={handleReplySubmit}
-            onReplyCancel={() => setReplyingTo(null)}
+            onReplyCancel={() => setParentCommentId(null)}
             cveId={cve.cveId}
           />
           {comment.children && comment.children.length > 0 && (
@@ -252,41 +259,42 @@ const CommentsTab = ({ cve }) => {
 
   return (
     <Box>
-      {currentUser && (
-        <Box sx={{ mb: 3 }}>
-          <TextField
-            fullWidth
-            multiline
-            rows={3}
-            value={newComment}
-            onChange={(e) => setNewComment(e.target.value)}
-            placeholder="댓글을 입력하세요..."
-            variant="outlined"
-          />
-          <Box sx={{ mt: 1, display: 'flex', justifyContent: 'flex-end' }}>
-            <Button
-              variant="contained"
-              onClick={handleSubmit}
-              disabled={!newComment.trim() || loading}
-              endIcon={loading ? <CircularProgress size={20} /> : null}
-            >
-              댓글 작성
-            </Button>
-          </Box>
+      <Typography variant="h6" gutterBottom>
+        댓글 ({activeCommentCount})
+      </Typography>
+
+      {/* 댓글 입력 */}
+      <Box sx={{ mb: 3 }}>
+        <MentionInput
+          value={newComment}
+          onChange={(e) => setNewComment(e.target.value)}
+          placeholder="새로운 댓글을 입력하세요..."
+          variant="outlined"
+          size="small"
+          fullWidth
+          multiline
+          rows={3}
+          disabled={loading}
+        />
+        <Box sx={{ mt: 1, display: 'flex', justifyContent: 'flex-end' }}>
+          <Button
+            variant="contained"
+            onClick={handleSubmit}
+            disabled={!newComment.trim() || loading}
+            size="small"
+          >
+            {loading ? <CircularProgress size={24} /> : '댓글 작성'}
+          </Button>
         </Box>
-      )}
-      <Box>
-        <Typography variant="h6" gutterBottom>
-          댓글 ({countActiveComments(comments)})
-        </Typography>
-        {comments.length > 0 ? (
-          renderComments(comments)
-        ) : (
-          <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 3 }}>
-            아직 댓글이 없습니다.
-          </Typography>
-        )}
       </Box>
+
+      {comments.length > 0 ? (
+        renderComments(comments)
+      ) : (
+        <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 3 }}>
+          아직 댓글이 없습니다.
+        </Typography>
+      )}
 
       <Snackbar
         open={snackbar.open}

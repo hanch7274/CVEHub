@@ -1,17 +1,47 @@
 import logging
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Body
 from ..models.cve import CVEModel, Comment
+from ..models.user import User
+from ..models.notification import Notification, NotificationCreate
 from ..routes.auth import get_current_user
+from ..routes.notification import create_notification
 from zoneinfo import ZoneInfo
 import traceback
+import re
+from beanie import PydanticObjectId
 
 # 로거 설정
 logger = logging.getLogger("comment_router")
 logger.setLevel(logging.DEBUG)
 
 router = APIRouter()
+
+async def process_mentions(content: str, cve_id: str, comment_id: PydanticObjectId, sender: User):
+    """댓글 내용에서 멘션된 사용자를 찾아 알림을 생성합니다."""
+    try:
+        # @username 패턴 찾기
+        mentions = re.findall(r'@(\w+)', content)
+        
+        for username in mentions:
+            # 멘션된 사용자 찾기
+            mentioned_user = await User.find_one({"username": username})
+            if mentioned_user and str(mentioned_user.id) != str(sender.id):  # 자기 자신을 멘션한 경우 제외
+                # 알림 생성
+                await Notification.create_notification(
+                    recipient_id=mentioned_user.id,
+                    sender_id=sender.id,
+                    sender_username=sender.username,
+                    cve_id=cve_id,
+                    comment_id=comment_id,
+                    comment_content=content,
+                    content=f"{sender.username}님이 댓글에서 언급했습니다."
+                )
+                logging.info(f"Created mention notification for user {username}")
+    except Exception as e:
+        logging.error(f"Error processing mentions: {str(e)}")
+        # 알림 생성 실패는 댓글 작성에 영향을 주지 않도록 예외를 전파하지 않음
 
 @router.post("/{cve_id}/comments")
 async def add_comment(
@@ -73,6 +103,14 @@ async def add_comment(
         # 변경사항 저장
         await cve.save()
         logger.info("Comment Add - Success")
+        
+        # 멘션 알림 생성
+        await process_mentions(
+            content=content,
+            cve_id=cve_id,
+            comment_id=comment.id,
+            sender=current_user
+        )
 
         return comment
         
@@ -312,7 +350,8 @@ async def delete_comment(
             if str(comment.id) == comment_id:
                 print(f"Found matching comment")
                 
-                if comment.username != current_username:
+                # admin이 아니고, 자신의 댓글이 아닌 경우 삭제 불가
+                if current_username != "admin" and comment.username != current_username:
                     print(f"Permission denied. Comment author: {comment.username}, Current user: {current_username}")
                     raise HTTPException(status_code=403, detail="자신의 댓글만 삭제할 수 있습니다.")
                 

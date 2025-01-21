@@ -4,7 +4,6 @@ import {
   Typography,
   IconButton,
   Button,
-  TextField,
   Stack,
   Tooltip
 } from '@mui/material';
@@ -19,6 +18,8 @@ import {
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import { api } from '../../utils/auth';
+import MentionInput from '../common/MentionInput';
+import { highlightMentions } from '../../utils/mentionUtils';
 
 const Comment = ({
   comment,
@@ -70,6 +71,12 @@ const Comment = ({
     }
   };
 
+  const handleDelete = () => {
+    if (window.confirm('이 댓글을 삭제하시겠습니까?')) {
+      onDelete(comment.id, false);
+    }
+  };
+
   const formatDate = (dateString) => {
     try {
       if (!dateString) return '';
@@ -85,7 +92,7 @@ const Comment = ({
     if (isEditing) {
       return (
         <Box sx={{ mt: 1 }}>
-          <TextField
+          <MentionInput
             fullWidth
             multiline
             rows={2}
@@ -95,19 +102,10 @@ const Comment = ({
             size="small"
           />
           <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-            <Button
-              variant="contained"
-              size="small"
-              onClick={handleEdit}
-              disabled={!editContent.trim()}
-            >
+            <Button size="small" onClick={handleEdit} variant="contained">
               저장
             </Button>
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={() => setIsEditing(false)}
-            >
+            <Button size="small" onClick={() => setIsEditing(false)}>
               취소
             </Button>
           </Stack>
@@ -115,160 +113,128 @@ const Comment = ({
       );
     }
 
-    if (isDeleted) {
+    if (isDeleted && !showOriginal) {
       return (
-        <Box>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ fontStyle: 'italic' }}
-          >
-            삭제된 댓글입니다.
-          </Typography>
-          {isAdmin && (
-            <>
-              <Button
-                startIcon={showOriginal ? <VisibilityOffIcon /> : <VisibilityIcon />}
-                size="small"
-                onClick={() => setShowOriginal(!showOriginal)}
-                sx={{ mt: 1 }}
-              >
-                {showOriginal ? '원본 숨기기' : '원본 보기'}
-              </Button>
-              {showOriginal && (
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ mt: 1, pl: 2, borderLeft: '2px solid #ccc' }}
-                >
-                  {comment.content}
-                </Typography>
-              )}
-            </>
-          )}
-        </Box>
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{ fontStyle: 'italic' }}
+        >
+          삭제된 댓글입니다.
+        </Typography>
       );
     }
 
-    return <Typography variant="body2">{comment.content}</Typography>;
-  };
-
-  const renderActions = () => {
-    if (isDeleted) {
-      if (isAdmin) {
-        return (
-          <Tooltip title="완전 삭제 (관리자 전용)">
-            <IconButton
-              size="small"
-              onClick={handlePermanentDelete}
-              color="error"
-            >
-              <DeleteForeverIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        );
-      }
-      return null;
-    }
-
     return (
-      <Stack direction="row" spacing={1}>
-        <Tooltip title="답글 작성">
-          <IconButton
-            size="small"
-            onClick={() => onReply(comment.id)}
-            disabled={depth >= 5}
-          >
-            <ReplyIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        {canModify && (
-          <>
-            <Tooltip title="수정">
-              <IconButton size="small" onClick={handleEdit}>
-                <EditIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title={isAdmin ? "소프트 삭제" : "삭제"}>
-              <IconButton
-                size="small"
-                onClick={() => onDelete(comment.id, false)}
-                color="error"
-              >
-                <DeleteIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            {isAdmin && (
-              <Tooltip title="완전 삭제 (관리자 전용)">
-                <IconButton
-                  size="small"
-                  onClick={handlePermanentDelete}
-                  color="error"
-                >
-                  <DeleteForeverIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            )}
-          </>
-        )}
-      </Stack>
+      <Typography
+        variant="body2"
+        component="div"
+        dangerouslySetInnerHTML={{
+          __html: highlightMentions(comment.content)
+        }}
+        sx={{
+          '& .mention': {
+            color: 'primary.main',
+            fontWeight: 'medium',
+            '&:hover': {
+              textDecoration: 'underline',
+              cursor: 'pointer'
+            }
+          },
+          wordBreak: 'break-word'
+        }}
+      />
     );
   };
 
   return (
-    <Box sx={{ ml: depth * 3, mb: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
-        <Typography variant="subtitle2" color="primary">
-          {comment.username}
-        </Typography>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ ml: 1 }}
-        >
-          {formatDate(comment.createdAt)}
-        </Typography>
-        {comment.updatedAt && (
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ ml: 1 }}
-          >
-            (수정됨)
-          </Typography>
-        )}
+    <Box
+      sx={{
+        ml: depth * 4,
+        mb: 2,
+        p: 2,
+        borderRadius: 1,
+        bgcolor: replyMode ? 'action.hover' : 'background.paper',  
+        border: replyMode ? '1px solid' : 'none',  
+        borderColor: 'primary.main',  
+        transition: 'all 0.3s ease',  
+        position: 'relative',  
+        '&::before': replyMode ? {  
+          content: '""',
+          position: 'absolute',
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: 4,
+          backgroundColor: 'primary.main',
+          borderRadius: '4px 0 0 4px'
+        } : {}
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+        <Box sx={{ flex: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+            <Typography variant="subtitle2" component="span">
+              {comment.username}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {formatDate(comment.createdAt)}
+            </Typography>
+          </Box>
+          {renderContent()}
+        </Box>
+        <Box>
+          {!isDeleted && (
+            <Stack direction="row" spacing={1}>
+              {canModify && (
+                <>
+                  <IconButton size="small" onClick={handleEdit}>
+                    <EditIcon fontSize="small" />
+                  </IconButton>
+                  <IconButton size="small" onClick={handleDelete} color="error">
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </>
+              )}
+              <IconButton size="small" onClick={() => onReply(comment)}>
+                <ReplyIcon fontSize="small" />
+              </IconButton>
+            </Stack>
+          )}
+          {isDeleted && isAdmin && (
+            <Tooltip title="영구 삭제">
+              <IconButton size="small" onClick={handlePermanentDelete} color="error">
+                <DeleteForeverIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
+          {isDeleted && (
+            <Tooltip title={showOriginal ? "삭제된 댓글 숨기기" : "삭제된 댓글 보기"}>
+              <IconButton size="small" onClick={() => setShowOriginal(!showOriginal)}>
+                {showOriginal ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+              </IconButton>
+            </Tooltip>
+          )}
+        </Box>
       </Box>
-
-      {renderContent()}
-
-      {!isEditing && renderActions()}
-
+      
       {replyMode && (
         <Box sx={{ mt: 2 }}>
-          <TextField
+          <MentionInput
             fullWidth
             multiline
             rows={2}
             value={replyContent}
             onChange={(e) => setReplyContent(e.target.value)}
-            placeholder="답글을 입력하세요..."
             variant="outlined"
             size="small"
+            placeholder="답글을 입력하세요..."
           />
           <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-            <Button
-              variant="contained"
-              size="small"
-              onClick={handleReplySubmit}
-              disabled={!replyContent.trim()}
-            >
+            <Button size="small" onClick={handleReplySubmit} variant="contained">
               답글 작성
             </Button>
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={onReplyCancel}
-            >
+            <Button size="small" onClick={onReplyCancel}>
               취소
             </Button>
           </Stack>

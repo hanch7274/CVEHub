@@ -1,15 +1,17 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.routes import cve, auth, comment, lock
+from app.routes import cve, auth, comment, lock, user
+from app.routes.notification import router as notification_router
 from app.database import init_db
 import logging
 import traceback
 import sys
-from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
 from app.models.user import User
 from app.models.cve import CVEModel
+from app.models.notification import Notification
+from app.models.comment import Comment
 from app.core.config import settings
 
 # 로깅 설정
@@ -76,25 +78,20 @@ async def catch_exceptions_middleware(request: Request, call_next):
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(comment.router, prefix="/cves", tags=["comments"])  
 app.include_router(cve.router, prefix="/cves", tags=["cves"])
-app.include_router(lock.router, tags=["lock"])
+app.include_router(lock.router, prefix="/cves", tags=["locks"])
+app.include_router(user.router, prefix="/users", tags=["users"])
+app.include_router(notification_router, prefix="/notifications", tags=["notifications"])
 
 @app.on_event("startup")
 async def startup_event():
+    """애플리케이션 시작 시 실행되는 이벤트"""
     try:
-        # MongoDB 연결
-        client = AsyncIOMotorClient(settings.MONGODB_URL)
-        
-        # Beanie 초기화
-        await init_beanie(
-            database=client[settings.MONGODB_DB_NAME],
-            document_models=[
-                User,
-                CVEModel
-            ]
-        )
-        print(f"Successfully connected to MongoDB database: {settings.MONGODB_DB_NAME}")
+        # 데이터베이스 초기화
+        await init_db()
+        logging.info("Successfully initialized database")
     except Exception as e:
-        print(f"Error connecting to MongoDB: {str(e)}")
+        logging.error(f"Failed to initialize database: {e}")
+        logging.error(f"Traceback: {traceback.format_exc()}")
         raise e
 
 @app.get("/")

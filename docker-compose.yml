@@ -28,6 +28,9 @@ services:
     volumes:
       - ./backend:/app
       - /app/__pycache__
+      - ./backend/.env:/app/.env
+    environment:
+      - MONGODB_URL=mongodb://mongodb:27017/cvehub
     depends_on:
       mongodb:
         condition: service_healthy

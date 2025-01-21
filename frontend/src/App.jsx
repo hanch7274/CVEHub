@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Box } from '@mui/material';
 import Header from './components/Header';
@@ -10,24 +10,33 @@ import Login from './components/Login';
 import PrivateRoute from './components/PrivateRoute';
 import AuthRoute from './components/AuthRoute';
 import { AuthProvider } from './contexts/AuthContext';
+import CVEDetail from './components/CVEDetail';
 
-const MainLayout = ({ children }) => (
-  <Box sx={{ display: 'flex' }}>
-    <Header />
-    <Sidebar />
-    <Box
-      component="main"
-      sx={{
-        flexGrow: 1,
-        p: 4,
-        mt: '64px',
-        backgroundColor: '#F8F9FA'
-      }}
-    >
-      {children}
+const MainLayout = ({ children }) => {
+  const [selectedCVE, setSelectedCVE] = useState(null);
+
+  const handleOpenCVEDetail = (cveId, commentId) => {
+    setSelectedCVE({ id: cveId, commentId });
+  };
+
+  return (
+    <Box sx={{ display: 'flex' }}>
+      <Header onOpenCVEDetail={handleOpenCVEDetail} />
+      <Sidebar />
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          p: 4,
+          mt: '64px',
+          backgroundColor: '#F8F9FA'
+        }}
+      >
+        {React.cloneElement(children, { selectedCVE, setSelectedCVE })}
+      </Box>
     </Box>
-  </Box>
-);
+  );
+};
 
 const AuthLayout = ({ children }) => (
   <Box
@@ -72,6 +81,16 @@ const AppRoutes = () => {
           <PrivateRoute>
             <MainLayout>
               <CVEList />
+            </MainLayout>
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/cves/:cveId"
+        element={
+          <PrivateRoute>
+            <MainLayout>
+              <CVEDetail />
             </MainLayout>
           </PrivateRoute>
         }

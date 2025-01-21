@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../utils/auth';
 import {
   Dialog,
@@ -122,28 +122,28 @@ const CommentActions = ({ comment, onEdit, onDelete }) => {
 };
 
 const STATUS_OPTIONS = [
-  { value: 'NEW', label: 'NEW' },
-  { value: 'IN_PROGRESS', label: 'IN_PROGRESS' },
-  { value: 'RESOLVED', label: 'RESOLVED' },
-  { value: 'CLOSED', label: 'CLOSED' }
+  { value: '신규등록', label: '신규등록' },
+  { value: '분석중', label: '분석중' },
+  { value: '릴리즈 완료', label: '릴리즈 완료' },
+  { value: '분석불가', label: '분석불가' }
 ];
 
 const getStatusColor = (status) => {
   switch (status) {
-    case 'NEW':
-      return 'default';
-    case 'IN_PROGRESS':
+    case '분석중':
+      return 'info';
+    case '신규등록':
       return 'primary';
-    case 'RESOLVED':
+    case '릴리즈 완료':
       return 'success';
-    case 'CLOSED':
+    case '분석불가':
       return 'error';
     default:
       return 'default';
   }
 };
 
-const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
+const CVEDetail = ({ open, onClose, cve: initialCve, onSave, selectedCVE }) => {
   const [cve, setCve] = useState(initialCve);
   const [isEditMode, setIsEditMode] = useState(false);
   const [tabValue, setTabValue] = useState(0);
@@ -167,6 +167,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
   const [editingPocId, setEditingPocId] = useState(null);
   const [editingPocData, setEditingPocData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const commentListRef = useRef(null);
 
   const POC_SOURCES = {
     Etc: { label: 'Etc', color: 'default' },
@@ -222,6 +223,19 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
 
     loadInitialComments();
   }, [cve?.cveId]);
+
+  useEffect(() => {
+    if (selectedCVE?.commentId && commentListRef.current) {
+      const commentElement = document.getElementById(`comment-${selectedCVE.commentId}`);
+      if (commentElement) {
+        commentElement.scrollIntoView({ behavior: 'smooth' });
+        commentElement.style.backgroundColor = '#fff3cd';
+        setTimeout(() => {
+          commentElement.style.backgroundColor = 'transparent';
+        }, 3000);
+      }
+    }
+  }, [selectedCVE?.commentId, cve]);
 
   const updateCVEState = (updatedCVE) => {
     setCve(updatedCVE);
@@ -470,13 +484,17 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
         notes: cve.notes,
         references: cve.references,
         pocs: cve.pocs,
-        snortRules: cve.snortRules
+        snort_rules: cve.snortRules
       };
       
-      const response = await api.put(`/cves/${cve.cveId}`, updatedData);
+      const response = await api.patch(`/cves/${cve.cveId}`, updatedData);
       
       setCve(response.data);
       setIsEditMode(false);
+      
+      if (onSave) {
+        onSave(response.data);
+      }
     } catch (error) {
       console.error('Failed to update CVE:', error);
       alert(error.response?.data?.detail || 'CVE 정보 수정 중 오류가 발생했습니다.');
@@ -730,9 +748,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave }) => {
                         }}>
                           <CircleIcon sx={{ 
                             fontSize: 12, 
-                            color: cve.status === '대응완료' ? 'success.main' : 
-                                   cve.status === '분석완료' ? 'info.main' :
-                                   cve.status === '분석중' ? 'warning.main' : 'error.main'
+                            color: getStatusColor(cve.status)
                           }} />
                           <Typography variant="body1" sx={{ color: 'text.primary' }}>
                             {cve.status}

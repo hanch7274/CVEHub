@@ -12,15 +12,14 @@ import {
   Divider,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import NotificationsIcon from '@mui/icons-material/Notifications';
 import LogoutIcon from '@mui/icons-material/Logout';
 import SettingsIcon from '@mui/icons-material/Settings';
 import PersonIcon from '@mui/icons-material/Person';
-import Badge from '@mui/material/Badge';
 import { useAuth } from '../contexts/AuthContext';
 import { getAnimalEmoji } from '../utils/avatarUtils';
+import NotificationBell from './NotificationBell';
 
-const Header = () => {
+const Header = ({ onOpenCVEDetail }) => {
   const theme = useTheme();
   const { user, logout } = useAuth();
   const [anchorEl, setAnchorEl] = useState(null);
@@ -36,6 +35,12 @@ const Header = () => {
   const handleLogout = () => {
     handleClose();
     logout();
+  };
+
+  const handleNotificationClick = (cveId, commentId) => {
+    if (onOpenCVEDetail) {
+      onOpenCVEDetail(cveId, commentId);
+    }
   };
 
   // 이메일이 없는 경우 기본 아바타 사용
@@ -64,21 +69,10 @@ const Header = () => {
 
         <Box sx={{ flexGrow: 1 }} />
 
-        {/* 알림 아이콘 */}
-        <Tooltip title="알림">
-          <IconButton 
-            size="small" 
-            sx={{ 
-              mr: 2,
-              bgcolor: 'action.hover',
-              '&:hover': { bgcolor: 'action.selected' }
-            }}
-          >
-            <Badge badgeContent={4} color="error">
-              <NotificationsIcon fontSize="small" />
-            </Badge>
-          </IconButton>
-        </Tooltip>
+        {/* 알림 벨 컴포넌트 */}
+        {user && (
+          <NotificationBell onNotificationClick={handleNotificationClick} />
+        )}
 
         {/* 사용자 메뉴 */}
         <Box sx={{ display: 'flex', alignItems: 'center' }}>

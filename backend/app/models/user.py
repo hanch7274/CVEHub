@@ -23,8 +23,8 @@ class User(Document):
     class Settings:
         name = "users"
         
-    class Config:
-        json_schema_extra = {  
+    model_config = {
+        "json_schema_extra": {
             "example": {
                 "username": "johndoe",
                 "email": "johndoe@example.com",
@@ -32,6 +32,7 @@ class User(Document):
                 "is_admin": False
             }
         }
+    }
         
     def to_dict(self):
         """User 객체를 dictionary로 변환"""
