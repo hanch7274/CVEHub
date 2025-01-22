@@ -15,7 +15,7 @@ import {
   IconButton
 } from '@mui/material';
 import { Visibility, VisibilityOff } from '@mui/icons-material';
-import { api } from '../utils/auth';
+import { api } from '../../utils/auth';
 
 const Register = () => {
   const [formData, setFormData] = useState({

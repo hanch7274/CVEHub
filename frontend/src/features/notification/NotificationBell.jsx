@@ -14,14 +14,13 @@ import {
   CircularProgress
 } from '@mui/material';
 import NotificationsIcon from '@mui/icons-material/Notifications';
-import { api } from '../utils/auth';
 import { 
   fetchNotifications, 
   markAsRead, 
   markAllAsRead,
   fetchUnreadCount
-} from '../store/notificationSlice';
-import CVEDetail from './CVEDetail';
+} from '../../store/notificationSlice';
+import CVEDetail from '../cve/CVEDetail';
 
 const NotificationBell = memo(() => {
   const [anchorEl, setAnchorEl] = useState(null);

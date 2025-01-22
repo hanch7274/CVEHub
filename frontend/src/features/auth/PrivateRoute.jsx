@@ -1,12 +1,11 @@
 import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from '../../contexts/AuthContext';
 import { CircularProgress, Box } from '@mui/material';
 
-const AuthRoute = ({ children }) => {
+const PrivateRoute = ({ children }) => {
   const location = useLocation();
   const { isAuthenticated, loading } = useAuth();
-  const from = location.state?.from?.pathname || '/cves';
   
   if (loading) {
     return (
@@ -23,11 +22,11 @@ const AuthRoute = ({ children }) => {
     );
   }
 
-  if (isAuthenticated) {
-    return <Navigate to={from} replace />;
+  if (!isAuthenticated) {
+    return <Navigate to="/login" state={{ from: location }} />;
   }
 
   return children;
 };
 
-export default AuthRoute;
+export default PrivateRoute;

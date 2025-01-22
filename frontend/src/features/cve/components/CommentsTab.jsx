@@ -14,8 +14,8 @@ import {
 } from '@mui/material';
 import { useSelector } from 'react-redux';
 import Comment from './Comment';
-import MentionInput from '../common/MentionInput';
-import { api } from '../../utils/auth';
+import MentionInput from '../../../features/comment/components/MentionInput';
+import { api } from '../../../utils/auth';
 
 // 멘션된 사용자를 추출하는 유틸리티 함수
 const extractMentions = (content) => {

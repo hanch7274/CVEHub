@@ -20,7 +20,7 @@ import {
   Add as AddIcon,
   Delete as DeleteIcon,
 } from '@mui/icons-material';
-import { api } from '../utils/auth';
+import { api } from '../../utils/auth';
 
 const POC_SOURCES = {
   Etc: "Etc",

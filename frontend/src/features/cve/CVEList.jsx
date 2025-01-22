@@ -34,8 +34,8 @@ import {
   Refresh as RefreshIcon,
   FilterList as FilterIcon
 } from '@mui/icons-material';
-import { useAuth } from '../contexts/AuthContext';
-import { api } from '../utils/auth';
+import { useAuth } from '../../contexts/AuthContext';
+import { api } from '../../utils/auth';
 import CVEDetail from './CVEDetail';
 import CreateCVE from './CreateCVE';
 import { debounce } from 'lodash';

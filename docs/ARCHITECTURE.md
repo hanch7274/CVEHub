@@ -326,3 +326,55 @@ docker-compose up -d
 # 프로덕션 환경
 docker-compose -f docker-compose.prod.yml up -d
 ```
+
+## Project Structure
+
+The frontend project follows a feature-based architecture, organized as follows:
+
+```
+frontend/src/
+├── features/           # Feature-based modules
+│   ├── auth/          # Authentication related components
+│   ├── cve/           # CVE management components
+│   ├── comment/       # Comment system components
+│   └── notification/  # Notification system components
+├── layout/            # Layout components
+│   ├── Navbar.jsx    # Top navigation bar
+│   └── Sidebar.jsx   # Side navigation menu
+├── common/            # Shared/common components
+├── hooks/             # Custom React hooks
+├── store/            # Redux store configuration
+├── services/         # API service layer
+├── utils/            # Utility functions
+├── constants/        # Constants and configurations
+├── contexts/         # React contexts
+└── styles/           # Global styles and themes
+```
+
+### Directory Roles
+
+- **features/**: Contains feature-specific modules, each with its own components, hooks, and logic
+  - **auth/**: Authentication related features including login, signup, and route protection
+  - **cve/**: CVE management features including listing, detail view, and creation
+  - **comment/**: Comment system features including creation and replies
+  - **notification/**: Real-time notification features
+
+- **layout/**: Contains components that define the application's layout structure
+  - Navbar: Top navigation bar with user controls and notifications
+  - Sidebar: Navigation menu for accessing different features
+
+- **common/**: Reusable components shared across features
+- **hooks/**: Custom React hooks for shared logic
+- **store/**: Redux store setup and slice definitions
+- **services/**: API communication layer
+- **utils/**: Helper functions and utilities
+- **constants/**: Application-wide constants
+- **contexts/**: React context definitions
+- **styles/**: Global styles and theming
+
+This structure promotes:
+- Feature isolation and modularity
+- Clear separation of concerns
+- Easy scalability
+- Maintainable codebase
+- Reusable components and logic

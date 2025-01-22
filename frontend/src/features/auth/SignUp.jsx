@@ -17,7 +17,7 @@ import {
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon
 } from '@mui/icons-material';
-import { api } from '../utils/auth';
+import { api } from '../../utils/auth';
 import { useNavigate } from 'react-router-dom';
 
 const SignUp = () => {

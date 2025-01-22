@@ -17,7 +17,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import PersonIcon from '@mui/icons-material/Person';
 import { useAuth } from '../contexts/AuthContext';
 import { getAnimalEmoji } from '../utils/avatarUtils';
-import NotificationBell from './NotificationBell';
+import NotificationBell from '../features/notification/NotificationBell';
 
 const Header = ({ onOpenCVEDetail }) => {
   const theme = useTheme();

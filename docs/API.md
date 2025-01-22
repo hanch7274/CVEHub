@@ -391,3 +391,55 @@ GET /ws/{user_id}
     }
 }
 ```
+
+## Frontend Architecture
+
+The frontend follows a feature-based architecture with the following structure:
+
+### Directory Structure
+
+```
+frontend/src/
+├── features/           # Feature modules
+│   ├── auth/          # Authentication
+│   ├── cve/           # CVE management
+│   ├── comment/       # Comment system
+│   └── notification/  # Notification system
+├── layout/            # Layout components
+├── common/            # Shared components
+└── services/         # API services
+```
+
+### Feature Modules
+
+Each feature module in the `features/` directory follows a similar structure:
+
+```
+feature/
+├── components/     # React components
+├── hooks/         # Feature-specific hooks
+├── services/      # API services
+└── slice.js       # Redux slice
+```
+
+### API Integration
+
+The frontend communicates with the backend through:
+
+1. **REST API**: For CRUD operations
+   - Handled through services in the `services/` directory
+   - Uses Axios for HTTP requests
+
+2. **WebSocket**: For real-time updates
+   - Managed through custom hooks
+   - Handles notifications and live updates
+
+### State Management
+
+- **Global State**: Managed with Redux Toolkit
+  - Feature-specific slices in each feature module
+  - Centralized store configuration
+
+- **Local State**: Using React hooks
+  - Component-specific state
+  - Form state management

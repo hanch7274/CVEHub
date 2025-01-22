@@ -17,9 +17,9 @@ import {
 } from '@mui/icons-material';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { ko } from 'date-fns/locale';
-import { api } from '../../utils/auth';
-import MentionInput from '../common/MentionInput';
-import { highlightMentions } from '../../utils/mentionUtils';
+import { api } from '../../../utils/auth';
+import MentionInput from '../../../features/comment/components/MentionInput';
+import { highlightMentions } from '../../../utils/mentionUtils';
 
 const Comment = ({
   comment,

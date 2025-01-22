@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useDispatch } from 'react-redux';
-import { api } from '../utils/auth';
-import useWebSocket from '../hooks/useWebSocket';
+import { api } from '../../utils/auth';
+import useWebSocket from '../../hooks/useWebSocket';
 import {
   Dialog,
   DialogTitle,
@@ -55,7 +55,7 @@ import {
   Comment as CommentIcon,
   Circle as CircleIcon
 } from '@mui/icons-material';
-import CommentsTab from './CVEDetail/CommentsTab';
+import CommentsTab from './components/CommentsTab';
 
 const TabPanel = (props) => {
   const { children, value, index, ...other } = props;

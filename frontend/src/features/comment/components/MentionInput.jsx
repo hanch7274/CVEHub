@@ -8,7 +8,7 @@ import {
   ListItemText,
   CircularProgress
 } from '@mui/material';
-import { api } from '../../utils/auth';
+import { api } from '../../../utils/auth';
 import { debounce } from 'lodash';
 
 const MentionInput = ({ value, onChange, ...props }) => {
