@@ -2,10 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# 시스템 의존성 설치
+# 시스템 의존성 및 timezone 설정
 RUN apt-get update && apt-get install -y \
     build-essential \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+# 타임존 설정
+ENV TZ=Asia/Seoul
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # Python 의존성 설치
 COPY requirements.txt .

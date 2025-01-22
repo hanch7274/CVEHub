@@ -31,7 +31,8 @@ const Comment = ({
   replyMode,
   onReplySubmit,
   onReplyCancel,
-  cveId
+  cveId,
+  children
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(comment.content);
@@ -217,7 +218,7 @@ const Comment = ({
           )}
         </Box>
       </Box>
-      
+
       {replyMode && (
         <Box sx={{ mt: 2 }}>
           <MentionInput
@@ -232,12 +233,18 @@ const Comment = ({
           />
           <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
             <Button size="small" onClick={handleReplySubmit} variant="contained">
-              답글 작성
+              답글 달기
             </Button>
             <Button size="small" onClick={onReplyCancel}>
               취소
             </Button>
           </Stack>
+        </Box>
+      )}
+
+      {comment.children?.length > 0 && (
+        <Box sx={{ mt: 2 }}>
+          {children}
         </Box>
       )}
     </Box>

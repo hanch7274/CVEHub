@@ -29,13 +29,18 @@ const POC_SOURCES = {
 };
 
 const SNORT_RULE_TYPES = {
-  "사용자 정의": "사용자 정의",
-  IPS: "IPS",
-  ONE: "ONE",
-  UTM: "UTM",
-  "Emerging-Threats": "Emerging-Threats",
-  "Snort Official": "Snort Official"
+  "사용자 정의": "USER_DEFINED",
+  "IPS": "IPS",
+  "ONE": "ONE",
+  "UTM": "UTM",
+  "Emerging-Threats": "EMERGING_THREATS",
+  "Snort Official": "SNORT_OFFICIAL"
 };
+
+const SNORT_RULE_TYPE_OPTIONS = Object.entries(SNORT_RULE_TYPES).map(([label, value]) => ({
+  label,
+  value
+}));
 
 const STATUS_OPTIONS = [
   { value: '신규등록', label: '신규등록' },
@@ -59,7 +64,7 @@ const CreateCVE = ({ onClose, onSuccess }) => {
   const [newPoc, setNewPoc] = useState({ source: POC_SOURCES.Etc, url: '', description: '' });
   const [newSnortRule, setNewSnortRule] = useState({ 
     rule: '', 
-    type: SNORT_RULE_TYPES["사용자 정의"], 
+    type: 'USER_DEFINED', 
     description: '' 
   });
   const [newReference, setNewReference] = useState('');
@@ -98,7 +103,7 @@ const CreateCVE = ({ onClose, onSuccess }) => {
     }));
     setNewSnortRule({ 
       rule: '', 
-      type: SNORT_RULE_TYPES["사용자 정의"], 
+      type: 'USER_DEFINED', 
       description: ''
     });
   };
@@ -335,16 +340,17 @@ const CreateCVE = ({ onClose, onSuccess }) => {
           <Paper elevation={0} variant="outlined" sx={{ p: 3 }}>
             <Typography variant="h6" sx={{ mb: 2, color: 'text.primary' }}>Snort Rules</Typography>
             <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-              <FormControl size="medium" sx={{ width: '25%', minWidth: 100 }}>
-                <InputLabel>Type</InputLabel>
+              <FormControl fullWidth sx={{ mt: 2 }}>
+                <InputLabel>Rule Type</InputLabel>
                 <Select
                   value={newSnortRule.type}
                   onChange={(e) => setNewSnortRule(prev => ({ ...prev, type: e.target.value }))}
-                  label="Type"
-                  sx={{ borderRadius: 1 }}
+                  label="Rule Type"
                 >
-                  {Object.entries(SNORT_RULE_TYPES).map(([key, value]) => (
-                    <MenuItem key={key} value={value}>{value}</MenuItem>
+                  {SNORT_RULE_TYPE_OPTIONS.map(({ label, value }) => (
+                    <MenuItem key={value} value={value}>
+                      {label}
+                    </MenuItem>
                   ))}
                 </Select>
               </FormControl>

@@ -176,7 +176,12 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
   };
 
   const handleCVEClick = (cve) => {
-    setSelectedCVE(cve);
+    if (cve && cve.cveId) {
+      console.log('CVE 클릭:', cve.cveId);
+      setSelectedCVE(cve);
+    } else {
+      console.error('유효하지 않은 CVE 데이터:', cve);
+    }
   };
 
   const handleCloseDetail = () => {
@@ -448,8 +453,7 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
         <CVEDetail
           open={!!selectedCVE}
           onClose={handleCloseDetail}
-          cve={selectedCVE}
-          onSave={handleCVEUpdated}
+          cveId={selectedCVE.cveId}
         />
       )}
 

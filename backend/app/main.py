@@ -1,13 +1,14 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.routes import cve, auth, comment, lock, user
+from app.routes import cve, auth, comment, lock, user, websocket
 from app.routes.notification import router as notification_router
 from app.database import init_db
 import logging
 import traceback
 import sys
 from beanie import init_beanie
+from motor.motor_asyncio import AsyncIOMotorClient
 from app.models.user import User
 from app.models.cve import CVEModel
 from app.models.notification import Notification
@@ -31,6 +32,16 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# CORS 설정
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"]
+)
+
 # 미들웨어 설정
 @app.middleware("http")
 async def logging_middleware(request: Request, call_next):
@@ -49,29 +60,21 @@ async def logging_middleware(request: Request, call_next):
         print(f"Error type: {type(e)}")
         print(f"Error message: {str(e)}")
         print(f"Traceback: {traceback.format_exc()}")
-        raise
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error"}
+        )
 
-# CORS 설정
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React 앱의 origin
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 전역 예외 처리
 @app.middleware("http")
 async def catch_exceptions_middleware(request: Request, call_next):
     try:
         return await call_next(request)
     except Exception as e:
-        logger = logging.getLogger("uvicorn")
-        logger.error(f"Unhandled error: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        logging.error(f"Exception occurred: {e}")
+        logging.error(traceback.format_exc())
         return JSONResponse(
             status_code=500,
-            content={"detail": f"Internal server error: {str(e)}"}
+            content={"detail": str(e)}
         )
 
 # 라우터 등록
@@ -81,18 +84,29 @@ app.include_router(cve.router, prefix="/cves", tags=["cves"])
 app.include_router(lock.router, prefix="/cves", tags=["locks"])
 app.include_router(user.router, prefix="/users", tags=["users"])
 app.include_router(notification_router, prefix="/notifications", tags=["notifications"])
+app.include_router(websocket.router, tags=["websocket"])  
 
 @app.on_event("startup")
 async def startup_event():
     """애플리케이션 시작 시 실행되는 이벤트"""
     try:
-        # 데이터베이스 초기화
         await init_db()
-        logging.info("Successfully initialized database")
+        # MongoDB 클라이언트 생성
+        client = AsyncIOMotorClient(settings.MONGODB_URL)
+        # Beanie 모델 초기화
+        await init_beanie(
+            database=client[settings.MONGODB_DB_NAME],
+            document_models=[
+                User,
+                CVEModel,
+                Comment,
+                Notification
+            ]
+        )
+        logging.info("Database initialized successfully")
     except Exception as e:
         logging.error(f"Failed to initialize database: {e}")
-        logging.error(f"Traceback: {traceback.format_exc()}")
-        raise e
+        raise
 
 @app.get("/")
 async def root():

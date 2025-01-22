@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useDispatch } from 'react-redux';
 import { api } from '../utils/auth';
+import useWebSocket from '../hooks/useWebSocket';
 import {
   Dialog,
   DialogTitle,
@@ -143,8 +145,8 @@ const getStatusColor = (status) => {
   }
 };
 
-const CVEDetail = ({ open, onClose, cve: initialCve, onSave, selectedCVE }) => {
-  const [cve, setCve] = useState(initialCve);
+const CVEDetail = ({ open, onClose, cveId }) => {
+  const [cve, setCve] = useState(null);
   const [isEditMode, setIsEditMode] = useState(false);
   const [tabValue, setTabValue] = useState(0);
   const [pocDialogOpen, setPocDialogOpen] = useState(false);
@@ -163,11 +165,13 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave, selectedCVE }) => {
   });
   const [editingSnortRule, setEditingSnortRule] = useState(null);
   const [editingSnortRuleIndex, setEditingSnortRuleIndex] = useState(null);
-  const [activeComments, setActiveComments] = useState([]); 
+  const [activeComments, setActiveComments] = useState([]);
   const [editingPocId, setEditingPocId] = useState(null);
   const [editingPocData, setEditingPocData] = useState(null);
   const [loading, setLoading] = useState(false);
   const commentListRef = useRef(null);
+  const [activeCommentCount, setActiveCommentCount] = useState(0);
+  const dispatch = useDispatch();
 
   const POC_SOURCES = {
     Etc: { label: 'Etc', color: 'default' },
@@ -193,18 +197,6 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave, selectedCVE }) => {
   }, [cve]);
 
   useEffect(() => {
-    if (initialCve) {
-      setCve(initialCve);
-    }
-  }, [initialCve]);
-
-  useEffect(() => {
-    if (!open) {
-      setTabValue(0);
-    }
-  }, [open]);
-
-  useEffect(() => {
     const loadInitialComments = async () => {
       if (!cve?.cveId) return;
       
@@ -225,23 +217,43 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave, selectedCVE }) => {
   }, [cve?.cveId]);
 
   useEffect(() => {
-    if (selectedCVE?.commentId && commentListRef.current) {
-      const commentElement = document.getElementById(`comment-${selectedCVE.commentId}`);
-      if (commentElement) {
-        commentElement.scrollIntoView({ behavior: 'smooth' });
-        commentElement.style.backgroundColor = '#fff3cd';
-        setTimeout(() => {
-          commentElement.style.backgroundColor = 'transparent';
-        }, 3000);
-      }
+    if (!open) {
+      setTabValue(0);
     }
-  }, [selectedCVE?.commentId, cve]);
+  }, [open]);
+
+  useEffect(() => {
+    const loadCVEData = async () => {
+      if (!cveId) {
+        console.log('CVE ID가 없음');
+        return;
+      }
+      
+      console.log('CVE 데이터 로드 시작:', cveId);
+      
+      try {
+        setLoading(true);
+        const response = await api.get(`/cves/${cveId}`);
+        console.log('CVE 데이터 로드 완료:', response.data);
+        setCve(response.data);
+      } catch (error) {
+        console.error('CVE 데이터 로드 중 오류:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadCVEData();
+  }, [cveId]);
+
+  useEffect(() => {
+    if (cveId) {
+      setCve(null);
+    }
+  }, [cveId]);
 
   const updateCVEState = (updatedCVE) => {
     setCve(updatedCVE);
-    if (onSave) {
-      onSave(updatedCVE);
-    }
   };
 
   const handleTabChange = (event, newValue) => {
@@ -491,10 +503,6 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave, selectedCVE }) => {
       
       setCve(response.data);
       setIsEditMode(false);
-      
-      if (onSave) {
-        onSave(response.data);
-      }
     } catch (error) {
       console.error('Failed to update CVE:', error);
       alert(error.response?.data?.detail || 'CVE 정보 수정 중 오류가 발생했습니다.');
@@ -529,9 +537,6 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave, selectedCVE }) => {
     if (onClose) {
       onClose();
     }
-    if (onSave) {
-      onSave(cve);
-    }
   };
 
   const handleCommentsUpdate = (comments) => {
@@ -549,7 +554,33 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave, selectedCVE }) => {
       const childCount = comment.children ? countActiveComments(comment.children) : 0;
       return count + currentCount + childCount;
     }, 0);
-};
+  };
+
+  // WebSocket 메시지 핸들러
+  const handleWebSocketMessage = useCallback((data) => {
+    if (data.type === 'comment_update' && data.data.cveId === cveId) {
+      setActiveCommentCount(data.data.activeCommentCount);
+    }
+  }, [cveId]);
+
+  // WebSocket 연결 설정
+  useWebSocket(handleWebSocketMessage);
+
+  // 초기 댓글 수 설정
+  useEffect(() => {
+    const fetchCommentCount = async () => {
+      try {
+        const response = await api.get(`/cves/${cveId}/comments/count`);
+        setActiveCommentCount(response.data.count);
+      } catch (error) {
+        console.error('Failed to fetch comment count:', error);
+      }
+    };
+
+    if (cveId) {
+      fetchCommentCount();
+    }
+  }, [cveId]);
 
   if (!cve) {
     return null;
@@ -816,7 +847,7 @@ const CVEDetail = ({ open, onClose, cve: initialCve, onSave, selectedCVE }) => {
                 label={
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <CommentIcon sx={{ fontSize: 20 }} />
-                    <span>Comments ({countActiveComments(activeComments)})</span>
+                    <span>Comments ({activeCommentCount})</span>
                   </Box>
                 }
                 sx={{ 

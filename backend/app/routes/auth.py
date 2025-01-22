@@ -21,6 +21,10 @@ class TokenData(BaseModel):
 class UserCreateWithAdmin(UserCreate):
     is_admin: bool = False
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
@@ -91,10 +95,10 @@ async def signup(user_data: UserCreate):
     }
 
 @router.post("/login", response_model=Token)
-async def login(email: str = Form(...), password: str = Form(...)):
+async def login(login_data: LoginRequest):
     """사용자 로그인을 처리하고 JWT 토큰을 발급합니다."""
     # 1. 이메일로 사용자 찾기
-    user = await User.find_one({"email": email})
+    user = await User.find_one({"email": login_data.email})
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -103,7 +107,7 @@ async def login(email: str = Form(...), password: str = Form(...)):
         )
     
     # 2. 비밀번호 확인
-    if not verify_password(password, user.hashed_password):
+    if not verify_password(login_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -118,12 +122,17 @@ async def login(email: str = Form(...), password: str = Form(...)):
         }
     )
     
-    return {"access_token": access_token, "token_type": "bearer"}
+    # Token 모델에 맞춰 직접 반환
+    return {
+        "access_token": access_token,
+        "token_type": "bearer"
+    }
 
 @router.get("/me")
 async def get_current_user_info(current_user: User = Depends(get_current_user)):
     """현재 로그인한 사용자의 정보를 반환합니다."""
     return {
+        "id": str(current_user.id),
         "email": current_user.email,
         "username": current_user.username,
         "is_admin": current_user.is_admin

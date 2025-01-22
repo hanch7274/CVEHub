@@ -20,7 +20,7 @@ import { useAuth } from '../contexts/AuthContext';
 
 const Login = () => {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, loading: authLoading } = useAuth();
   
   const [formData, setFormData] = useState({
     email: '',
@@ -45,6 +45,7 @@ const Login = () => {
       ...prev,
       [name]: value
     }));
+    setError('');
   };
 
   const handleSaveIdChange = (e) => {
@@ -69,16 +70,14 @@ const Login = () => {
     try {
       await login(formData.email, formData.password);
       
-      // 로그인 성공 후 saveId 설정 처리
       if (saveId) {
         localStorage.setItem('savedEmail', formData.email);
       }
       
-      // 리다이렉트
       navigate('/cves', { replace: true });
     } catch (err) {
       console.error('Login error:', err);
-      setError(typeof err === 'string' ? err : '로그인 중 오류가 발생했습니다. 다시 시도해주세요.');
+      setError(err || '로그인 중 오류가 발생했습니다. 다시 시도해주세요.');
     } finally {
       setLoading(false);
     }
@@ -101,51 +100,20 @@ const Login = () => {
             p: 4,
             display: 'flex',
             flexDirection: 'column',
-            alignItems: 'center',
-            borderRadius: 2
+            alignItems: 'center'
           }}
         >
-          <Typography
-            component="h1"
-            variant="h4"
-            sx={{
-              mb: 3,
-              fontWeight: 700,
-              color: '#1976d2'
-            }}
-          >
-            CVEHub
-          </Typography>
-          <Typography
-            component="h2"
-            variant="h5"
-            sx={{
-              mb: 3,
-              color: 'text.secondary'
-            }}
-          >
+          <Typography component="h1" variant="h5" sx={{ mb: 3 }}>
             로그인
           </Typography>
+
           {error && (
-            <Alert 
-              severity="error" 
-              sx={{ 
-                width: '100%', 
-                mb: 2,
-                borderRadius: 1
-              }}
-            >
+            <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
               {error}
             </Alert>
           )}
-          <Box 
-            component="form" 
-            onSubmit={handleSubmit} 
-            sx={{ 
-              width: '100%',
-              mt: 1 
-            }}
-          >
+
+          <Box component="form" onSubmit={handleSubmit} sx={{ width: '100%' }}>
             <TextField
               margin="normal"
               required
@@ -157,17 +125,13 @@ const Login = () => {
               autoFocus
               value={formData.email}
               onChange={handleChange}
+              error={!!error}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
-                    <Email color="action" />
+                    <Email />
                   </InputAdornment>
                 ),
-              }}
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  borderRadius: 1
-                }
               }}
             />
             <TextField
@@ -181,10 +145,11 @@ const Login = () => {
               autoComplete="current-password"
               value={formData.password}
               onChange={handleChange}
+              error={!!error}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
-                    <Lock color="action" />
+                    <Lock />
                   </InputAdornment>
                 ),
                 endAdornment: (
@@ -197,14 +162,10 @@ const Login = () => {
                       {showPassword ? <VisibilityOff /> : <Visibility />}
                     </IconButton>
                   </InputAdornment>
-                )
-              }}
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  borderRadius: 1
-                }
+                ),
               }}
             />
+            
             <FormControlLabel
               control={
                 <Checkbox 
@@ -216,50 +177,32 @@ const Login = () => {
               label="이메일 저장"
               sx={{ mt: 1 }}
             />
+
             <Button
               type="submit"
               fullWidth
               variant="contained"
-              disabled={loading}
-              sx={{
-                mt: 3,
-                mb: 2,
-                py: 1.5,
-                borderRadius: 1.5,
-                fontSize: '1rem',
-                textTransform: 'none',
-                boxShadow: 2,
-                '&:hover': {
-                  boxShadow: 4
-                }
-              }}
+              sx={{ mt: 3, mb: 2 }}
+              disabled={loading || authLoading}
             >
-              {loading ? (
-                <CircularProgress size={24} color="inherit" />
-              ) : (
-                '로그인'
-              )}
+              {(loading || authLoading) ? <CircularProgress size={24} /> : '로그인'}
             </Button>
+
             <Divider sx={{ my: 2 }}>
-              <Typography variant="body2" color="text.secondary">
+              <Typography color="textSecondary" variant="body2">
                 또는
               </Typography>
             </Divider>
-            <Box sx={{ textAlign: 'center' }}>
-              <Typography variant="body2" color="text.secondary">
-                아직 계정이 없으신가요?{' '}
-                <Link 
-                  to="/signup" 
-                  style={{ 
-                    color: '#1976d2',
-                    textDecoration: 'none',
-                    fontWeight: 500
-                  }}
-                >
-                  회원가입
-                </Link>
-              </Typography>
-            </Box>
+
+            <Button
+              component={Link}
+              to="/signup"
+              fullWidth
+              variant="outlined"
+              sx={{ mt: 1 }}
+            >
+              회원가입
+            </Button>
           </Box>
         </Paper>
       </Container>

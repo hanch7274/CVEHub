@@ -19,7 +19,11 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const initAuth = async () => {
       if (token && !user) {
-        await dispatch(getCurrentUserThunk());
+        try {
+          await dispatch(getCurrentUserThunk());
+        } catch (error) {
+          console.error('사용자 정보 초기화 오류:', error);
+        }
       }
     };
 
@@ -28,42 +32,35 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
-      const loginResult = await dispatch(loginThunk({ email, password })).unwrap();
-      if (!loginResult.accessToken) {
+      const result = await dispatch(loginThunk({ email, password })).unwrap();
+      if (!result.accessToken) {
         throw new Error('로그인 응답에 토큰이 없습니다.');
       }
-      const userResult = await dispatch(getCurrentUserThunk()).unwrap();
-      if (!userResult) {
-        throw new Error('사용자 정보를 가져올 수 없습니다.');
-      }
+      return result;
     } catch (error) {
-      throw error;
+      console.error('로그인 오류:', error);
+      throw error?.message || '로그인 중 오류가 발생했습니다.';
     }
   };
 
-  const logout = async () => {
-    try {
-      dispatch(logoutAction());
-    } catch (error) {
-      console.error('Logout error:', error);
-      throw error;
-    }
+  const logout = () => {
+    dispatch(logoutAction());
   };
 
-  if (loading) {
-    return <div>Loading...</div>;
-  }
-
-  const value = {
-    user,
-    login,
-    logout,
-    loading,
-    error,
-    isAuthenticated
-  };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        isAuthenticated,
+        error,
+        login,
+        logout
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
 };
 
 export default AuthContext;

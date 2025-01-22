@@ -34,17 +34,26 @@ class Notification(Document):
             PydanticObjectId: str,
             datetime: lambda dt: dt.strftime('%Y-%m-%d %H:%M:%S')
         }
-        allow_population_by_field_name = True
+        populate_by_name = True
         
     def dict(self, *args, **kwargs):
         """JSON 직렬화를 위한 딕셔너리 반환"""
         d = super().dict(*args, **kwargs)
         d['id'] = str(self.id)  # MongoDB의 _id를 id로 변환
+        
+        # datetime 필드들을 ISO 형식 문자열로 변환
+        if self.created_at:
+            d['created_at'] = self.created_at.isoformat()
+            
+        # updated_at 필드는 제거 (사용하지 않음)
+        if 'updated_at' in d:
+            del d['updated_at']
+            
         return d
 
     @classmethod
     async def create_notification(cls, **kwargs):
-        """알림을 생성하고 저장합니다."""
+        """알림을 생성하고 저장합니다. 알림과 읽지 않은 알림 개수를 반환합니다."""
         try:
             # 필수 필드 검증
             required_fields = ["recipient_id", "sender_id", "cve_id", "comment_id", "content"]
@@ -70,8 +79,13 @@ class Notification(Document):
                 error_msg = f"Failed to retrieve saved notification with ID: {notification.id}"
                 logging.error(error_msg)
                 raise ValueError(error_msg)
-                
-            return saved_notification
+
+            # 읽지 않은 알림 개수 조회
+            unread_count = await cls.find(
+                {"recipient_id": kwargs["recipient_id"], "is_read": False}
+            ).count()
+            
+            return saved_notification, unread_count
             
         except ValueError as ve:
             logging.error(f"Validation error while creating notification: {str(ve)}")

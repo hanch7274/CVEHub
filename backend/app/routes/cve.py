@@ -698,11 +698,18 @@ async def create_mention_notifications(mentions: List[str], cve_id: str, comment
                 logging.info(f"Creating notification with data: {notification_data}")
                 
                 # create_notification 클래스 메서드를 사용하여 알림 생성
-                notification = await Notification.create_notification(**notification_data)
+                notification, unread_count = await Notification.create_notification(**notification_data)
                 
                 if notification and notification.id:
                     logging.info(f"Successfully created notification: {notification.id}")
                     notifications_created += 1
+
+                    # 웹소켓을 통해 실시간 알림 전송
+                    from app.core.websocket import manager
+                    await manager.send_notification(
+                        str(mentioned_user.id),
+                        notification.dict()
+                    )
                 else:
                     logging.error("Failed to create notification: No ID returned")
                 

@@ -50,40 +50,41 @@ api.interceptors.response.use(
   (error) => {
     // 401 에러 처리 (인증 실패)
     if (error.response?.status === 401) {
-      localStorage.removeItem('token');
       store?.dispatch({ type: 'auth/logout' });
     }
-    return Promise.reject(error);
+
+    // 에러 메시지 처리
+    const message = error.response?.data?.detail || error.message || '알 수 없는 오류가 발생했습니다.';
+    error.message = message;
+    return Promise.reject(message);
   }
 );
 
 // 로그인
 export const login = async (email, password) => {
-  const formData = new URLSearchParams();
-  formData.append('email', email);
-  formData.append('password', password);
-
-  const response = await api.post('/auth/login', formData.toString(), {
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-  });
-
-  // 응답 데이터를 그대로 반환 (이미 camelCase로 변환되어 있음)
-  return response.data;
+  try {
+    const response = await api.post('/auth/login', {
+      email,
+      password
+    });
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
 };
 
 // 현재 사용자 정보 조회
 export const getCurrentUser = async () => {
-  const response = await api.get('/auth/me');
-  return response.data;
+  try {
+    const response = await api.get('/auth/me');
+    return response.data;
+  } catch (error) {
+    throw error;
+  }
 };
 
 // 로그아웃
-export const logout = async () => {
-  try {
-    await api.post('/auth/logout');
-  } catch (error) {
-    console.error('Logout error:', error);
-  }
+export const logout = () => {
+  localStorage.removeItem('token');
+  store?.dispatch({ type: 'auth/logout' });
 };

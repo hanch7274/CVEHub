@@ -55,3 +55,29 @@ export const formatDate = (dateString) => {
     return '날짜 오류';
   }
 };
+
+export const formatDateTime = (dateString) => {
+  if (!dateString) return '';
+  
+  try {
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return '날짜 오류';
+
+    const options = { 
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Seoul'
+    };
+    
+    return date.toLocaleString('ko-KR', options)
+      .replace(/\./g, '-')
+      .replace(/-$/, '');
+  } catch (error) {
+    console.error('DateTime formatting error:', error);
+    return '날짜 오류';
+  }
+};

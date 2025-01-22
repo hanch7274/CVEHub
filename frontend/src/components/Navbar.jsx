@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   AppBar,
@@ -11,8 +11,9 @@ import {
 } from '@mui/material';
 import { Menu as MenuIcon, ExitToApp as LogoutIcon } from '@mui/icons-material';
 import { api } from '../utils/auth';
+import NotificationBell from './NotificationBell';
 
-const Navbar = () => {
+const Navbar = memo(() => {
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -69,6 +70,8 @@ const Navbar = () => {
             Create CVE
           </Button>
 
+          <NotificationBell />
+
           <Tooltip title="Logout">
             <IconButton
               color="inherit"
@@ -82,6 +85,9 @@ const Navbar = () => {
       </AppBar>
     </Box>
   );
-};
+});
+
+// displayName 추가
+Navbar.displayName = 'Navbar';
 
 export default Navbar;
