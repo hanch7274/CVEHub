@@ -6,6 +6,7 @@
 3. [댓글 API](#댓글-api)
 4. [알림 API](#알림-api)
 5. [사용자 API](#사용자-api)
+6. [WebSocket API](#websocket-api)
 
 ## 공통 사항
 
@@ -317,5 +318,76 @@ PUT /users/me
 {
     "email": "string",
     "password": "string" // 선택적
+}
+```
+
+## WebSocket API
+
+### WebSocket 연결
+```
+GET /ws/{user_id}
+```
+
+쿼리 파라미터:
+- token: JWT 액세스 토큰
+- session_id: 세션 식별자
+
+### WebSocket 메시지 형식
+
+#### 1. 알림 메시지
+```json
+{
+    "type": "notification",
+    "data": {
+        "notification": {
+            "id": "string",
+            "recipient_id": "string",
+            "sender_id": "string",
+            "sender_username": "string",
+            "cve_id": "string",
+            "comment_id": "string",
+            "comment_content": "string",
+            "content": "string",
+            "is_read": false,
+            "created_at": "datetime"
+        },
+        "unreadCount": 0,
+        "toast": {
+            "message": "string",
+            "severity": "info"
+        }
+    }
+}
+```
+
+#### 2. 댓글 업데이트 메시지
+```json
+{
+    "type": "comment_update",
+    "data": {
+        "cveId": "string",
+        "activeCommentCount": 0
+    },
+    "timestamp": "datetime"
+}
+```
+
+#### 3. Ping/Pong 메시지
+```json
+// Ping 메시지
+{
+    "type": "ping",
+    "data": {
+        "lastActivity": "datetime"
+    }
+}
+
+// Pong 메시지
+{
+    "type": "pong",
+    "data": {
+        "timestamp": "datetime",
+        "session_id": "string"
+    }
 }
 ```
