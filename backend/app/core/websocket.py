@@ -1,59 +1,48 @@
 from typing import List, Dict, Union, Set
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket, WebSocketDisconnect, APIRouter, Depends
 from datetime import datetime
 import logging
 import json
 from zoneinfo import ZoneInfo
 from beanie import PydanticObjectId
+from ..models.user import User
+from .auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
+router = APIRouter()
+
 class ConnectionManager:
     def __init__(self):
-        # 사용자 ID를 키로 하고, 세션 ID를 키로 하는 웹소켓 연결 저장
-        self.active_connections: Dict[str, Dict[str, WebSocket]] = {}
+        # username -> Set[WebSocket]
+        self.active_connections: Dict[str, Set[WebSocket]] = {}
         self.background_tasks = set()
 
-    async def connect(self, websocket: WebSocket, user_id: str, session_id: str) -> bool:
-        """새로운 웹소켓 연결을 설정합니다."""
-        try:
-            # 사용자의 연결 맵이 없으면 생성
-            if user_id not in self.active_connections:
-                self.active_connections[user_id] = {}
-            
-            # 세션 ID로 연결 저장
-            self.active_connections[user_id][session_id] = websocket
-            logger.info(f"New WebSocket connection for user {user_id} with session {session_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Error in connect: {str(e)}")
-            return False
+    async def connect(self, websocket: WebSocket, username: str):
+        """새로운 WebSocket 연결을 추가합니다."""
+        await websocket.accept()
+        if username not in self.active_connections:
+            self.active_connections[username] = set()
+        self.active_connections[username].add(websocket)
+        logger.info(f"New WebSocket connection for user: {username}")
 
-    async def disconnect(self, websocket: WebSocket, user_id: str, session_id: str):
-        """웹소켓 연결을 종료합니다."""
-        try:
-            if user_id in self.active_connections:
-                if session_id in self.active_connections[user_id]:
-                    del self.active_connections[user_id][session_id]
-                    logger.info(f"WebSocket disconnected for user {user_id} session {session_id}")
-                
-                # 사용자의 모든 세션이 종료되면 사용자 엔트리 제거
-                if not self.active_connections[user_id]:
-                    del self.active_connections[user_id]
-                    logger.info(f"Removed all sessions for user {user_id}")
-        except Exception as e:
-            logger.error(f"Error in disconnect: {str(e)}")
+    def disconnect(self, websocket: WebSocket, username: str):
+        """WebSocket 연결을 제거합니다."""
+        if username in self.active_connections:
+            self.active_connections[username].discard(websocket)
+            if not self.active_connections[username]:
+                del self.active_connections[username]
+            logger.info(f"WebSocket connection closed for user: {username}")
 
-    def is_connected(self, user_id: str) -> bool:
-        """사용자의 연결 상태를 확인합니다."""
-        return user_id in self.active_connections and bool(self.active_connections[user_id])
-
-    async def send_personal_message(self, message: dict, websocket: WebSocket):
-        """특정 웹소켓 연결에 개인 메시지를 전송합니다."""
-        try:
-            await websocket.send_json(message)
-        except Exception as e:
-            logger.error(f"Error sending personal message: {str(e)}")
+    async def send_personal_message(self, message: dict, username: str):
+        """특정 사용자에게 메시지를 전송합니다."""
+        if username in self.active_connections:
+            websockets = self.active_connections[username]
+            for websocket in websockets:
+                try:
+                    await websocket.send_json(message)
+                except Exception as e:
+                    logger.error(f"Failed to send message to {username}: {str(e)}")
 
     async def handle_ping(self, websocket: WebSocket, user_id: str, session_id: str, data: dict):
         """클라이언트로부터 받은 ping 메시지를 처리하고 pong으로 응답합니다."""
@@ -105,7 +94,7 @@ class ConnectionManager:
             logger.info(f"Preparing to send notification: {message_data}")
             
             failed_sessions = []
-            for session_id, websocket in self.active_connections[user_id].items():
+            for session_id, websocket in self.active_connections[user_id]:
                 try:
                     await websocket.send_json(message_data)
                     logger.info(f"Successfully sent notification to session {session_id} of user {user_id}")
@@ -127,7 +116,7 @@ class ConnectionManager:
         """실패한 세션을 정리합니다."""
         try:
             if user_id in self.active_connections and session_id in self.active_connections[user_id]:
-                del self.active_connections[user_id][session_id]
+                self.active_connections[user_id].discard(session_id)
                 logger.info(f"Cleaned up session {session_id} for user {user_id}")
                 
                 # 사용자의 모든 세션이 종료된 경우 사용자 엔트리 제거
@@ -157,24 +146,8 @@ class ConnectionManager:
 
     async def broadcast(self, message: dict):
         """모든 연결된 클라이언트에게 메시지를 브로드캐스트합니다."""
-        try:
-            failed_sessions = []
-            for user_id, sessions in self.active_connections.items():
-                for session_id, websocket in sessions.items():
-                    try:
-                        await websocket.send_json(message)
-                        logger.info(f"Successfully broadcasted message to user {user_id} session {session_id}")
-                    except Exception as e:
-                        logger.error(f"Failed to broadcast to session {session_id} of user {user_id}: {str(e)}")
-                        failed_sessions.append((user_id, session_id))
-
-            # 실패한 세션 정리
-            for user_id, session_id in failed_sessions:
-                await self._cleanup_session(user_id, session_id)
-        except Exception as e:
-            logger.error(f"Error in broadcast: {str(e)}")
-            logger.error(f"Full error details: {vars(e) if hasattr(e, '__dict__') else {}}")
-            raise
+        for username in self.active_connections:
+            await self.send_personal_message(message, username)
 
 manager = ConnectionManager()
 
@@ -189,3 +162,43 @@ async def notify_clients(event_type: str, data: dict = None):
         await manager.broadcast(message)
     except Exception as e:
         logger.error(f"Error notifying clients: {str(e)}")
+
+@router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket 엔드포인트"""
+    try:
+        # 토큰 검증 및 사용자 정보 가져오기
+        token = websocket.query_params.get("token")
+        if not token:
+            await websocket.close(code=4001, reason="Authentication required")
+            return
+        
+        try:
+            user = await get_current_user(token)
+            if not user:
+                await websocket.close(code=4001, reason="Invalid token")
+                return
+        except Exception as e:
+            logger.error(f"Authentication failed: {str(e)}")
+            await websocket.close(code=4001, reason="Authentication failed")
+            return
+        
+        # WebSocket 연결 수락
+        await manager.connect(websocket, user.username)
+        
+        try:
+            while True:
+                # 클라이언트로부터 메시지 수신
+                data = await websocket.receive_json()
+                # 필요한 경우 여기서 메시지 처리 로직 추가
+        except WebSocketDisconnect:
+            manager.disconnect(websocket, user.username)
+        except Exception as e:
+            logger.error(f"WebSocket error: {str(e)}")
+            manager.disconnect(websocket, user.username)
+    except Exception as e:
+        logger.error(f"WebSocket connection error: {str(e)}")
+        try:
+            await websocket.close(code=4000, reason="Connection error")
+        except:
+            pass

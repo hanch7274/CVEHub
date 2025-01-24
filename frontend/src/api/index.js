@@ -22,3 +22,8 @@ api.interceptors.response.use(
 );
 
 export default api;
+
+export { authService } from './services/authService';
+export { cveService } from './services/cveService';
+export { notificationService } from './services/notificationService';
+export { default as api } from './config/axios';

@@ -13,9 +13,14 @@ import PrivateRoute from './features/auth/PrivateRoute';
 import AuthRoute from './features/auth/AuthRoute';
 import { AuthProvider } from './contexts/AuthContext';
 import CVEDetail from './features/cve/CVEDetail';
-import useWebSocket from './hooks/useWebSocket';
-import { addNotificationAsync, updateUnreadCount } from './store/notificationSlice';
+import { addNotificationAsync } from './store/notificationSlice';
 import { store } from './store';
+import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
+import { Provider } from 'react-redux';
+import { SnackbarProvider } from 'notistack';
+import { ThemeProvider } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
+import theme from './theme';
 
 const MainLayout = ({ children }) => {
   const [selectedCVE, setSelectedCVE] = useState(null);
@@ -26,51 +31,27 @@ const MainLayout = ({ children }) => {
   });
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
+  const { isConnected, lastMessage } = useWebSocketContext();
 
-  // 웹소켓 메시지 핸들러
-  const handleWebSocketMessage = useCallback((data) => {
-    console.log('[MainLayout] 웹소켓 메시지 수신:', {
-      type: data.type,
-      data: data.data,
-      timestamp: new Date().toISOString()
-    });
-
-    if (data.type === 'notification') {
-      console.log('[MainLayout] 알림 메시지 처리:', {
-        notification: data.data.notification,
-        unreadCount: data.data.unreadCount,
-        toast: data.data.toast,
-        timestamp: new Date().toISOString()
-      });
-
+  // 웹소켓 메시지 처리
+  useEffect(() => {
+    if (lastMessage?.type === 'notification') {
       // notification과 unreadCount를 함께 전달
       dispatch(addNotificationAsync({
-        notification: data.data.notification,
-        unreadCount: data.data.unreadCount
+        notification: lastMessage.data.notification,
+        unreadCount: lastMessage.data.unreadCount
       }));
 
       // 토스트 메시지 표시
-      if (data.data.toast) {
+      if (lastMessage.data.toast) {
         setSnackbar({
           open: true,
-          message: data.data.toast.message,
-          severity: data.data.toast.severity
+          message: lastMessage.data.toast.message,
+          severity: lastMessage.data.toast.severity
         });
       }
     }
-  }, [dispatch]);
-
-  // 웹소켓 연결 설정
-  const { isConnected } = useWebSocket(handleWebSocketMessage);
-
-  // 웹소켓 연결 상태 로깅
-  useEffect(() => {
-    console.log('[MainLayout] 웹소켓 연결 상태:', {
-      isConnected,
-      userId: user?.id,
-      timestamp: new Date().toISOString()
-    });
-  }, [isConnected, user]);
+  }, [lastMessage, dispatch]);
 
   const handleSnackbarClose = useCallback(() => {
     setSnackbar(prev => ({ ...prev, open: false }));
@@ -195,11 +176,20 @@ const AppRoutes = () => {
 
 const App = () => {
   return (
-    <Router>
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
-    </Router>
+    <Provider store={store}>
+      <ThemeProvider theme={theme}>
+        <SnackbarProvider maxSnack={3}>
+          <WebSocketProvider>
+            <AuthProvider>
+              <Router>
+                <CssBaseline />
+                <AppRoutes />
+              </Router>
+            </AuthProvider>
+          </WebSocketProvider>
+        </SnackbarProvider>
+      </ThemeProvider>
+    </Provider>
   );
 };
 

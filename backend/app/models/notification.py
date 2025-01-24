@@ -5,37 +5,34 @@ from pydantic import BaseModel, Field
 import pytz
 import logging
 import traceback
+from zoneinfo import ZoneInfo
 
 KST = pytz.timezone('Asia/Seoul')
 
 class Notification(Document):
-    recipient_id: Indexed(PydanticObjectId)  # 알림을 받을 사용자 ID
-    sender_id: PydanticObjectId     # 알림을 발생시킨 사용자 ID
-    sender_username: Optional[str] = None  # 알림을 발생시킨 사용자 이름
-    cve_id: str                     # 관련 CVE ID
-    comment_id: PydanticObjectId    # 관련 댓글 ID
-    comment_content: Optional[str] = None  # 댓글 내용
-    content: str                    # 알림 내용
-    is_read: bool = Field(default=False)  # 읽음 여부
-    created_at: Indexed(datetime) = Field(default_factory=lambda: datetime.now(KST))  # 생성 시간
-
+    """알림 모델"""
+    username: str
+    message: str
+    notification_type: str  # 'comment', 'mention', 'cve_update' 등
+    related_id: Optional[str] = None  # 관련 CVE ID 또는 댓글 ID
+    is_read: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
+    read_at: Optional[datetime] = None
+    
     class Settings:
         name = "notifications"
         indexes = [
-            [("recipient_id", 1)],
-            [("created_at", -1)]
+            "username",
+            "notification_type",
+            "is_read",
+            "created_at"
         ]
-        use_state_management = True
-        use_revision = True
-        validate_on_save = True
-
+    
     class Config:
         json_encoders = {
-            PydanticObjectId: str,
-            datetime: lambda dt: dt.strftime('%Y-%m-%d %H:%M:%S')
+            datetime: lambda v: v.isoformat() if v else None
         }
-        populate_by_name = True
-        
+
     def dict(self, *args, **kwargs):
         """JSON 직렬화를 위한 딕셔너리 반환"""
         d = super().dict(*args, **kwargs)

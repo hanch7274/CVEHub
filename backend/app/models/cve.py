@@ -136,3 +136,22 @@ class CVEModel(Document):
                 "comments": []
             }
         }
+
+class CreateCVERequest(BaseModel):
+    """CVE 생성 요청 모델"""
+    cve_id: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: str = "신규등록"
+    assigned_to: Optional[str] = None
+    published_date: datetime
+    references: List[Reference] = []
+    notes: Optional[str] = None
+
+class PatchCVERequest(BaseModel):
+    """CVE 수정 요청 모델"""
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    assigned_to: Optional[str] = None
+    notes: Optional[str] = None

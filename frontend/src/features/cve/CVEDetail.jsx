@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useDispatch } from 'react-redux';
 import { api } from '../../utils/auth';
-import useWebSocket from '../../hooks/useWebSocket';
+import { useWebSocketContext } from '../../contexts/WebSocketContext';
 import {
   Dialog,
   DialogTitle,
@@ -36,7 +36,9 @@ import {
   Tooltip,
   FormControl,
   InputLabel,
-  Select
+  Select,
+  Snackbar,
+  Alert
 } from '@mui/material';
 import {
   ContentCopy as ContentCopyIcon,
@@ -123,31 +125,150 @@ const CommentActions = ({ comment, onEdit, onDelete }) => {
   );
 };
 
-const STATUS_OPTIONS = [
-  { value: '신규등록', label: '신규등록' },
-  { value: '분석중', label: '분석중' },
-  { value: '릴리즈 완료', label: '릴리즈 완료' },
-  { value: '분석불가', label: '분석불가' }
-];
+const STATUS_OPTIONS = {
+  '신규등록': '신규등록',
+  '분석중': '분석중',
+  '릴리즈 완료': '릴리즈 완료',
+  '분석불가': '분석불가'
+};
 
 const getStatusColor = (status) => {
   switch (status) {
     case '분석중':
-      return 'info';
+      return '#2196f3';  // 파란색
     case '신규등록':
-      return 'primary';
+      return '#ff9800';  // 주황색
     case '릴리즈 완료':
-      return 'success';
+      return '#4caf50';  // 초록색
     case '분석불가':
-      return 'error';
+      return '#f44336';  // 빨간색
     default:
-      return 'default';
+      return '#757575';  // 회색
   }
+};
+
+const InlineEditText = ({ value, onSave, multiline = false }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(value);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      // 텍스트 필드에 포커스
+      inputRef.current.focus();
+      // 커서를 텍스트 끝으로 이동
+      const input = inputRef.current.querySelector('input, textarea');
+      if (input) {
+        input.selectionStart = input.selectionEnd = input.value.length;
+      }
+    }
+  }, [isEditing]);
+
+  const handleClick = () => {
+    setIsEditing(true);
+    setEditValue(value);
+  };
+
+  const handleSave = async () => {
+    if (editValue !== value) {
+      await onSave(editValue);
+    }
+    setIsEditing(false);
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    setEditValue(value);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !multiline) {
+      handleSave();
+    } else if (e.key === 'Escape') {
+      handleCancel();
+    }
+  };
+
+  if (isEditing) {
+    return (
+      <Box sx={{ position: 'relative' }}>
+        <TextField
+          inputRef={inputRef}
+          fullWidth
+          multiline={multiline}
+          rows={multiline ? 4 : 1}
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          variant="outlined"
+          size="small"
+          autoFocus
+          sx={{ mb: 1 }}
+        />
+        <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
+          <Button size="small" onClick={handleCancel}>취소</Button>
+          <Button size="small" variant="contained" onClick={handleSave}>적용</Button>
+        </Box>
+      </Box>
+    );
+  }
+
+  return (
+    <Box
+      onClick={handleClick}
+      sx={{
+        cursor: 'pointer',
+        p: 1.5,
+        borderRadius: 1,
+        border: '1px solid',
+        borderColor: 'divider',
+        bgcolor: 'background.paper',
+        transition: 'all 0.2s',
+        position: 'relative',
+        minHeight: multiline ? '100px' : 'auto',
+        display: 'flex',
+        alignItems: multiline ? 'flex-start' : 'center',
+        '&:hover': {
+          borderColor: 'primary.main',
+          bgcolor: 'action.hover',
+          '&::after': {
+            content: '"클릭하여 수정"',
+            position: 'absolute',
+            right: 8,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            fontSize: '0.75rem',
+            color: 'primary.main',
+            bgcolor: 'background.paper',
+            px: 1,
+            borderRadius: 0.5,
+            boxShadow: '0 0 0 4px #fff'
+          }
+        }
+      }}
+    >
+      <Typography
+        variant={multiline ? "body1" : "h6"}
+        sx={{
+          color: 'text.primary',
+          whiteSpace: multiline ? 'pre-wrap' : 'normal',
+          lineHeight: multiline ? 1.8 : 1.4,
+          width: '100%',
+          minHeight: multiline ? '80px' : 'auto'
+        }}
+      >
+        {value || (
+          <Typography color="text.secondary" sx={{ fontStyle: 'italic' }}>
+            {multiline ? '설명을 입력하세요...' : '제목을 입력하세요...'}
+          </Typography>
+        )}
+      </Typography>
+    </Box>
+  );
 };
 
 const CVEDetail = ({ open, onClose, cveId }) => {
   const [cve, setCve] = useState(null);
-  const [isEditMode, setIsEditMode] = useState(false);
   const [tabValue, setTabValue] = useState(0);
   const [pocDialogOpen, setPocDialogOpen] = useState(false);
   const [snortRuleDialogOpen, setSnortRuleDialogOpen] = useState(false);
@@ -169,9 +290,12 @@ const CVEDetail = ({ open, onClose, cveId }) => {
   const [editingPocId, setEditingPocId] = useState(null);
   const [editingPocData, setEditingPocData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const commentListRef = useRef(null);
   const [activeCommentCount, setActiveCommentCount] = useState(0);
   const dispatch = useDispatch();
+  const { isConnected, lastMessage } = useWebSocketContext();
+  const [successMessage, setSuccessMessage] = useState(null);
 
   const POC_SOURCES = {
     Etc: { label: 'Etc', color: 'default' },
@@ -269,13 +393,14 @@ const CVEDetail = ({ open, onClose, cveId }) => {
       const response = await api.patch(`/cves/${cve.cveId}`, {
         pocs: [...(cve.pocs || []), newPoc]
       });
-      
-      updateCVEState(response.data);
-      setPocDialogOpen(false);
-      setNewPoc({ source: 'Etc', url: '', description: '' });
+      if (response.status === 200) {
+        setCve(response.data);
+        handlePocDialogClose();
+        setSuccessMessage('PoC가 성공적으로 추가되었습니다.');
+      }
     } catch (error) {
-      console.error('Failed to add PoC:', error);
-      alert(error.response?.data?.detail || 'PoC 추가 중 오류가 발생했습니다.');
+      console.error('Error adding POC:', error);
+      setError(error.response?.data?.detail || 'PoC 추가에 실패했습니다.');
     }
   };
 
@@ -306,28 +431,30 @@ const CVEDetail = ({ open, onClose, cveId }) => {
 
   const handleSnortRuleSubmit = async () => {
     try {
-      const snortRuleData = editingSnortRule || newSnortRule;
-      console.log('Submitting Snort Rule:', snortRuleData);
-
-      const updatedSnortRules = [...(cve.snortRules || [])];
-      if (editingSnortRuleIndex !== null) {
-        updatedSnortRules[editingSnortRuleIndex] = snortRuleData;
+      if (editingSnortRule) {
+        const updatedRules = [...cve.snortRules];
+        updatedRules[editingSnortRuleIndex] = editingSnortRule;
+        const response = await api.patch(`/cves/${cve.cveId}`, {
+          snortRules: updatedRules
+        });
+        if (response.status === 200) {
+          setCve(response.data);
+          handleSnortRuleDialogClose();
+          setSuccessMessage('Snort Rule이 성공적으로 수정되었습니다.');
+        }
       } else {
-        updatedSnortRules.push(snortRuleData);
+        const response = await api.patch(`/cves/${cve.cveId}`, {
+          snortRules: [...(cve.snortRules || []), newSnortRule]
+        });
+        if (response.status === 200) {
+          setCve(response.data);
+          handleSnortRuleDialogClose();
+          setSuccessMessage('Snort Rule이 성공적으로 추가되었습니다.');
+        }
       }
-
-      const response = await api.patch(`/cves/${cve.cveId}`, {
-        snortRules: updatedSnortRules
-      });
-      
-      updateCVEState(response.data);
-      setSnortRuleDialogOpen(false);
-      setNewSnortRule({ type: 'USER_DEFINED', rule: '', description: '' });
-      setEditingSnortRule(null);
-      setEditingSnortRuleIndex(null);
     } catch (error) {
-      console.error('Failed to submit Snort Rule:', error);
-      alert(error.response?.data?.detail || 'Snort 규칙 추가 중 오류가 발생했습니다.');
+      console.error('Error with Snort Rule:', error);
+      setError(error.response?.data?.detail || (editingSnortRule ? 'Snort Rule 수정에 실패했습니다.' : 'Snort Rule 추가에 실패했습니다.'));
     }
   };
 
@@ -339,44 +466,38 @@ const CVEDetail = ({ open, onClose, cveId }) => {
   };
 
   const handleAddReference = async () => {
-    if (!newReferenceUrl.trim()) return;
+    if (!newReferenceUrl) return;
 
     try {
       const response = await api.patch(`/cves/${cve.cveId}`, {
         references: [...(cve.references || []), { url: newReferenceUrl }]
       });
-
-      updateCVEState(response.data);
-      setNewReferenceUrl('');
+      
+      if (response.status === 200) {
+        setCve(response.data);
+        setNewReferenceUrl('');
+        setSuccessMessage('Reference가 성공적으로 추가되었습니다.');
+      }
     } catch (error) {
-      console.error('Failed to add reference:', error);
-      alert(error.response?.data?.detail || '참조 URL 추가 중 오류가 발생했습니다.');
+      console.error('Error adding reference:', error);
+      setError(error.response?.data?.detail || 'Reference 추가에 실패했습니다.');
     }
   };
 
   const handleDeleteReference = async (index) => {
     try {
       const updatedReferences = cve.references.filter((_, i) => i !== index);
-      setCve(prevCve => ({
-        ...prevCve,
-        references: updatedReferences
-      }));
-
       const response = await api.patch(`/cves/${cve.cveId}`, {
         references: updatedReferences
       });
       
       if (response.status === 200) {
-        const updatedCVE = response.data;
-        console.log('Updated CVE references:', updatedCVE.references);
-        updateCVEState(updatedCVE);
+        setCve(response.data);
+        setSuccessMessage('Reference가 성공적으로 삭제되었습니다.');
       }
     } catch (error) {
       console.error('Error deleting reference:', error);
-      setCve(prevCve => ({
-        ...prevCve,
-        references: [...prevCve.references]
-      }));
+      setError('Reference 삭제에 실패했습니다.');
     }
   };
 
@@ -428,26 +549,17 @@ const CVEDetail = ({ open, onClose, cveId }) => {
   const handleDeleteSnortRule = async (index) => {
     try {
       const updatedSnortRules = cve.snortRules.filter((_, i) => i !== index);
-      setCve(prevCve => ({
-        ...prevCve,
-        snortRules: updatedSnortRules
-      }));
-
       const response = await api.patch(`/cves/${cve.cveId}`, {
         snortRules: updatedSnortRules
       });
       
       if (response.status === 200) {
-        const updatedCVE = response.data;
-        console.log('Updated CVE after Snort Rule deletion:', updatedCVE);
-        updateCVEState(updatedCVE);
+        setCve(response.data);
+        setSuccessMessage('Snort Rule이 성공적으로 삭제되었습니다.');
       }
     } catch (error) {
       console.error('Error deleting Snort Rule:', error);
-      setCve(prevCve => ({
-        ...prevCve,
-        snortRules: [...prevCve.snortRules]
-      }));
+      setError('Snort Rule 삭제에 실패했습니다.');
     }
   };
 
@@ -479,33 +591,52 @@ const CVEDetail = ({ open, onClose, cveId }) => {
     }
   };
 
-  const handleEditClick = () => {
-    setIsEditMode(true);
-  };
-
-  const handleCancelEdit = () => {
-    setIsEditMode(false);
-  };
-
-  const handleSaveEdit = async () => {
+  const handleTitleSave = async (newTitle) => {
     try {
-      const updatedData = {
-        title: cve.title,
-        description: cve.description,
-        status: cve.status,
-        notes: cve.notes,
-        references: cve.references,
-        pocs: cve.pocs,
-        snort_rules: cve.snortRules
-      };
-      
-      const response = await api.patch(`/cves/${cve.cveId}`, updatedData);
-      
+      setLoading(true);
+      const response = await api.patch(`/cves/${cve.cveId}`, {
+        title: newTitle
+      });
       setCve(response.data);
-      setIsEditMode(false);
+      setSuccessMessage('제목이 업데이트되었습니다.');
     } catch (error) {
-      console.error('Failed to update CVE:', error);
-      alert(error.response?.data?.detail || 'CVE 정보 수정 중 오류가 발생했습니다.');
+      console.error('Failed to update title:', error);
+      setError('제목 수정에 실패했습니다.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDescriptionSave = async (newDescription) => {
+    try {
+      setLoading(true);
+      const response = await api.patch(`/cves/${cve.cveId}`, {
+        description: newDescription
+      });
+      setCve(response.data);
+      setSuccessMessage('설명이 업데이트되었습니다.');
+    } catch (error) {
+      console.error('Failed to update description:', error);
+      setError('설명 수정에 실패했습니다.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleStatusChange = async (event) => {
+    const newStatus = event.target.value;
+    try {
+      setLoading(true);
+      const response = await api.patch(`/cves/${cve.cveId}`, {
+        status: newStatus
+      });
+      setCve(response.data);
+      setSuccessMessage('상태가 업데이트되었습니다.');
+    } catch (error) {
+      console.error('Failed to update status:', error);
+      setError('상태 수정에 실패했습니다.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -558,28 +689,88 @@ const CVEDetail = ({ open, onClose, cveId }) => {
 
   // WebSocket 메시지 핸들러
   const handleWebSocketMessage = useCallback((data) => {
-    if (data.type === 'comment_update' && data.data.cveId === cveId) {
-      setActiveCommentCount(data.data.activeCommentCount);
+    console.log('[CVEDetail] WebSocket 메시지 수신:', {
+      type: data.type,
+      data: data.data,
+      currentCveId: cveId,
+      messageCveId: data.data?.cve_id,
+      currentCount: activeCommentCount,
+      timestamp: new Date().toISOString()
+    });
+    
+    switch (data.type) {
+      case 'comment_update':
+        console.log('[CVEDetail] 댓글 업데이트 이벤트:', {
+          before: activeCommentCount,
+          after: data.data?.comment_count,
+          data: data.data
+        });
+        
+        // 댓글 수 업데이트
+        if (data.data?.comment_count !== undefined) {
+          setActiveCommentCount(data.data.comment_count);
+        }
+        break;
+      
+      case 'cve_updated':
+        console.log('[CVEDetail] CVE 업데이트 이벤트:', {
+          data: data.data,
+          timestamp: new Date().toISOString()
+        });
+        
+        // CVE 데이터 업데이트
+        if (data.data?.cve) {
+          setCve(data.data.cve);
+        }
+        break;
+      
+      default:
+        console.log('[CVEDetail] 처리되지 않은 메시지 타입:', data.type);
+        break;
     }
-  }, [cveId]);
+  }, [cveId, activeCommentCount]);
+
+  // WebSocket 메시지 구독
+  useEffect(() => {
+    if (!lastMessage) return;
+
+    console.log('[CVEDetail] 새로운 WebSocket 메시지:', {
+      message: lastMessage,
+      currentCveId: cveId,
+      timestamp: new Date().toISOString()
+    });
+
+    // cveId가 일치하는 경우에만 메시지 처리
+    if (lastMessage.data?.cve_id === cveId || lastMessage.data?.cveId === cveId) {
+      handleWebSocketMessage(lastMessage);
+    }
+  }, [lastMessage, cveId, handleWebSocketMessage]);
 
   // WebSocket 연결 설정
-  useWebSocket(handleWebSocketMessage);
+  useEffect(() => {
+    if (isConnected && cveId) {
+      console.log('[CVEDetail] WebSocket 연결됨:', {
+        cveId,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }, [isConnected, cveId]);
 
-  // 초기 댓글 수 설정
+  // 초기 댓글 수 로드
   useEffect(() => {
     const fetchCommentCount = async () => {
+      if (!cveId) return;
+      
       try {
         const response = await api.get(`/cves/${cveId}/comments/count`);
+        console.log('[CVEDetail] 초기 댓글 수 로드:', response.data);
         setActiveCommentCount(response.data.count);
       } catch (error) {
-        console.error('Failed to fetch comment count:', error);
+        console.error('[CVEDetail] 댓글 수 로드 실패:', error);
       }
     };
 
-    if (cveId) {
-      fetchCommentCount();
-    }
+    fetchCommentCount();
   }, [cveId]);
 
   if (!cve) {
@@ -588,14 +779,29 @@ const CVEDetail = ({ open, onClose, cveId }) => {
 
   return (
     <>
-      <Dialog open={open} onClose={handleClose} maxWidth="lg" fullWidth>
-        <DialogTitle sx={{ 
-          borderBottom: '1px solid',
-          borderColor: 'divider',
-          bgcolor: 'primary.main',
-          color: 'white',
-          mb: 2
-        }}>
+      <Dialog 
+        open={open} 
+        onClose={() => {
+          handleClose();
+          // Dialog가 닫힐 때 body에 포커스
+          document.body.focus();
+        }}
+        maxWidth="lg" 
+        fullWidth
+        disableRestoreFocus
+        keepMounted={false}
+        aria-labelledby="cve-detail-dialog-title"
+      >
+        <DialogTitle 
+          id="cve-detail-dialog-title"
+          sx={{ 
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+            bgcolor: 'primary.main',
+            color: 'white',
+            mb: 2
+          }}
+        >
           <Box sx={{ 
             display: 'flex', 
             justifyContent: 'space-between', 
@@ -608,155 +814,35 @@ const CVEDetail = ({ open, onClose, cveId }) => {
               gap: 1
             }}>
               <SecurityIcon />
-              {isEditMode ? 'Edit CVE: ' : 'CVE Details: '}{cve.cveId}
+              CVE Details: {cve.cveId}
             </Typography>
-            <Box>
-              {!isEditMode ? (
-                <IconButton 
-                  onClick={handleEditClick} 
-                  sx={{ 
-                    mr: 1,
-                    color: 'white',
-                    '&:hover': { bgcolor: 'primary.dark' }
-                  }}
-                >
-                  <EditIcon />
-                </IconButton>
-              ) : null}
-              <IconButton 
-                onClick={handleClose}
-                sx={{ 
-                  color: 'white',
-                  '&:hover': { bgcolor: 'primary.dark' }
-                }}
-              >
-                <CloseIcon />
-              </IconButton>
-            </Box>
+            <IconButton 
+              onClick={handleClose}
+              sx={{ 
+                color: 'white',
+                '&:hover': { bgcolor: 'primary.dark' }
+              }}
+            >
+              <CloseIcon />
+            </IconButton>
           </Box>
         </DialogTitle>
 
         <DialogContent>
           <Box sx={{ width: '100%', mb: 3 }}>
-            {isEditMode ? (
-              <Grid container spacing={3}>
-                <Grid item xs={12} md={8}>
-                  <Paper elevation={0} variant="outlined" sx={{ p: 3, mb: 3 }}>
-                    <Typography variant="h6" sx={{ mb: 2, color: 'primary.main', fontWeight: 600 }}>
-                      기본 정보
-                    </Typography>
-                    <TextField
-                      fullWidth
-                      label="Title"
-                      value={cve.title}
-                      onChange={(e) => setCve(prev => ({ ...prev, title: e.target.value }))}
-                      variant="outlined"
-                      size="medium"
-                      sx={{ mb: 3 }}
-                    />
-                    <TextField
-                      fullWidth
-                      label="Description"
-                      value={cve.description}
-                      onChange={(e) => setCve(prev => ({ ...prev, description: e.target.value }))}
-                      multiline
-                      rows={6}
-                      variant="outlined"
-                      size="medium"
-                    />
-                  </Paper>
-                </Grid>
-                <Grid item xs={12} md={4}>
-                  <Paper elevation={0} variant="outlined" sx={{ p: 3 }}>
-                    <Typography variant="h6" sx={{ mb: 2, color: 'primary.main', fontWeight: 600 }}>
-                      상태
-                    </Typography>
-                    <FormControl fullWidth variant="outlined" size="medium">
-                      <InputLabel>Status</InputLabel>
-                      <Select
-                        value={cve.status}
-                        onChange={(e) => setCve(prev => ({ ...prev, status: e.target.value }))}
-                        label="Status"
-                      >
-                        {STATUS_OPTIONS.map((option) => (
-                          <MenuItem key={option.value} value={option.value}>
-                            {option.label}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                  </Paper>
-                </Grid>
-              </Grid>
-            ) : (
-              <Paper elevation={0} variant="outlined" sx={{ p: 3, mb: 3 }}>
-                <Box sx={{ 
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 3
-                }}>
-                  <Box>
-                    <Typography variant="h6" sx={{ mb: 2, color: 'primary.main', fontWeight: 600 }}>
-                      기본 정보
-                    </Typography>
-                    <Grid container spacing={2}>
-                      <Grid item xs={12} md={8}>
-                        <Box sx={{ mb: 3 }}>
-                          <Typography 
-                            variant="subtitle2" 
-                            color="text.secondary"
-                            sx={{ 
-                              mb: 1,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.5px',
-                              fontSize: '0.875rem'
-                            }}
-                          >
-                            Title
-                          </Typography>
-                          <Typography 
-                            variant="h6"
-                            sx={{ 
-                              fontWeight: 500,
-                              color: 'text.primary',
-                              lineHeight: 1.4,
-                              p: 1.5,
-                              bgcolor: 'grey.50',
-                              borderRadius: 1
-                            }}
-                          >
-                            {cve.title}
-                          </Typography>
-                        </Box>
-                        <Box>
-                          <Typography 
-                            variant="subtitle2" 
-                            color="text.secondary"
-                            sx={{ 
-                              mb: 1,
-                              textTransform: 'uppercase',
-                              letterSpacing: '0.5px',
-                              fontSize: '0.875rem'
-                            }}
-                          >
-                            Description
-                          </Typography>
-                          <Typography 
-                            variant="body1"
-                            sx={{ 
-                              color: 'text.secondary',
-                              lineHeight: 1.8,
-                              whiteSpace: 'pre-wrap',
-                              p: 1.5,
-                              bgcolor: 'grey.50',
-                              borderRadius: 1
-                            }}
-                          >
-                            {cve.description}
-                          </Typography>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={12} md={4}>
+            <Paper elevation={0} variant="outlined" sx={{ p: 3, mb: 3 }}>
+              <Box sx={{ 
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 3
+              }}>
+                <Box>
+                  <Typography variant="h6" sx={{ mb: 2, color: 'primary.main', fontWeight: 600 }}>
+                    기본 정보
+                  </Typography>
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} md={8}>
+                      <Box sx={{ mb: 3 }}>
                         <Typography 
                           variant="subtitle2" 
                           color="text.secondary"
@@ -767,30 +853,75 @@ const CVEDetail = ({ open, onClose, cveId }) => {
                             fontSize: '0.875rem'
                           }}
                         >
-                          Status
+                          Title
                         </Typography>
-                        <Box sx={{ 
-                          p: 1.5, 
-                          bgcolor: 'grey.50',
-                          borderRadius: 1,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 1
-                        }}>
-                          <CircleIcon sx={{ 
-                            fontSize: 12, 
-                            color: getStatusColor(cve.status)
-                          }} />
-                          <Typography variant="body1" sx={{ color: 'text.primary' }}>
-                            {cve.status}
-                          </Typography>
-                        </Box>
-                      </Grid>
+                        <InlineEditText
+                          value={cve.title}
+                          onSave={handleTitleSave}
+                        />
+                      </Box>
+                      <Box>
+                        <Typography 
+                          variant="subtitle2" 
+                          color="text.secondary"
+                          sx={{ 
+                            mb: 1,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.5px',
+                            fontSize: '0.875rem'
+                          }}
+                        >
+                          Description
+                        </Typography>
+                        <InlineEditText
+                          value={cve.description}
+                          onSave={handleDescriptionSave}
+                          multiline
+                        />
+                      </Box>
                     </Grid>
-                  </Box>
+                    <Grid item xs={12} md={4}>
+                      <Typography 
+                        variant="subtitle2" 
+                        color="text.secondary"
+                        sx={{ 
+                          mb: 1,
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.5px',
+                          fontSize: '0.875rem'
+                        }}
+                      >
+                        Status
+                      </Typography>
+                      <FormControl fullWidth size="small">
+                        <Select
+                          value={cve.status}
+                          onChange={handleStatusChange}
+                          sx={{ 
+                            '& .MuiSelect-select': {
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 1
+                            }
+                          }}
+                        >
+                          {Object.entries(STATUS_OPTIONS).map(([value, label]) => (
+                            <MenuItem key={value} value={value}>
+                              <CircleIcon sx={{ 
+                                fontSize: 12, 
+                                color: getStatusColor(value),
+                                mr: 1
+                              }} />
+                              {label}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                  </Grid>
                 </Box>
-              </Paper>
-            )}
+              </Box>
+            </Paper>
           </Box>
           <Box sx={{ width: '100%' }}>
             <Tabs 
@@ -1138,22 +1269,19 @@ const CVEDetail = ({ open, onClose, cveId }) => {
           </Box>
         </DialogContent>
         <DialogActions>
-          {isEditMode ? (
-            <>
-              <Button onClick={handleCancelEdit}>Cancel</Button>
-              <Button onClick={handleSaveEdit} variant="contained" color="primary">
-                Save Changes
-              </Button>
-            </>
-          ) : (
-            <Button onClick={handleClose}>Close</Button>
-          )}
+          <Button onClick={handleClose}>Close</Button>
         </DialogActions>
       </Dialog>
 
       {/* Add PoC Dialog */}
-      <Dialog open={pocDialogOpen} onClose={handlePocDialogClose}>
-        <DialogTitle>Add PoC</DialogTitle>
+      <Dialog 
+        open={pocDialogOpen} 
+        onClose={handlePocDialogClose}
+        disableRestoreFocus
+        keepMounted={false}
+        aria-labelledby="add-poc-dialog-title"
+      >
+        <DialogTitle id="add-poc-dialog-title">Add PoC</DialogTitle>
         <DialogContent>
           <FormControl fullWidth sx={{ mt: 2 }}>
             <InputLabel>Source</InputLabel>
@@ -1192,8 +1320,14 @@ const CVEDetail = ({ open, onClose, cveId }) => {
       </Dialog>
 
       {/* Add Snort Rule Dialog */}
-      <Dialog open={snortRuleDialogOpen} onClose={handleSnortRuleDialogClose}>
-        <DialogTitle>
+      <Dialog 
+        open={snortRuleDialogOpen} 
+        onClose={handleSnortRuleDialogClose}
+        disableRestoreFocus
+        keepMounted={false}
+        aria-labelledby="snort-rule-dialog-title"
+      >
+        <DialogTitle id="snort-rule-dialog-title">
           {editingSnortRule ? 'Edit Snort Rule' : 'Add Snort Rule'}
         </DialogTitle>
         <DialogContent>
@@ -1252,6 +1386,59 @@ const CVEDetail = ({ open, onClose, cveId }) => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Success Snackbar */}
+      <Snackbar
+        open={successMessage !== null}
+        autoHideDuration={2000}
+        onClose={() => setSuccessMessage(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        sx={{
+          '& .MuiSnackbarContent-root': {
+            minWidth: '300px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            backgroundColor: '#4caf50'
+          }
+        }}
+      >
+        <Alert
+          onClose={() => setSuccessMessage(null)}
+          severity="success"
+          variant="filled"
+          sx={{ 
+            width: '100%',
+            backgroundColor: '#4caf50',
+            '& .MuiAlert-icon': {
+              color: '#fff'
+            }
+          }}
+        >
+          {successMessage}
+        </Alert>
+      </Snackbar>
+
+      {/* Error Snackbar */}
+      <Snackbar
+        open={error !== null}
+        autoHideDuration={2000}
+        onClose={() => setError(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        sx={{
+          '& .MuiSnackbarContent-root': {
+            minWidth: '300px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+          }
+        }}
+      >
+        <Alert
+          onClose={() => setError(null)}
+          severity="error"
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
+          {error}
+        </Alert>
+      </Snackbar>
     </>
   );
 };

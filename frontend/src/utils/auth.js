@@ -13,6 +13,17 @@ export const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  transformRequest: [
+    function (data, headers) {
+      if (headers['Content-Type'] === 'application/x-www-form-urlencoded') {
+        return data; // form-urlencoded 데이터는 변환하지 않음
+      }
+      if (data && typeof data === 'object') {
+        return JSON.stringify(toSnakeCase(data));
+      }
+      return data;
+    }
+  ],
 });
 
 // 요청 인터셉터
@@ -28,8 +39,9 @@ api.interceptors.request.use((config) => {
     config.headers.Authorization = `Bearer ${token}`;
   }
 
-  // snake_case로 변환
-  if (config.data && typeof config.data === 'object') {
+  // snake_case로 변환 (form-urlencoded 데이터 제외)
+  if (config.data && typeof config.data === 'object' && 
+      config.headers['Content-Type'] !== 'application/x-www-form-urlencoded') {
     config.data = toSnakeCase(config.data);
   }
 
@@ -63,12 +75,48 @@ api.interceptors.response.use(
 // 로그인
 export const login = async (email, password) => {
   try {
-    const response = await api.post('/auth/login', {
-      email,
-      password
+    const data = new URLSearchParams();
+    data.append('username', email); // OAuth2 스펙을 따르기 위해 username 필드 사용
+    data.append('password', password);
+
+    // 디버깅: 요청 데이터 출력
+    console.log('=== Login Request Debug ===');
+    console.log('Request URL:', '/auth/token');
+    console.log('Request Headers:', {
+      'Content-Type': 'application/x-www-form-urlencoded',
     });
+    console.log('Request Data:', {
+      raw: data.toString(),
+      parsed: Object.fromEntries(data.entries()),
+    });
+
+    const response = await api.post('/auth/token', data, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      transformRequest: [(data) => {
+        // 디버깅: 변환된 데이터 출력
+        console.log('Transformed Request Data:', data);
+        return data;
+      }],
+    });
+
+    // 디버깅: 응답 데이터 출력
+    console.log('Response:', response.data);
+    
     return response.data;
   } catch (error) {
+    // 디버깅: 에러 상세 정보 출력
+    console.error('Login Error Details:', {
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      data: error.response?.data,
+      headers: error.response?.headers,
+    });
+
+    if (Array.isArray(error)) {
+      throw error[0]?.msg || '로그인 중 오류가 발생했습니다.';
+    }
     throw error;
   }
 };

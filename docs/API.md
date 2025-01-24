@@ -1,445 +1,195 @@
 # CVEHub API 문서
 
-## 목차
-1. [인증 API](#인증-api)
-2. [CVE API](#cve-api)
-3. [댓글 API](#댓글-api)
-4. [알림 API](#알림-api)
-5. [사용자 API](#사용자-api)
-6. [WebSocket API](#websocket-api)
+## 기본 정보
+- Base URL: `http://localhost:8000`
+- API 버전: v1
+- Content-Type: `application/json`
 
-## 공통 사항
-
-### 기본 URL
+## 인증
+모든 API 요청은 Bearer 토큰 인증이 필요합니다.
 ```
-http://localhost:8000
+Authorization: Bearer {access_token}
 ```
 
-### 인증
-- Bearer Token 인증 사용
-- 헤더에 `Authorization: Bearer {token}` 포함
+## 엔드포인트
 
-### 응답 형식
+### 인증 (Auth)
+
+#### 로그인
+- **POST** `/auth/token`
+- Content-Type: `application/x-www-form-urlencoded`
 ```json
 {
-    "status": "success" | "error",
-    "data": {}, // 성공 시 데이터
-    "message": "string" // 오류 시 메시지
+  "username": "string",
+  "password": "string"
+}
+```
+- Response:
+```json
+{
+  "access_token": "string",
+  "token_type": "bearer"
 }
 ```
 
-### 페이지네이션 응답
+#### 회원가입
+- **POST** `/auth/register`
 ```json
 {
-    "status": "success",
-    "data": {
-        "items": [],
-        "total": 0,
-        "page": 1,
-        "size": 10,
-        "pages": 1
+  "username": "string",
+  "email": "string",
+  "password": "string",
+  "is_admin": false
+}
+```
+
+#### 현재 사용자 정보
+- **GET** `/auth/me`
+- Response:
+```json
+{
+  "id": "string",
+  "username": "string",
+  "email": "string",
+  "is_admin": false
+}
+```
+
+### CVE
+
+#### CVE 목록 조회
+- **GET** `/cve`
+- Query Parameters:
+  - `skip`: number (default: 0)
+  - `limit`: number (default: 10)
+  - `status`: string (optional)
+- Response:
+```json
+{
+  "items": [
+    {
+      "id": "string",
+      "cve_id": "string",
+      "title": "string",
+      "description": "string",
+      "status": "string",
+      "published_date": "string",
+      "references": [],
+      "pocs": [],
+      "snort_rules": [],
+      "comments": []
     }
+  ],
+  "total": 0,
+  "page": 1,
+  "size": 10,
+  "pages": 1
 }
 ```
 
-## 인증 API
+#### CVE 검색
+- **GET** `/cve/search/{query}`
+- Query Parameters:
+  - `skip`: number (default: 0)
+  - `limit`: number (default: 10)
+- Response: 동일한 형식의 CVE 목록
 
-### 로그인
-```
-POST /users/login
-```
-
-요청 본문:
+#### CVE 생성
+- **POST** `/cve`
 ```json
 {
-    "username": "string",
-    "password": "string"
+  "cve_id": "string",
+  "title": "string",
+  "description": "string",
+  "status": "string",
+  "published_date": "string",
+  "references": [],
+  "pocs": [],
+  "snort_rules": []
 }
 ```
 
-응답:
+#### CVE 수정
+- **PATCH** `/cve/{cve_id}`
 ```json
 {
-    "status": "success",
-    "data": {
-        "access_token": "string",
-        "refresh_token": "string",
-        "token_type": "bearer"
+  "title": "string",
+  "description": "string",
+  "status": "string",
+  "references": [],
+  "pocs": [],
+  "snort_rules": []
+}
+```
+
+### 알림 (Notification)
+
+#### 알림 목록 조회
+- **GET** `/notification`
+- Query Parameters:
+  - `skip`: number (default: 0)
+  - `limit`: number (default: 10)
+- Response:
+```json
+{
+  "items": [
+    {
+      "id": "string",
+      "recipient_id": "string",
+      "sender_id": "string",
+      "content": "string",
+      "is_read": false,
+      "created_at": "string"
     }
+  ],
+  "total": 0
 }
 ```
 
-### 토큰 갱신
-```
-POST /users/refresh
-```
-
-요청 헤더:
-```
-Authorization: Bearer {refresh_token}
-```
-
-응답:
+#### 읽지 않은 알림 개수
+- **GET** `/notification/unread-count`
+- Response:
 ```json
 {
-    "status": "success",
-    "data": {
-        "access_token": "string"
-    }
+  "count": 0
 }
 ```
 
-## CVE API
+#### 알림 읽음 처리
+- **PATCH** `/notification/{id}/read`
+- Response: 업데이트된 알림 객체
 
-### CVE 목록 조회
-```
-GET /cves
-```
-
-쿼리 파라미터:
-- page: 페이지 번호 (기본값: 1)
-- size: 페이지 크기 (기본값: 10)
-- search: 검색어
-- status: CVE 상태
-- sort: 정렬 기준 (published_date, -published_date)
-
-응답:
+#### 모든 알림 읽음 처리
+- **PATCH** `/notification/read-all`
+- Response:
 ```json
 {
-    "status": "success",
-    "data": {
-        "items": [
-            {
-                "cve_id": "string",
-                "title": "string",
-                "description": "string",
-                "status": "string",
-                "published_date": "datetime",
-                "created_at": "datetime",
-                "comments": [],
-                "pocs": [],
-                "snort_rules": [],
-                "references": []
-            }
-        ],
-        "total": 0,
-        "page": 1,
-        "size": 10,
-        "pages": 1
-    }
+  "message": "All notifications marked as read"
 }
 ```
 
-### CVE 상세 조회
-```
-GET /cves/{cve_id}
-```
+### WebSocket
 
-응답:
+#### 연결
+- **WS** `/ws`
+- Query Parameters:
+  - `token`: string (access_token)
+  - `session_id`: string
+
+## 에러 응답
+모든 API는 다음과 같은 형식의 에러 응답을 반환합니다:
 ```json
 {
-    "status": "success",
-    "data": {
-        "cve_id": "string",
-        "title": "string",
-        "description": "string",
-        "status": "string",
-        "published_date": "datetime",
-        "created_at": "datetime",
-        "comments": [
-            {
-                "id": "string",
-                "content": "string",
-                "username": "string",
-                "parent_id": "string",
-                "depth": 0,
-                "is_deleted": false,
-                "created_at": "datetime",
-                "updated_at": "datetime",
-                "mentions": []
-            }
-        ],
-        "pocs": [],
-        "snort_rules": [],
-        "references": []
-    }
+  "detail": "에러 메시지"
 }
 ```
 
-## 댓글 API
-
-### 댓글 작성
-```
-POST /cves/{cve_id}/comments
-```
-
-요청 본문:
-```json
-{
-    "content": "string",
-    "parent_id": "string" // 답글인 경우
-}
-```
-
-응답:
-```json
-{
-    "status": "success",
-    "data": {
-        "id": "string",
-        "content": "string",
-        "username": "string",
-        "parent_id": "string",
-        "depth": 0,
-        "is_deleted": false,
-        "created_at": "datetime",
-        "mentions": []
-    }
-}
-```
-
-### 댓글 수정
-```
-PUT /cves/{cve_id}/comments/{comment_id}
-```
-
-요청 본문:
-```json
-{
-    "content": "string"
-}
-```
-
-### 댓글 삭제
-```
-DELETE /cves/{cve_id}/comments/{comment_id}
-```
-
-## 알림 API
-
-### 알림 목록 조회
-```
-GET /notifications
-```
-
-쿼리 파라미터:
-- page: 페이지 번호 (기본값: 1)
-- size: 페이지 크기 (기본값: 10)
-
-응답:
-```json
-{
-    "status": "success",
-    "data": {
-        "items": [
-            {
-                "id": "string",
-                "recipient_id": "string",
-                "sender_id": "string",
-                "sender_username": "string",
-                "cve_id": "string",
-                "comment_id": "string",
-                "comment_content": "string",
-                "content": "string",
-                "is_read": false,
-                "created_at": "datetime"
-            }
-        ],
-        "total": 0,
-        "page": 1,
-        "size": 10,
-        "pages": 1
-    }
-}
-```
-
-### 알림 읽음 처리
-```
-PUT /notifications/{notification_id}/read
-```
-
-응답:
-```json
-{
-    "status": "success",
-    "data": {
-        "id": "string",
-        "is_read": true
-    }
-}
-```
-
-### 알림 삭제
-```
-DELETE /notifications/{notification_id}
-```
-
-## 사용자 API
-
-### 사용자 등록
-```
-POST /users/register
-```
-
-요청 본문:
-```json
-{
-    "username": "string",
-    "password": "string",
-    "email": "string"
-}
-```
-
-### 현재 사용자 정보 조회
-```
-GET /users/me
-```
-
-응답:
-```json
-{
-    "status": "success",
-    "data": {
-        "id": "string",
-        "username": "string",
-        "email": "string",
-        "created_at": "datetime"
-    }
-}
-```
-
-### 사용자 정보 수정
-```
-PUT /users/me
-```
-
-요청 본문:
-```json
-{
-    "email": "string",
-    "password": "string" // 선택적
-}
-```
-
-## WebSocket API
-
-### WebSocket 연결
-```
-GET /ws/{user_id}
-```
-
-쿼리 파라미터:
-- token: JWT 액세스 토큰
-- session_id: 세션 식별자
-
-### WebSocket 메시지 형식
-
-#### 1. 알림 메시지
-```json
-{
-    "type": "notification",
-    "data": {
-        "notification": {
-            "id": "string",
-            "recipient_id": "string",
-            "sender_id": "string",
-            "sender_username": "string",
-            "cve_id": "string",
-            "comment_id": "string",
-            "comment_content": "string",
-            "content": "string",
-            "is_read": false,
-            "created_at": "datetime"
-        },
-        "unreadCount": 0,
-        "toast": {
-            "message": "string",
-            "severity": "info"
-        }
-    }
-}
-```
-
-#### 2. 댓글 업데이트 메시지
-```json
-{
-    "type": "comment_update",
-    "data": {
-        "cveId": "string",
-        "activeCommentCount": 0
-    },
-    "timestamp": "datetime"
-}
-```
-
-#### 3. Ping/Pong 메시지
-```json
-// Ping 메시지
-{
-    "type": "ping",
-    "data": {
-        "lastActivity": "datetime"
-    }
-}
-
-// Pong 메시지
-{
-    "type": "pong",
-    "data": {
-        "timestamp": "datetime",
-        "session_id": "string"
-    }
-}
-```
-
-## Frontend Architecture
-
-The frontend follows a feature-based architecture with the following structure:
-
-### Directory Structure
-
-```
-frontend/src/
-├── features/           # Feature modules
-│   ├── auth/          # Authentication
-│   ├── cve/           # CVE management
-│   ├── comment/       # Comment system
-│   └── notification/  # Notification system
-├── layout/            # Layout components
-├── common/            # Shared components
-└── services/         # API services
-```
-
-### Feature Modules
-
-Each feature module in the `features/` directory follows a similar structure:
-
-```
-feature/
-├── components/     # React components
-├── hooks/         # Feature-specific hooks
-├── services/      # API services
-└── slice.js       # Redux slice
-```
-
-### API Integration
-
-The frontend communicates with the backend through:
-
-1. **REST API**: For CRUD operations
-   - Handled through services in the `services/` directory
-   - Uses Axios for HTTP requests
-
-2. **WebSocket**: For real-time updates
-   - Managed through custom hooks
-   - Handles notifications and live updates
-
-### State Management
-
-- **Global State**: Managed with Redux Toolkit
-  - Feature-specific slices in each feature module
-  - Centralized store configuration
-
-- **Local State**: Using React hooks
-  - Component-specific state
-  - Form state management
+## 상태 코드
+- 200: 성공
+- 201: 생성 성공
+- 400: 잘못된 요청
+- 401: 인증 실패
+- 403: 권한 없음
+- 404: 리소스 없음
+- 422: 유효성 검사 실패
+- 500: 서버 오류

@@ -22,13 +22,18 @@ const extractMentions = (content) => {
   return content.match(/@(\w+)/g)?.map(mention => mention.substring(1)) || [];
 };
 
-const CommentsTab = ({ cve }) => {
+const CommentsTab = ({
+  cve,
+  onUpdate,
+  setError,
+  onCommentCountChange
+}) => {
   const [comments, setComments] = useState([]);
   const [activeCommentCount, setActiveCommentCount] = useState(0);
   const [newComment, setNewComment] = useState('');
   const [parentCommentId, setParentCommentId] = useState(null);
-  const [loading, setLoading] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [snackbar, setSnackbar] = useState({
     open: false,
     message: '',
@@ -38,6 +43,7 @@ const CommentsTab = ({ cve }) => {
     open: false,
     comment: null
   });
+  const [successMessage, setSuccessMessage] = useState(null);
   
   const currentUser = useSelector((state) => state.auth.user);
 
@@ -81,35 +87,102 @@ const CommentsTab = ({ cve }) => {
     return rootComments;
   }, []);
 
+  const countActiveComments = useCallback((commentsArray) => {
+    let count = 0;
+    for (const comment of commentsArray) {
+      if (!comment.isDeleted) {
+        count++;
+      }
+      if (comment.children && comment.children.length > 0) {
+        count += countActiveComments(comment.children);
+      }
+    }
+    return count;
+  }, []);
+
+  // 댓글 새로고침
   const refreshComments = useCallback(async () => {
+    console.log('[CommentsTab] 댓글 새로고침 시작:', {
+      cveId: cve.cveId,
+      timestamp: new Date().toISOString()
+    });
+
     try {
       const response = await api.get(`/cves/${cve.cveId}/comments`);
+      console.log('[CommentsTab] 댓글 새로고침 응답:', {
+        data: response.data,
+        timestamp: new Date().toISOString()
+      });
+
       const organizedComments = organizeComments(response.data);
       setComments(organizedComments);
-      setActiveCommentCount(countActiveComments(organizedComments));
+      const count = countActiveComments(organizedComments);
+      setActiveCommentCount(count);
+      onCommentCountChange?.(count);
+
+      console.log('[CommentsTab] 댓글 상태 업데이트:', {
+        organizedComments,
+        activeCount: count,
+        timestamp: new Date().toISOString()
+      });
+
+      // cve 객체 업데이트
+      if (onUpdate) {
+        const updatedCve = { ...cve, comments: response.data };
+        console.log('[CommentsTab] CVE 객체 업데이트:', {
+          updatedCve,
+          timestamp: new Date().toISOString()
+        });
+        onUpdate(updatedCve);
+      }
     } catch (error) {
-      console.error('Error fetching comments:', error);
+      console.error('[CommentsTab] 댓글 새로고침 실패:', {
+        error,
+        timestamp: new Date().toISOString()
+      });
       setSnackbar({
         open: true,
         message: '댓글을 불러오는데 실패했습니다.',
         severity: 'error'
       });
     }
-  }, [cve.cveId, organizeComments]);
+  }, [cve, organizeComments, countActiveComments, onCommentCountChange, onUpdate]);
 
+  // WebSocket 이벤트 발생 시에도 댓글 목록 새로고침
   useEffect(() => {
+    console.log('[CommentsTab] 컴포넌트 마운트/업데이트로 인한 새로고침:', {
+      timestamp: new Date().toISOString()
+    });
     refreshComments();
   }, [refreshComments]);
 
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    if (!newComment.trim()) return;
-
-    console.log('[CommentsTab] 댓글 작성 시작:', {
-      content: newComment,
-      mentions: extractMentions(newComment),
+  // 초기 댓글 로드 및 댓글 수 업데이트
+  useEffect(() => {
+    console.log('[CommentsTab] CVE 변경으로 인한 댓글 업데이트:', {
+      comments: cve?.comments,
       timestamp: new Date().toISOString()
     });
+
+    if (cve?.comments) {
+      const organizedComments = organizeComments(cve.comments);
+      setComments(organizedComments);
+      const count = countActiveComments(organizedComments);
+      setActiveCommentCount(count);
+      onCommentCountChange?.(count);
+
+      console.log('[CommentsTab] 댓글 상태 업데이트 완료:', {
+        organizedComments,
+        activeCount: count,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }, [cve, organizeComments, countActiveComments, onCommentCountChange]);
+
+  const handleSubmit = async (event) => {
+    if (event) {
+      event.preventDefault();
+    }
+    if (!newComment.trim()) return;
 
     try {
       setLoading(true);
@@ -120,36 +193,26 @@ const CommentsTab = ({ cve }) => {
         ...(parentCommentId && { parent_id: parentCommentId })
       };
 
-      console.log('[CommentsTab] 댓글 작성 요청 데이터:', {
-        commentData,
-        timestamp: new Date().toISOString()
-      });
-
       const response = await api.post(`/cves/${cve.cveId}/comments`, commentData);
       
-      console.log('[CommentsTab] 댓글 작성 응답:', {
-        response: response.data,
-        mentions,
-        timestamp: new Date().toISOString()
-      });
+      // cve 객체 업데이트
+      if (onUpdate) {
+        const updatedCve = {
+          ...cve,
+          comments: [...(cve.comments || []), response.data]
+        };
+        onUpdate(updatedCve);
+      }
 
-      // 댓글 작성 후 전체 댓글 목록을 새로 불러옴
       await refreshComments();
       setNewComment('');
       
-      setSnackbar({
-        open: true,
-        message: '댓글이 성공적으로 작성되었습니다.',
-        severity: 'success'
-      });
+      setSuccessMessage('댓글이 성공적으로 작성되었습니다.');
     } catch (error) {
-      console.error('[CommentsTab] 댓글 작성 실패:', {
-        error,
-        timestamp: new Date().toISOString()
-      });
+      console.error('Error creating comment:', error);
       setSnackbar({
         open: true,
-        message: '댓글 작성에 실패했습니다.',
+        message: error.response?.data?.detail || '댓글 작성에 실패했습니다.',
         severity: 'error'
       });
     } finally {
@@ -210,14 +273,9 @@ const CommentsTab = ({ cve }) => {
       addReplyToParent(updatedComments);
       
       setComments(updatedComments);
-      setActiveCommentCount(countActiveComments(updatedComments));
       setReplyingTo(null);
       
-      setSnackbar({
-        open: true,
-        message: '답글이 성공적으로 작성되었습니다.',
-        severity: 'success'
-      });
+      setSuccessMessage('답글이 성공적으로 작성되었습니다.');
     } catch (error) {
       console.error('[CommentsTab] 답글 작성 실패:', {
         error,
@@ -242,6 +300,7 @@ const CommentsTab = ({ cve }) => {
     });
 
     try {
+      setLoading(true);
       const mentions = extractMentions(newContent);
       const commentData = {
         content: newContent,
@@ -253,7 +312,7 @@ const CommentsTab = ({ cve }) => {
         timestamp: new Date().toISOString()
       });
 
-      const response = await api.patch(`/cves/${cve.cveId}/comments/${commentId}`, commentData);
+      const response = await api.put(`/cves/${cve.cveId}/comments/${commentId}`, commentData);
       
       console.log('[CommentsTab] 댓글 수정 응답:', {
         response: response.data,
@@ -279,11 +338,7 @@ const CommentsTab = ({ cve }) => {
       
       setComments(updatedComments);
       
-      setSnackbar({
-        open: true,
-        message: '댓글이 성공적으로 수정되었습니다.',
-        severity: 'success'
-      });
+      setSuccessMessage('댓글이 성공적으로 수정되었습니다.');
     } catch (error) {
       console.error('[CommentsTab] 댓글 수정 실패:', {
         error,
@@ -291,14 +346,17 @@ const CommentsTab = ({ cve }) => {
       });
       setSnackbar({
         open: true,
-        message: '댓글 수정에 실패했습니다.',
+        message: error.response?.data?.detail || '댓글 수정에 실패했습니다.',
         severity: 'error'
       });
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleDelete = async (commentId, isPermanent = false) => {
     try {
+      setLoading(true);
       if (isPermanent) {
         await api.delete(`/cves/${cve.cveId}/comments/${commentId}/permanent`);
       } else {
@@ -331,13 +389,8 @@ const CommentsTab = ({ cve }) => {
       
       updateDeletedStatus(updatedComments);
       setComments(updatedComments);
-      setActiveCommentCount(countActiveComments(updatedComments));
       
-      setSnackbar({
-        open: true,
-        message: isPermanent ? '댓글이 완전히 삭제되었습니다.' : '댓글이 삭제되었습니다.',
-        severity: 'success'
-      });
+      setSuccessMessage(isPermanent ? '댓글이 완전히 삭제되었습니다.' : '댓글이 삭제되었습니다.');
     } catch (error) {
       console.error('Error deleting comment:', error);
       setSnackbar({
@@ -345,20 +398,9 @@ const CommentsTab = ({ cve }) => {
         message: error.response?.data?.detail || '댓글 삭제에 실패했습니다.',
         severity: 'error'
       });
+    } finally {
+      setLoading(false);
     }
-  };
-
-  const countActiveComments = (commentsArray) => {
-    let count = 0;
-    for (const comment of commentsArray) {
-      if (!comment.isDeleted) {
-        count++;
-      }
-      if (comment.children && comment.children.length > 0) {
-        count += countActiveComments(comment.children);
-      }
-    }
-    return count;
   };
 
   const renderComment = (comment) => (
@@ -413,6 +455,36 @@ const CommentsTab = ({ cve }) => {
       <Box sx={{ mt: 3 }}>
         {comments.map(comment => renderComment(comment))}
       </Box>
+
+      {/* Success Snackbar */}
+      <Snackbar
+        open={successMessage !== null}
+        autoHideDuration={2000}
+        onClose={() => setSuccessMessage(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        sx={{
+          '& .MuiSnackbarContent-root': {
+            minWidth: '300px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            backgroundColor: '#4caf50'
+          }
+        }}
+      >
+        <Alert
+          onClose={() => setSuccessMessage(null)}
+          severity="success"
+          variant="filled"
+          sx={{ 
+            width: '100%',
+            backgroundColor: '#4caf50',
+            '& .MuiAlert-icon': {
+              color: '#fff'
+            }
+          }}
+        >
+          {successMessage}
+        </Alert>
+      </Snackbar>
 
       <Snackbar
         open={snackbar.open}

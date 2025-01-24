@@ -121,6 +121,7 @@ const Login = () => {
               id="email"
               label="이메일"
               name="email"
+              type="email"
               autoComplete="email"
               autoFocus
               value={formData.email}

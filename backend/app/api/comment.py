@@ -6,8 +6,7 @@ from pydantic import BaseModel, Field
 from ..models.cve import CVEModel, Comment
 from ..models.user import User
 from ..models.notification import Notification, NotificationCreate
-from ..routes.auth import get_current_user
-from ..routes.notification import create_notification
+from ..core.auth import get_current_user
 from zoneinfo import ZoneInfo
 import traceback
 import re
@@ -24,6 +23,7 @@ class CommentCreate(BaseModel):
     content: str = Field(..., description="댓글 내용")
     parent_id: Optional[PydanticObjectId] = Field(None, description="부모 댓글 ID (답글인 경우)")
     mentions: List[str] = Field(..., description="멘션된 사용자 목록")
+    is_deleted: bool = Field(False, description="삭제 여부")
 
 # 댓글 수정 요청 모델
 class CommentUpdate(BaseModel):
@@ -39,7 +39,7 @@ class CommentResponse(BaseModel):
     parent_id: Optional[PydanticObjectId] = Field(None, description="부모 댓글 ID")
     created_at: datetime = Field(..., description="생성 시간")
     updated_at: Optional[datetime] = Field(None, description="수정 시간")
-    isDeleted: bool = Field(False, description="삭제 여부")
+    is_deleted: bool = Field(False, description="삭제 여부")
 
     class Config:
         json_encoders = {
@@ -203,7 +203,7 @@ async def create_comment(
         logger.error(f"댓글 생성 중 오류: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"댓글 추가 중 오류가 발생했습니다: {str(e)}")
 
-@router.put("/{cve_id}/comments/{comment_id}", response_model=CommentResponse)
+@router.patch("/{cve_id}/comments/{comment_id}", response_model=CommentResponse)
 async def update_comment(
     cve_id: str,
     comment_id: PydanticObjectId,
@@ -237,26 +237,33 @@ async def update_comment(
 @router.delete("/{cve_id}/comments/{comment_id}")
 async def delete_comment(
     cve_id: str,
-    comment_id: PydanticObjectId,
+    comment_id: str,
     permanent: bool = False,
     current_user: User = Depends(get_current_user)
 ):
     """댓글을 삭제합니다."""
     try:
-        comment = await Comment.get(comment_id)
+        # CVE 문서 찾기
+        cve = await CVEModel.find_one({"cve_id": cve_id})
+        if not cve:
+            raise HTTPException(status_code=404, detail="CVE를 찾을 수 없습니다.")
+
+        # 댓글 찾기
+        comment = next((c for c in cve.comments if str(c.id) == comment_id), None)
         if not comment:
             raise HTTPException(status_code=404, detail="댓글을 찾을 수 없습니다.")
             
-        if str(comment.user_id) != str(current_user.id) and current_user.username != "admin":
+        if comment.username != current_user.username and current_user.username != "admin":
             raise HTTPException(status_code=403, detail="댓글을 삭제할 권한이 없습니다.")
             
         if permanent and current_user.username == "admin":
             # 관리자의 경우 영구 삭제
-            await comment.delete()
+            cve.comments = [c for c in cve.comments if str(c.id) != comment_id]
+            await cve.save()
         else:
             # 일반 사용자는 소프트 삭제
-            comment.isDeleted = True
-            await comment.save()
+            comment.is_deleted = True
+            await cve.save()
         
         # 댓글 삭제 후 WebSocket으로 업데이트 전송
         await send_comment_update(cve_id)

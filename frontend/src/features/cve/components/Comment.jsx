@@ -38,11 +38,25 @@ const Comment = ({
   const [editContent, setEditContent] = useState(comment.content);
   const [showOriginal, setShowOriginal] = useState(false);
   const [replyContent, setReplyContent] = useState('');
-  
+  const [mentionedUsers, setMentionedUsers] = useState([]);
+  const [showMentionSuggestions, setShowMentionSuggestions] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionSuggestions, setMentionSuggestions] = useState([]);
+  const [cursorPosition, setCursorPosition] = useState(0);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] = useState(false);
+  const [showReplyConfirmDialog, setShowReplyConfirmDialog] = useState(false);
+  const [showEditConfirmDialog, setShowEditConfirmDialog] = useState(false);
+  const [showCancelEditDialog, setShowCancelEditDialog] = useState(false);
+  const [showCancelReplyDialog, setShowCancelReplyDialog] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isPermanentDeleting, setIsPermanentDeleting] = useState(false);
+
+  const isDeleted = comment.isDeleted;
   const isAdmin = currentUsername === 'admin';
   const isAuthor = currentUsername === comment.username;
   const canModify = isAdmin || isAuthor;
-  const isDeleted = comment.isDeleted;
 
   const handleEdit = () => {
     if (isEditing) {
