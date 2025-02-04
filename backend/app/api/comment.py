@@ -124,6 +124,9 @@ async def process_mentions(content: str, cve_id: str, comment_id: PydanticObject
 async def count_active_comments(cve_id: str) -> int:
     """CVE의 활성화된 댓글 수를 계산합니다."""
     try:
+        logger.debug("=== Count Active Comments Debug ===")
+        logger.debug(f"Counting active comments for CVE: {cve_id}")
+        
         # CVE 문서를 찾습니다
         cve = await CVEModel.find_one({"cve_id": cve_id})
         if not cve:
@@ -132,11 +135,15 @@ async def count_active_comments(cve_id: str) -> int:
             
         # comments 필드가 없는 경우 0을 반환
         if not hasattr(cve, 'comments'):
+            logger.debug("No comments field found in CVE document")
             return 0
             
         # 활성화된 댓글만 필터링하여 카운트
         active_comments = [comment for comment in cve.comments if not comment.is_deleted]
-        return len(active_comments)
+        count = len(active_comments)
+        logger.debug(f"Found {count} active comments out of {len(cve.comments)} total comments")
+        
+        return count
         
     except Exception as e:
         logger.error(f"Error counting active comments for CVE {cve_id}: {str(e)}")
@@ -158,7 +165,7 @@ async def send_comment_update(cve_id: str):
         logger.error(f"Error sending comment update for CVE {cve_id}: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
 
-@router.post("/{cve_id}/comments", response_model=Comment)
+@router.post("/{cve_id}/comments", response_model=dict)
 async def create_comment(
     cve_id: str,
     comment_data: CommentCreate,
@@ -197,13 +204,36 @@ async def create_comment(
 
         # 댓글 생성 후 WebSocket으로 업데이트 전송
         await send_comment_update(cve_id)
-        return new_comment
+
+        # 활성화된 댓글 수 계산
+        active_count = await count_active_comments(cve_id)
+
+        # 댓글 목록을 딕셔너리로 변환
+        comments = []
+        for comment in cve.comments:
+            comment_dict = {
+                "id": comment.id,
+                "content": comment.content,
+                "username": comment.username,
+                "created_at": comment.created_at,
+                "updated_at": comment.updated_at,
+                "is_deleted": comment.is_deleted,
+                "parent_id": comment.parent_id,
+                "depth": comment.depth
+            }
+            comments.append(comment_dict)
+
+        return {
+            "comment": new_comment,
+            "comments": comments,
+            "count": active_count
+        }
 
     except Exception as e:
         logger.error(f"댓글 생성 중 오류: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"댓글 추가 중 오류가 발생했습니다: {str(e)}")
 
-@router.patch("/{cve_id}/comments/{comment_id}", response_model=CommentResponse)
+@router.patch("/{cve_id}/comments/{comment_id}", response_model=dict)
 async def update_comment(
     cve_id: str,
     comment_id: PydanticObjectId,
@@ -212,7 +242,18 @@ async def update_comment(
 ):
     """댓글을 수정합니다."""
     try:
-        comment = await Comment.get(comment_id)
+        # CVE 문서 찾기
+        cve = await CVEModel.find_one({"cve_id": cve_id})
+        if not cve:
+            raise HTTPException(status_code=404, detail="CVE를 찾을 수 없습니다.")
+
+        # 댓글 찾기
+        comment = None
+        for c in cve.comments:
+            if c.id == comment_id:
+                comment = c
+                break
+
         if not comment:
             raise HTTPException(status_code=404, detail="댓글을 찾을 수 없습니다.")
             
@@ -221,20 +262,43 @@ async def update_comment(
             
         # 댓글 수정
         comment.content = comment_data.content
-        await comment.save()
+        comment.updated_at = datetime.now(ZoneInfo("Asia/Seoul"))
+        await cve.save()
         
         # 웹소켓을 통해 댓글 수정 이벤트 발송
         await send_comment_update(cve_id)
         
         # 멘션된 사용자 처리
         await process_mentions(comment_data.content, cve_id, comment.id, current_user)
+
+        # 활성화된 댓글 수 계산
+        active_count = await count_active_comments(cve_id)
+
+        # 댓글 목록을 딕셔너리로 변환
+        comments = []
+        for c in cve.comments:
+            comment_dict = {
+                "id": c.id,
+                "content": c.content,
+                "username": c.username,
+                "created_at": c.created_at,
+                "updated_at": c.updated_at,
+                "is_deleted": c.is_deleted,
+                "parent_id": c.parent_id,
+                "depth": c.depth
+            }
+            comments.append(comment_dict)
         
-        return comment
+        return {
+            "comment": comment,
+            "comments": comments,
+            "count": active_count
+        }
     except Exception as e:
         logger.error(f"Error updating comment: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="댓글 수정 중 오류가 발생했습니다.")
 
-@router.delete("/{cve_id}/comments/{comment_id}")
+@router.delete("/{cve_id}/comments/{comment_id}", response_model=dict)
 async def delete_comment(
     cve_id: str,
     comment_id: str,
@@ -259,16 +323,38 @@ async def delete_comment(
         if permanent and current_user.username == "admin":
             # 관리자의 경우 영구 삭제
             cve.comments = [c for c in cve.comments if str(c.id) != comment_id]
-            await cve.save()
         else:
             # 일반 사용자는 소프트 삭제
             comment.is_deleted = True
-            await cve.save()
+        
+        await cve.save()
         
         # 댓글 삭제 후 WebSocket으로 업데이트 전송
         await send_comment_update(cve_id)
+
+        # 활성화된 댓글 수 계산
+        active_count = await count_active_comments(cve_id)
+
+        # 댓글 목록을 딕셔너리로 변환
+        comments = []
+        for c in cve.comments:
+            comment_dict = {
+                "id": c.id,
+                "content": c.content,
+                "username": c.username,
+                "created_at": c.created_at,
+                "updated_at": c.updated_at,
+                "is_deleted": c.is_deleted,
+                "parent_id": c.parent_id,
+                "depth": c.depth
+            }
+            comments.append(comment_dict)
         
-        return {"message": "댓글이 삭제되었습니다."}
+        return {
+            "message": "댓글이 삭제되었습니다.",
+            "comments": comments,
+            "count": active_count
+        }
     except Exception as e:
         logger.error(f"Error deleting comment: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="댓글 삭제 중 오류가 발생했습니다.")
@@ -378,13 +464,15 @@ async def permanently_delete_comment(
         raise HTTPException(status_code=500, detail=f"서버 오류: {str(e)}")
 
 @router.get("/{cve_id}/comments/count")
-async def get_comment_count(
-    cve_id: str,
-    current_user: User = Depends(get_current_user)
-):
+async def get_comment_count(cve_id: str):
     """CVE의 활성화된 댓글 수를 반환합니다."""
     try:
+        logger.debug("=== Get Comment Count Debug ===")
+        logger.debug(f"Getting comment count for CVE: {cve_id}")
+        
         count = await count_active_comments(cve_id)
+        logger.debug(f"Comment count result: {count}")
+        
         return {"count": count}
     except Exception as e:
         logger.error(f"Error getting comment count for CVE {cve_id}: {str(e)}")

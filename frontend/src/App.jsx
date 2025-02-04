@@ -21,6 +21,8 @@ import { SnackbarProvider } from 'notistack';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import theme from './theme';
+import { injectStore, injectErrorHandler } from './utils/auth';
+import { ErrorProvider, useError } from './contexts/ErrorContext';
 
 const MainLayout = ({ children }) => {
   const [selectedCVE, setSelectedCVE] = useState(null);
@@ -105,7 +107,17 @@ const AuthLayout = ({ children }) => (
   </Box>
 );
 
-const AppRoutes = () => {
+const ErrorHandlerSetup = ({ children }) => {
+  const { handleError } = useError();
+  
+  useEffect(() => {
+    injectErrorHandler(handleError);
+  }, [handleError]);
+  
+  return children;
+};
+
+const MainRoutes = () => {
   return (
     <Routes>
       {/* 인증 관련 라우트 */}
@@ -175,18 +187,27 @@ const AppRoutes = () => {
 };
 
 const App = () => {
+  // store 주입
+  useEffect(() => {
+    injectStore(store);
+  }, []);
+
   return (
     <Provider store={store}>
       <ThemeProvider theme={theme}>
         <SnackbarProvider maxSnack={3}>
-          <WebSocketProvider>
-            <AuthProvider>
+          <AuthProvider>
+            <WebSocketProvider>
               <Router>
-                <CssBaseline />
-                <AppRoutes />
+                <ErrorProvider>
+                  <ErrorHandlerSetup>
+                    <CssBaseline />
+                    <MainRoutes />
+                  </ErrorHandlerSetup>
+                </ErrorProvider>
               </Router>
-            </AuthProvider>
-          </WebSocketProvider>
+            </WebSocketProvider>
+          </AuthProvider>
         </SnackbarProvider>
       </ThemeProvider>
     </Provider>

@@ -1,6 +1,6 @@
 from typing import Optional
-from pydantic import BaseModel, EmailStr
-from beanie import Document
+from pydantic import BaseModel, EmailStr, Field
+from beanie import Document, PydanticObjectId
 from datetime import datetime
 
 class UserBase(BaseModel):
@@ -19,26 +19,30 @@ class UserInDB(UserBase):
 
 class UserResponse(UserBase):
     """사용자 응답 모델"""
-    id: Optional[str] = None
+    id: str
     is_admin: bool = False
+
+    class Config:
+        from_attributes = True
 
 class Token(BaseModel):
     """토큰 모델"""
     access_token: str
+    refresh_token: str
     token_type: str
     user: UserResponse
 
     class Config:
+        from_attributes = True
         json_schema_extra = {
             "example": {
                 "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
                 "token_type": "bearer",
                 "user": {
-                    "id": "123",
                     "username": "johndoe",
                     "email": "johndoe@example.com",
-                    "is_admin": False,
-                    "is_active": True
+                    "is_admin": False
                 }
             }
         }
@@ -46,6 +50,7 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     """토큰 데이터 모델"""
     email: Optional[str] = None
+    token_type: Optional[str] = None
 
 class UserUpdate(BaseModel):
     """사용자 정보 수정 모델"""
@@ -59,7 +64,7 @@ class User(Document):
     email: EmailStr
     hashed_password: str
     is_active: bool = True
-    created_at: datetime = datetime.utcnow()
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
     updated_at: datetime = datetime.utcnow()
     is_admin: bool = False
     
@@ -87,3 +92,18 @@ class User(Document):
             "email": self.email,
             "is_admin": self.is_admin
         }
+
+class RefreshToken(Document):
+    user_id: PydanticObjectId
+    token: str
+    expires_at: datetime
+    is_revoked: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+
+    class Settings:
+        name = "refresh_tokens"
+        indexes = [
+            "user_id",
+            "token",
+            "expires_at"
+        ]

@@ -10,6 +10,7 @@
 7. [API 엔드포인트](#api-엔드포인트)
 8. [인증 시스템](#인증-시스템)
 9. [알림 시스템](#알림-시스템)
+10. [WebSocket Architecture](#websocket-architecture)
 
 ## 프로젝트 개요
 
@@ -206,23 +207,43 @@ class Notification(Document):
     created_at: datetime            # 생성일
 ```
 
-## 인증 시스템
+## 인증 시스템 아키텍처
 
-### JWT 기반 인증
+### 1. 토큰 관리 (`frontend/src/utils/storage/tokenStorage.js`)
+- 로컬 스토리지 기반의 토큰 관리
+  - accessToken: 인증된 API 요청에 사용
+  - refreshToken: 액세스 토큰 갱신에 사용
+  - sessionId: WebSocket 연결 식별에 사용
+- 순수 스토리지 작업만 담당
 
-1. **토큰 구조**
-   - Access Token: 30분 유효
-   - Refresh Token: 7일 유효
+### 2. 인증 서비스 (`frontend/src/services/authService.js`)
+- 로그인/로그아웃 비즈니스 로직
+- 토큰 갱신 처리
+- Redux store 상태 관리
+- 인증 상태 확인
 
-2. **인증 흐름**
-   - 로그인 → Access Token + Refresh Token 발급
-   - API 요청 시 Access Token 사용
-   - Access Token 만료 시 Refresh Token으로 자동 갱신
+### 3. HTTP 클라이언트 (`frontend/src/api/config/axios.js`)
+- Axios 인스턴스 설정
+- 요청 인터셉터: 토큰 자동 추가, camelCase to snake_case 변환
+- 응답 인터셉터: 토큰 만료 처리, snake_case to camelCase 변환
 
-3. **보안 기능**
-   - 비밀번호 해싱 (Passlib)
-   - CORS 설정
-   - Rate Limiting
+### 인증 흐름
+1. 로그인
+   - 사용자 로그인 시도
+   - 성공 시 액세스 토큰과 리프레시 토큰 저장
+   - Redux store 상태 업데이트
+
+2. API 요청
+   - 요청 시 자동으로 토큰 추가
+   - 응답 시 자동으로 케이스 변환
+
+3. 토큰 만료
+   - 401 에러 발생 시 자동으로 토큰 갱신 시도
+   - 갱신 실패 시 로그인 페이지로 리다이렉트
+
+4. 로그아웃
+   - 모든 인증 관련 데이터 제거
+   - Redux store 상태 초기화
 
 ## 알림 시스템
 
@@ -378,3 +399,176 @@ This structure promotes:
 - Easy scalability
 - Maintainable codebase
 - Reusable components and logic
+
+## WebSocket Architecture
+
+### Overview
+
+CVEHub의 WebSocket 구현은 실시간 알림과 양방향 통신을 위해 설계되었습니다. 이는 `frontend/src/services/websocket.js`에 구현된 `WebSocketService` 클래스를 통해 관리됩니다.
+
+### Connection Lifecycle
+
+#### 1. 연결 수립 과정
+```
+Client                      Server
+  |                          |
+  |------ WebSocket -------->|  1. 초기 WebSocket 연결 요청
+  |                          |     (token과 session_id 포함)
+  |                          |
+  |<----- connected ---------|  2. 서버가 연결 성공 메시지 전송
+  |                          |
+  |------ connect_ack ------>|  3. 클라이언트가 ACK 전송
+  |                          |
+  |<----- connect_ack -------|  4. 서버가 ACK 응답
+  |                          |     (이후 ping/pong 시작)
+```
+
+#### 2. 연결 종료 과정
+```
+Client                      Server
+  |                          |
+  |-------- close --------->|  1. 종료 요청 메시지 전송
+  |                          |
+  |<-------- close ---------|  2. 서버가 종료 확인 응답
+  |                          |
+  |------ WebSocket.close -->|  3. WebSocket 연결 종료
+  |                          |
+```
+
+### 주요 컴포넌트
+
+#### 1. 상태 관리
+- `WS_STATUS`: WebSocket 연결 상태 상수
+  - CONNECTING (0)
+  - OPEN (1)
+  - CLOSING (2)
+  - CLOSED (3)
+
+#### 2. 이벤트 타입
+- `WS_EVENT_TYPE`: 메시지 타입 정의
+  - CONNECTED: 초기 연결 성공
+  - CONNECT_ACK: 연결 확인
+  - NOTIFICATION: 알림 메시지
+  - PING/PONG: 연결 유지 확인
+  - CLOSE: 명시적 종료
+
+#### 3. 에러 코드
+- `WS_ERROR_CODE`: WebSocket 에러 코드
+  - NORMAL_CLOSURE (1000)
+  - AUTH_FAILED (4001)
+  - INVALID_MESSAGE (4002)
+  - INTERNAL_ERROR (4003)
+
+### 핵심 기능
+
+#### 1. 연결 관리
+- `connect()`: WebSocket 연결 수립
+- `disconnect()`: 안전한 연결 종료
+- `cleanup()`: 리소스 정리
+- `attemptReconnect()`: 재연결 시도
+
+#### 2. 메시지 처리
+- `handleMessage()`: 메시지 라우팅
+- `processMessage()`: 일반 메시지 처리
+- `handleConnectedMessage()`: 연결 성공 메시지 처리
+- `sendConnectAck()`: 연결 확인 응답
+
+#### 3. 연결 유지
+- `setupPingInterval()`: ping 타이머 설정
+- `handlePingMessage()`: ping 처리
+- `handlePongMessage()`: pong 처리
+
+### 오류 처리 및 복구
+
+#### 1. 재연결 메커니즘
+- 지수 백오프 알고리즘 사용
+- 무작위 지터 추가로 연결 폭주 방지
+- 최대 재시도 횟수 제한 (기본값: 5회)
+
+#### 2. 오류 시나리오 처리
+- 인증 실패: 즉시 연결 종료
+- 타임아웃: 재연결 시도
+- 네트워크 오류: 자동 재연결
+- 서버 종료: 정상 종료 처리
+
+### 보안
+
+#### 1. 인증
+- 토큰 기반 인증 사용
+- WebSocket URL에 토큰 포함
+- 세션 ID로 연결 식별
+
+#### 2. 메시지 검증
+- 모든 메시지는 JSON 형식
+- 타입과 데이터 필드 필수
+- 타임스탬프로 메시지 시점 추적
+
+### 디버깅
+
+#### 1. 로깅 시스템
+- 개발 환경에서 상세 로그 제공
+- 연결 상태 변화 추적
+- 메시지 송수신 기록
+- 오류 상황 상세 정보
+
+#### 2. 상태 모니터링
+- 연결 상태 실시간 확인
+- 재연결 시도 횟수 추적
+- 핑/퐁 간격 모니터링
+
+### 사용 예시
+
+```javascript
+// WebSocket 서비스 인스턴스 가져오기
+import WebSocketService from '../services/websocket';
+
+// 연결 설정
+WebSocketService.setOptions({
+  reconnectAttempts: 5,
+  reconnectInterval: 3000,
+  onConnectionChange: (isConnected, error) => {
+    console.log('연결 상태 변경:', isConnected, error);
+  }
+});
+
+// 연결 시작
+await WebSocketService.connect();
+
+// 메시지 핸들러 등록
+WebSocketService.addMessageHandler((message) => {
+  if (message.type === 'notification') {
+    console.log('새 알림:', message.data);
+  }
+});
+
+// 메시지 전송
+WebSocketService.sendMessage({
+  type: 'notification_read',
+  data: { id: 'notification-id' }
+});
+
+// 연결 종료
+WebSocketService.disconnect();
+```
+
+### 주의사항
+
+1. **연결 관리**
+   - 페이지 전환 시 연결 정리 필요
+   - 불필요한 재연결 시도 방지
+   - 종료 시 정상적인 정리 과정 필수
+
+2. **메시지 처리**
+   - 메시지 순서 보장 안됨
+   - 대용량 데이터 전송 지양
+   - 메시지 타입 철저한 검증 필요
+
+3. **오류 처리**
+   - 네트워크 불안정 고려
+   - 타임아웃 설정 필수
+   - 재연결 시도 제한 설정
+
+4. **보안**
+   - 민감 정보 전송 금지
+   - 토큰 만료 처리 필요
+   - 메시지 검증 철저히

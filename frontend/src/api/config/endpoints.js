@@ -1,8 +1,9 @@
 // Auth endpoints
 export const AUTH = {
   LOGIN: '/auth/token',
-  REGISTER: '/auth/register',
+  SIGNUP: '/auth/signup',
   REFRESH: '/auth/refresh',
+  LOGOUT: '/auth/logout',
   ME: '/auth/me',
 };
 

@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Body
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -8,11 +8,19 @@ from ..models.user import User, UserCreate, UserInDB, Token, TokenData, UserResp
 from ..services.user import UserService
 from ..core.dependencies import get_user_service
 from ..core.config.auth import get_auth_settings
-from ..core.auth import create_access_token, get_current_user
+from ..core.auth import (
+    create_access_token,
+    create_refresh_token,
+    verify_refresh_token,
+    revoke_refresh_token,
+    get_current_user
+)
 from beanie import PydanticObjectId
+import logging
 
 router = APIRouter()
 auth_settings = get_auth_settings()
+logger = logging.getLogger(__name__)
 
 # 비밀번호 해싱을 위한 컨텍스트
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -43,7 +51,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
+    to_encode.update({
+        "exp": expire,
+        "type": "access"  # 토큰 타입 명시
+    })
     encoded_jwt = jwt.encode(
         to_encode,
         auth_settings.SECRET_KEY,
@@ -81,7 +92,7 @@ async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     user_service: UserService = Depends(get_user_service)
 ):
-    """토큰 발급"""
+    """로그인 및 토큰 발급"""
     user = await user_service.authenticate_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -90,15 +101,19 @@ async def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    # Access Token 생성
     access_token = create_access_token(
         data={
             "sub": str(user.id),
-            "email": user.email
-        },
-        expires_delta=auth_settings.ACCESS_TOKEN_EXPIRE_DELTA
+            "email": user.email,
+            "type": "access"  # 토큰 타입 명시
+        }
     )
     
-    # UserResponse 모델로 변환하여 반환
+    # Refresh Token 생성
+    refresh_token, _ = await create_refresh_token(str(user.id))
+    
+    # UserResponse 모델로 변환
     user_response = UserResponse(
         id=str(user.id),
         username=user.username,
@@ -108,19 +123,120 @@ async def login_for_access_token(
     
     return {
         "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": user_response
     }
 
-@router.post("/register")
-async def register_user(
+@router.post("/refresh", response_model=Token)
+async def refresh_access_token(authorization: str = Depends(oauth2_scheme)):
+    """토큰 갱신"""
+    logger.debug("=== Token Refresh Debug ===")
+    
+    # Authorization 헤더에서 토큰 추출
+    refresh_token = authorization.replace("Bearer ", "")
+    logger.debug(f"Received refresh token from header: {refresh_token[:10]}...")
+    
+    if not refresh_token:
+        logger.error("No refresh token provided")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No refresh token provided",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    user = await verify_refresh_token(refresh_token)
+    logger.debug(f"Verified user: {user.email if user else None}")
+    
+    if not user:
+        logger.error("Invalid refresh token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 기존 Refresh Token 무효화
+    logger.debug("Revoking old refresh token")
+    await revoke_refresh_token(refresh_token)
+    
+    # 새로운 Access Token 생성
+    access_token = create_access_token(
+        data={
+            "sub": str(user.id),
+            "email": user.email,
+            "type": "access"  # 토큰 타입 명시
+        }
+    )
+    logger.debug(f"Created new access token: {access_token[:10]}...")
+    
+    # 새로운 Refresh Token 생성
+    new_refresh_token, expires_at = await create_refresh_token(str(user.id))
+    logger.debug(f"Created new refresh token: {new_refresh_token[:10]}... (expires at {expires_at})")
+    
+    # UserResponse 모델로 변환
+    user_response = UserResponse(
+        id=str(user.id),
+        username=user.username,
+        email=user.email,
+        is_admin=user.is_admin
+    )
+    
+    logger.debug("Token refresh completed successfully")
+    return {
+        "access_token": access_token,
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer",
+        "user": user_response
+    }
+
+@router.post("/logout")
+async def logout(refresh_token: str):
+    """로그아웃"""
+    await revoke_refresh_token(refresh_token)
+    return {"message": "Successfully logged out"}
+
+@router.post("/signup", response_model=Token)
+async def signup_user(
     user_data: UserCreate,
     user_service: UserService = Depends(get_user_service)
 ):
-    """새로운 사용자 등록"""
+    """새로운 사용자를 등록하고 자동으로 로그인합니다."""
     try:
-        await user_service.create_user(user_data)
-        return {"message": "User registered successfully"}
+        # 사용자 생성
+        user = await user_service.create_user(user_data)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to create user"
+            )
+        
+        # Access Token 생성
+        access_token = create_access_token(
+            data={
+                "sub": str(user.id),
+                "email": user.email
+            }
+        )
+        
+        # Refresh Token 생성
+        refresh_token, _ = await create_refresh_token(str(user.id))
+        
+        # UserResponse 모델로 변환
+        user_response = UserResponse(
+            id=str(user.id),
+            username=user.username,
+            email=user.email,
+            is_admin=user.is_admin
+        )
+        
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "user": user_response
+        }
+        
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

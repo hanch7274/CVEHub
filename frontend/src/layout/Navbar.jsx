@@ -10,8 +10,9 @@ import {
   Tooltip
 } from '@mui/material';
 import { Menu as MenuIcon, ExitToApp as LogoutIcon } from '@mui/icons-material';
-import { api } from '../utils/auth';
+import api from '../api/config/axios';
 import NotificationBell from './NotificationBell';
+import { clearAuthStorage } from '../utils/storage/tokenStorage';
 
 const Navbar = memo(() => {
   const navigate = useNavigate();
@@ -21,9 +22,8 @@ const Navbar = memo(() => {
       // 백엔드 로그아웃 API 호출
       await api.post('/auth/logout');
       
-      // 로컬 스토리지에서 인증 정보 삭제
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
+      // 모든 인증 관련 데이터 제거
+      clearAuthStorage();
       
       // 로그인 페이지로 리다이렉트
       navigate('/login', { 
@@ -31,9 +31,8 @@ const Navbar = memo(() => {
       });
     } catch (error) {
       console.error('Logout error:', error);
-      // 에러가 발생하더라도 로컬 스토리지는 클리어하고 로그인 페이지로 이동
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
+      // 에러가 발생하더라도 인증 데이터는 클리어하고 로그인 페이지로 이동
+      clearAuthStorage();
       navigate('/login');
     }
   };

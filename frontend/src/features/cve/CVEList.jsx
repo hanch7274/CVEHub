@@ -68,14 +68,14 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
     }
   }, [selectedCVE, navigate, setSelectedCVE]);
 
-  const fetchCVEs = useCallback(async () => {
+  const fetchCVEs = useCallback(async (pageNum = page, rowsNum = rowsPerPage) => {
     try {
       setLoading(true);
       setError('');
       const response = await api.get('/cves', {
         params: {
-          skip: page * rowsPerPage,
-          limit: rowsPerPage
+          skip: pageNum * rowsNum,
+          limit: rowsNum
         }
       });
       
@@ -95,12 +95,12 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
     } finally {
       setLoading(false);
     }
-  }, [page, rowsPerPage, navigate]);
+  }, [navigate]);
 
   const debouncedSearchRef = useRef(null);
 
   const debouncedSearch = useCallback(
-    debounce(async (query) => {
+    debounce(async (query, pageNum = page, rowsNum = rowsPerPage) => {
       if (query.trim()) {
         try {
           setLoading(true);
@@ -108,8 +108,8 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
           const response = await api.get('/cves/search', {
             params: {
               query,
-              skip: page * rowsPerPage,
-              limit: rowsPerPage
+              skip: pageNum * rowsNum,
+              limit: rowsNum
             }
           });
           
@@ -129,41 +129,49 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
           setLoading(false);
         }
       } else {
-        fetchCVEs();
+        fetchCVEs(pageNum, rowsNum);
       }
     }, 300),
-    [fetchCVEs]
+    [fetchCVEs, navigate]
   );
 
   useEffect(() => {
     debouncedSearchRef.current = debouncedSearch;
   }, [debouncedSearch]);
 
-  useEffect(() => {
-    if (user) {
-      fetchCVEs();
-    }
-  }, [fetchCVEs, user]);
-
+  // 로그인 상태 체크
   useEffect(() => {
     if (!user) {
       navigate('/login');
-      return;
     }
-    if (searchQuery) {
-      debouncedSearchRef.current(searchQuery);
-    } else {
-      fetchCVEs();
-    }
-  }, [user, searchQuery, page, rowsPerPage, fetchCVEs, navigate]);
+  }, [user, navigate]);
+
+  // 데이터 로드를 하나의 useEffect로 통합
+  useEffect(() => {
+    if (!user) return;
+
+    const loadData = () => {
+      if (searchQuery) {
+        debouncedSearch(searchQuery, page, rowsPerPage);
+      } else {
+        fetchCVEs(page, rowsPerPage);
+      }
+    };
+
+    loadData();
+  }, [user, page, rowsPerPage, searchQuery]);
 
   const handleSearch = (e) => {
     setSearchQuery(e.target.value);
-    setPage(0);
+    setPage(0);  // 검색 시 첫 페이지로 이동
   };
 
   const handleRefresh = () => {
-    fetchCVEs();
+    if (searchQuery) {
+      debouncedSearch(searchQuery, page, rowsPerPage);
+    } else {
+      fetchCVEs(page, rowsPerPage);
+    }
   };
 
   const handleChangePage = (event, newPage) => {

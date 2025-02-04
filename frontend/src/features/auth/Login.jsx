@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
+import { useSnackbar } from 'notistack';
 import {
   Container,
   Box,
@@ -16,11 +18,13 @@ import {
   Divider
 } from '@mui/material';
 import { Email, Lock, Visibility, VisibilityOff } from '@mui/icons-material';
-import { useAuth } from '../../contexts/AuthContext';
+import { loginThunk } from '../../store/authSlice';
 
 const Login = () => {
   const navigate = useNavigate();
-  const { login, loading: authLoading } = useAuth();
+  const dispatch = useDispatch();
+  const { enqueueSnackbar } = useSnackbar();
+  const { loading: authLoading, error: authError } = useSelector(state => state.auth);
   
   const [formData, setFormData] = useState({
     email: '',
@@ -38,6 +42,12 @@ const Login = () => {
       setSaveId(true);
     }
   }, []);
+
+  useEffect(() => {
+    if (authError) {
+      setError(authError);
+    }
+  }, [authError]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -67,19 +77,53 @@ const Login = () => {
     setError('');
     setLoading(true);
 
+    console.log('=== Login Form Submit Debug ===');
+    console.log('Form Data:', formData);
+    console.log('Save ID:', saveId);
+
     try {
-      await login(formData.email, formData.password);
+      console.log('Dispatching login thunk...');
+      const result = await dispatch(loginThunk(formData)).unwrap();
+      console.log('Login thunk result:', result);
       
       if (saveId) {
         localStorage.setItem('savedEmail', formData.email);
+        console.log('Email saved to localStorage:', formData.email);
       }
       
-      navigate('/cves', { replace: true });
+      enqueueSnackbar('로그인에 성공했습니다.', {
+        variant: 'success',
+        anchorOrigin: {
+          vertical: 'bottom',
+          horizontal: 'center',
+        },
+        autoHideDuration: 2000
+      });
+      
+      console.log('Waiting for WebSocket connection to stabilize...');
+      setTimeout(() => {
+        console.log('Navigating to home page...');
+        navigate('/', { replace: true });
+      }, 500);
+
     } catch (err) {
-      console.error('Login error:', err);
+      console.error('=== Login Component Error Debug ===');
+      console.error('Error:', err);
+      console.error('Auth Error State:', authError);
+      
       setError(err || '로그인 중 오류가 발생했습니다. 다시 시도해주세요.');
+      
+      enqueueSnackbar(err || '로그인 중 오류가 발생했습니다.', {
+        variant: 'error',
+        anchorOrigin: {
+          vertical: 'bottom',
+          horizontal: 'center',
+        },
+        autoHideDuration: 3000
+      });
     } finally {
       setLoading(false);
+      console.log('Login attempt completed. Loading state reset.');
     }
   };
 

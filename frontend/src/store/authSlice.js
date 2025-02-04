@@ -1,26 +1,25 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { login as authLogin, getCurrentUser } from '../utils/auth';
+import { login as authLogin, getCurrentUser } from '../services/authService';
+import { getAccessToken } from '../utils/storage/tokenStorage';
 
 // 초기 상태
 const initialState = {
-  token: localStorage.getItem('token'),
   user: null,
-  isAuthenticated: !!localStorage.getItem('token'),
+  isAuthenticated: !!getAccessToken(),
   loading: false,
-  error: null
+  error: null,
+  isInitialized: false
 };
 
 // 로그인 Thunk
 export const loginThunk = createAsyncThunk(
   'auth/login',
-  async ({ email, password }, { dispatch, rejectWithValue }) => {
+  async (credentials, { rejectWithValue }) => {
     try {
-      const response = await authLogin(email, password);
-      // 로그인 성공 후 바로 사용자 정보 조회
-      await dispatch(getCurrentUserThunk());
+      const response = await authLogin(credentials);
       return response;
     } catch (error) {
-      return rejectWithValue(error);
+      return rejectWithValue(error.message);
     }
   }
 );
@@ -28,17 +27,16 @@ export const loginThunk = createAsyncThunk(
 // 현재 사용자 정보 조회 Thunk
 export const getCurrentUserThunk = createAsyncThunk(
   'auth/getCurrentUser',
-  async (_, { getState, rejectWithValue }) => {
+  async (_, { rejectWithValue, getState }) => {
+    const { auth } = getState();
+    // 이미 초기화되었거나 인증되지 않은 경우 스킵
+    if (auth.isInitialized || !auth.isAuthenticated) {
+      return null;
+    }
+
     try {
-      const { token } = getState().auth;
-      if (!token) {
-        throw new Error('토큰이 없습니다.');
-      }
-      const response = await getCurrentUser();
-      if (!response?.id) {
-        throw new Error('사용자 정보가 올바르지 않습니다.');
-      }
-      return response;
+      const user = await getCurrentUser();
+      return user;
     } catch (error) {
       return rejectWithValue(error.message);
     }
@@ -50,24 +48,14 @@ export const authSlice = createSlice({
   name: 'auth',
   initialState,
   reducers: {
-    setToken: (state, action) => {
-      state.token = action.payload;
-      state.isAuthenticated = !!action.payload;
-      if (action.payload) {
-        localStorage.setItem('token', action.payload);
-      } else {
-        localStorage.removeItem('token');
-      }
-    },
     setUser: (state, action) => {
       state.user = action.payload;
       state.isAuthenticated = !!action.payload;
     },
     logout: (state) => {
-      state.token = null;
       state.user = null;
       state.isAuthenticated = false;
-      localStorage.removeItem('token');
+      state.isInitialized = true;
     },
     clearError: (state) => {
       state.error = null;
@@ -82,13 +70,14 @@ export const authSlice = createSlice({
       })
       .addCase(loginThunk.fulfilled, (state, action) => {
         state.loading = false;
-        state.token = action.payload.accessToken;
+        state.user = action.payload.user;
         state.isAuthenticated = true;
-        localStorage.setItem('token', action.payload.accessToken);
+        state.isInitialized = true;
       })
       .addCase(loginThunk.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
+        state.isInitialized = true;
       })
       // 사용자 정보 조회
       .addCase(getCurrentUserThunk.pending, (state) => {
@@ -97,21 +86,22 @@ export const authSlice = createSlice({
       })
       .addCase(getCurrentUserThunk.fulfilled, (state, action) => {
         state.loading = false;
-        state.user = action.payload;
-        state.isAuthenticated = true;
+        if (action.payload) {
+          state.user = action.payload;
+          state.isAuthenticated = true;
+        }
+        state.isInitialized = true;
       })
       .addCase(getCurrentUserThunk.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
-        // 사용자 정보 조회 실패 시 로그아웃
-        state.token = null;
         state.user = null;
         state.isAuthenticated = false;
-        localStorage.removeItem('token');
+        state.isInitialized = true;
       });
   }
 });
 
-export const { setToken, setUser, logout, clearError } = authSlice.actions;
+export const { setUser, logout, clearError } = authSlice.actions;
 
 export default authSlice.reducer;

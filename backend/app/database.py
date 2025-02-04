@@ -1,9 +1,10 @@
 import os
 import logging
+import traceback
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
 from app.models.cve import CVEModel
-from .models.user import User
+from .models.user import User, RefreshToken
 from .models.notification import Notification
 from .core.config import settings
 from passlib.context import CryptContext
@@ -32,7 +33,8 @@ async def init_db():
             document_models=[
                 User,
                 CVEModel,
-                Notification
+                Notification,
+                RefreshToken
             ]
         )
         

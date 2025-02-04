@@ -17,8 +17,9 @@ import {
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon
 } from '@mui/icons-material';
-import { api } from '../../utils/auth';
+import api from '../../api/config/axios';
 import { useNavigate } from 'react-router-dom';
+import { register } from '../../services/authService';
 
 const SignUp = () => {
   const navigate = useNavigate();
@@ -37,6 +38,63 @@ const SignUp = () => {
     message: '',
     severity: 'success'
   });
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    
+    // 폼 검증 실행
+    if (!validateForm()) {
+      return;
+    }
+    
+    setLoading(true);
+
+    try {
+      const userData = {
+        email: formData.email,
+        username: formData.username,
+        password: formData.password,
+        confirmPassword: formData.confirmPassword,
+        is_admin: formData.is_admin
+      };
+
+      await register(userData);
+      
+      setSnackbar({
+        open: true,
+        message: '회원가입이 완료되었습니다. 로그인 페이지로 이동합니다.',
+        severity: 'success'
+      });
+
+      // 회원가입 성공 후 로그인 페이지로 이동
+      setTimeout(() => {
+        navigate('/login');
+      }, 2000);
+    } catch (error) {
+      console.error('회원가입 에러:', error);
+      
+      // 서버에서 반환한 에러 메시지가 있는 경우 해당 메시지 표시
+      const errorMessage = error.response?.data?.detail || error.message || '회원가입 중 오류가 발생했습니다.';
+      
+      // 필드별 에러 메시지 처리
+      if (error.response?.data?.errors) {
+        const fieldErrors = {};
+        Object.entries(error.response.data.errors).forEach(([field, message]) => {
+          fieldErrors[field] = Array.isArray(message) ? message[0] : message;
+        });
+        setErrors(fieldErrors);
+      }
+      
+      setSnackbar({
+        open: true,
+        message: errorMessage,
+        severity: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const validateForm = () => {
     const newErrors = {};
@@ -46,6 +104,8 @@ const SignUp = () => {
       newErrors.username = '사용자 이름을 입력해주세요';
     } else if (formData.username.length < 3) {
       newErrors.username = '사용자 이름은 최소 3자 이상이어야 합니다';
+    } else if (formData.username.length > 30) {
+      newErrors.username = '사용자 이름은 최대 30자까지 가능합니다';
     }
 
     // 이메일 검증
@@ -72,49 +132,13 @@ const SignUp = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    
-    if (!validateForm()) {
-      return;
-    }
-
-    try {
-      // FormData 객체 생성
-      const formDataToSend = new FormData();
-      formDataToSend.append('username', formData.username);
-      formDataToSend.append('email', formData.email);
-      formDataToSend.append('password', formData.password);
-      formDataToSend.append('is_admin', formData.is_admin);
-
-      const response = await api.post('/auth/signup', formDataToSend);
-
-      if (response.status === 200 || response.status === 201) {
-        setSnackbar({
-          open: true,
-          message: '회원가입이 완료되었습니다!',
-          severity: 'success'
-        });
-        
-        // 로그인 페이지로 즉시 이동
-        navigate('/login');
-      }
-    } catch (error) {
-      const errorMessage = error.response?.data?.detail || '회원가입 중 오류가 발생했습니다';
-      setSnackbar({
-        open: true,
-        message: errorMessage,
-        severity: 'error'
-      });
-    }
-  };
-
   const handleChange = (e) => {
-    const { name, value } = e.target;
+    const { name, value, type, checked } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: value
+      [name]: type === 'checkbox' ? checked : value
     }));
+    
     // 입력 시 해당 필드의 에러 메시지 제거
     if (errors[name]) {
       setErrors(prev => ({

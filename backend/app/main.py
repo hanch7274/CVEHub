@@ -8,7 +8,7 @@ import sys
 from beanie import init_beanie
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from .models.user import User
+from .models.user import User, RefreshToken
 from .models.cve import CVEModel
 from .models.notification import Notification
 from .models.comment import Comment
@@ -123,7 +123,8 @@ async def startup_event():
                 User,
                 CVEModel,
                 Comment,
-                Notification
+                Notification,
+                RefreshToken
             ]
         )
         logging.info("Database initialized successfully")

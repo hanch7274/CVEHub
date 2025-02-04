@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useDispatch } from 'react-redux';
-import { api } from '../../utils/auth';
+import api from '../../api/config/axios';
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
 import {
   Dialog,
@@ -689,6 +689,10 @@ const CVEDetail = ({ open, onClose, cveId }) => {
 
   // WebSocket 메시지 핸들러
   const handleWebSocketMessage = useCallback((data) => {
+    if (!cveId || (data.data?.cve_id !== cveId && data.data?.cveId !== cveId)) {
+      return;
+    }
+
     console.log('[CVEDetail] WebSocket 메시지 수신:', {
       type: data.type,
       data: data.data,
@@ -702,13 +706,13 @@ const CVEDetail = ({ open, onClose, cveId }) => {
       case 'comment_update':
         console.log('[CVEDetail] 댓글 업데이트 이벤트:', {
           before: activeCommentCount,
-          after: data.data?.comment_count,
+          after: data.data?.count,
           data: data.data
         });
         
-        // 댓글 수 업데이트
-        if (data.data?.comment_count !== undefined) {
-          setActiveCommentCount(data.data.comment_count);
+        // 댓글 수 업데이트 (count 필드 사용)
+        if (data.data?.count !== undefined) {
+          setActiveCommentCount(data.data.count);
         }
         break;
       
@@ -721,6 +725,11 @@ const CVEDetail = ({ open, onClose, cveId }) => {
         // CVE 데이터 업데이트
         if (data.data?.cve) {
           setCve(data.data.cve);
+          // CVE 업데이트 시 댓글 수도 함께 업데이트
+          if (data.data.cve.comments) {
+            const activeCount = countActiveComments(data.data.cve.comments);
+            setActiveCommentCount(activeCount);
+          }
         }
         break;
       
@@ -732,46 +741,40 @@ const CVEDetail = ({ open, onClose, cveId }) => {
 
   // WebSocket 메시지 구독
   useEffect(() => {
-    if (!lastMessage) return;
+    if (!lastMessage || !cveId) return;
 
-    console.log('[CVEDetail] 새로운 WebSocket 메시지:', {
-      message: lastMessage,
-      currentCveId: cveId,
-      timestamp: new Date().toISOString()
-    });
-
-    // cveId가 일치하는 경우에만 메시지 처리
-    if (lastMessage.data?.cve_id === cveId || lastMessage.data?.cveId === cveId) {
-      handleWebSocketMessage(lastMessage);
-    }
+    handleWebSocketMessage(lastMessage);
   }, [lastMessage, cveId, handleWebSocketMessage]);
 
-  // WebSocket 연결 설정
-  useEffect(() => {
-    if (isConnected && cveId) {
-      console.log('[CVEDetail] WebSocket 연결됨:', {
-        cveId,
-        timestamp: new Date().toISOString()
-      });
-    }
-  }, [isConnected, cveId]);
-
   // 초기 댓글 수 로드
-  useEffect(() => {
-    const fetchCommentCount = async () => {
-      if (!cveId) return;
-      
-      try {
-        const response = await api.get(`/cves/${cveId}/comments/count`);
+useEffect(() => {
+  const fetchCommentCount = async () => {
+    if (!cveId) return;
+    
+    try {
+      const response = await api.get(`/cves/${cveId}/comments/count`);
+      if (response.data) {
         console.log('[CVEDetail] 초기 댓글 수 로드:', response.data);
-        setActiveCommentCount(response.data.count);
-      } catch (error) {
-        console.error('[CVEDetail] 댓글 수 로드 실패:', error);
+        // 수정: 백엔드 응답 키는 "count"입니다.
+        setActiveCommentCount(response.data.count || 0);
       }
-    };
+    } catch (error) {
+      console.error('[CVEDetail] 댓글 수 로드 실패:', error.response?.data?.detail || error.message);
+      if (error.response?.status === 401) {
+        window.location.href = '/login';
+      }
+      setActiveCommentCount(0);
+    }
+  };
 
-    fetchCommentCount();
-  }, [cveId]);
+  fetchCommentCount();
+}, [cveId]);
+
+  // 댓글 수 업데이트 핸들러
+  const handleCommentCountChange = useCallback((count) => {
+    console.log('[CVEDetail] 댓글 수 업데이트:', count);
+    setActiveCommentCount(count);
+  }, []);
 
   if (!cve) {
     return null;
@@ -1264,7 +1267,12 @@ const CVEDetail = ({ open, onClose, cveId }) => {
             </TabPanel>
 
             <TabPanel value={tabValue} index={3}>
-              <CommentsTab cve={cve} onCommentsUpdate={handleCommentsUpdate} />
+              <CommentsTab 
+                cve={cve} 
+                onUpdate={handleCommentsUpdate}
+                onCommentCountChange={handleCommentCountChange}
+                setError={setError}
+              />
             </TabPanel>
           </Box>
         </DialogContent>
