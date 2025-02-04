@@ -8,6 +8,7 @@ class UserBase(BaseModel):
     username: str
     email: EmailStr
     is_active: bool = True
+    is_admin: bool = False
 
 class UserCreate(UserBase):
     """사용자 생성 모델"""

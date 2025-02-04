@@ -2,7 +2,7 @@ from typing import List, Optional
 from datetime import datetime
 from beanie import PydanticObjectId
 from .base import BaseRepository
-from ..models.cve import CVEModel, CreateCVERequest, PatchCVERequest
+from ..models.cve_model import CVEModel, CreateCVERequest, PatchCVERequest
 
 class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest]):
     def __init__(self):

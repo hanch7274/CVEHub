@@ -65,8 +65,8 @@ const refreshTokenFn = async () => {
     console.log('Status:', response.status);
     console.log('Data:', response.data);
 
-    // 응답은 자동으로 카멜케이스로 변환됨
-    const { accessToken: newAccessToken, refreshToken: newRefreshToken } = response.data;
+    // snake_case로 받은 데이터 처리
+    const { access_token: newAccessToken, refresh_token: newRefreshToken, user } = response.data;
     
     if (!newAccessToken) {
       throw new Error('New access token not received');
@@ -75,6 +75,9 @@ const refreshTokenFn = async () => {
     setAccessToken(newAccessToken);
     if (newRefreshToken) {
       setRefreshToken(newRefreshToken);
+    }
+    if (user) {
+      setUser(user);
     }
 
     return newAccessToken;

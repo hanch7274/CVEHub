@@ -9,12 +9,12 @@ from beanie import init_beanie
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from .models.user import User, RefreshToken
-from .models.cve import CVEModel
+from .models.cve_model import CVEModel
 from .models.notification import Notification
 from .models.comment import Comment
 from .core.config.app import get_app_settings
 from .core.config.db import get_db_settings
-from .api import cve, notification, user, crawler, auth, comment
+from .api import cve_router, notification, user, crawler, auth, comment
 from .core.exceptions import CVEHubException
 from .core.error_handlers import (
     cvehub_exception_handler,
@@ -98,7 +98,7 @@ app.add_exception_handler(ValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, general_exception_handler)
 
 # API 라우터 등록
-app.include_router(cve.router, prefix="/cves", tags=["cve"])
+app.include_router(cve_router.router, prefix="/cves", tags=["cve"])
 app.include_router(comment.router, prefix="/cves", tags=["comment"])
 app.include_router(notification.router, prefix="/notification", tags=["notification"])
 app.include_router(user.router, prefix="/user", tags=["user"])

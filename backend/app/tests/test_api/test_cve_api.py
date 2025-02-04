@@ -2,7 +2,7 @@ import pytest
 from httpx import AsyncClient
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from ...models.cve import CreateCVERequest, PatchCVERequest
+from ...models.cve_model import CreateCVERequest, PatchCVERequest
 from ...core.config import get_app_settings
 from ...main import app
 

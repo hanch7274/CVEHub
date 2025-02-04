@@ -2,8 +2,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 from ..models.user import User
-from ..models.cve import CreateCVERequest
-from ..services.cve import CVEService
+from ..models.cve_model import CreateCVERequest
+from ..services.cve_service import CVEService
 from ..core.dependencies import get_cve_service
 from ..core.auth import get_current_admin_user
 

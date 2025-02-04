@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from ..models.cve import CVEModel
+from ..models.cve_model import CVEModel
 from ..auth.user import get_current_user
 from ..models.user import User
 from zoneinfo import ZoneInfo

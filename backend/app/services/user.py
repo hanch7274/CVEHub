@@ -42,7 +42,8 @@ class UserService:
         new_user = User(
             username=user_data.username,
             email=user_data.email,
-            hashed_password=hashed_password
+            hashed_password=hashed_password,
+            is_admin=getattr(user_data, 'is_admin', False)
         )
         await new_user.save()
         return new_user

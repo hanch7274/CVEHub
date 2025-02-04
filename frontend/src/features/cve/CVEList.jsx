@@ -39,6 +39,16 @@ import { api } from '../../utils/auth';
 import CVEDetail from './CVEDetail';
 import CreateCVE from './CreateCVE';
 import { debounce } from 'lodash';
+import { useDispatch, useSelector } from 'react-redux';
+import {
+  fetchCVEList,
+  updateFilters,
+  selectCVEList,
+  selectCVEFilters,
+  selectCVELoading,
+  updateCVEFromWebSocket,
+  searchCVEs
+} from '../../store/cveSlice';
 
 const STATUS_COLORS = {
   '미할당': 'default',
@@ -48,16 +58,12 @@ const STATUS_COLORS = {
 };
 
 const CVEList = ({ selectedCVE, setSelectedCVE }) => {
-  const navigate = useNavigate();
+  const dispatch = useDispatch();
+  const { items: cves, total: totalCount, loading, error } = useSelector(selectCVEList);
+  const { page, rowsPerPage, search: searchQuery } = useSelector(selectCVEFilters);
   const { user } = useAuth();
-  const [cves, setCves] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
-  const [searchQuery, setSearchQuery] = useState('');
+  const navigate = useNavigate();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [totalCount, setTotalCount] = useState(0);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [cveToDelete, setCveToDelete] = useState(null);
 
@@ -68,119 +74,65 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
     }
   }, [selectedCVE, navigate, setSelectedCVE]);
 
-  const fetchCVEs = useCallback(async (pageNum = page, rowsNum = rowsPerPage) => {
-    try {
-      setLoading(true);
-      setError('');
-      const response = await api.get('/cves', {
-        params: {
-          skip: pageNum * rowsNum,
-          limit: rowsNum
-        }
-      });
-      
-      if (response.data && Array.isArray(response.data.items)) {
-        setCves(response.data.items);
-        setTotalCount(response.data.total || 0);
-      } else {
-        throw new Error('서버 응답 형식이 올바르지 않습니다.');
-      }
-    } catch (error) {
-      console.error('Error fetching CVEs:', error);
-      const errorMessage = error.response?.data?.detail || 'CVE 목록을 가져오는 중 오류가 발생했습니다.';
-      setError(errorMessage);
-      if (error.response?.status === 401) {
-        navigate('/login');
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [navigate]);
-
-  const debouncedSearchRef = useRef(null);
-
-  const debouncedSearch = useCallback(
-    debounce(async (query, pageNum = page, rowsNum = rowsPerPage) => {
-      if (query.trim()) {
-        try {
-          setLoading(true);
-          setError('');
-          const response = await api.get('/cves/search', {
-            params: {
-              query,
-              skip: pageNum * rowsNum,
-              limit: rowsNum
-            }
-          });
-          
-          if (response.data && Array.isArray(response.data.items)) {
-            setCves(response.data.items);
-            setTotalCount(response.data.total || 0);
-          } else {
-            throw new Error('Invalid response format');
-          }
-        } catch (error) {
-          console.error('Error searching CVEs:', error);
-          setError(error.response?.data?.detail || 'CVE 검색 중 오류가 발생했습니다.');
-          if (error.response?.status === 401) {
-            navigate('/login');
-          }
-        } finally {
-          setLoading(false);
-        }
-      } else {
-        fetchCVEs(pageNum, rowsNum);
-      }
-    }, 300),
-    [fetchCVEs, navigate]
-  );
-
-  useEffect(() => {
-    debouncedSearchRef.current = debouncedSearch;
-  }, [debouncedSearch]);
-
-  // 로그인 상태 체크
+  // 로그인 체크
   useEffect(() => {
     if (!user) {
       navigate('/login');
     }
   }, [user, navigate]);
 
-  // 데이터 로드를 하나의 useEffect로 통합
+  // 초기 데이터 로드
   useEffect(() => {
     if (!user) return;
 
-    const loadData = () => {
-      if (searchQuery) {
-        debouncedSearch(searchQuery, page, rowsPerPage);
-      } else {
-        fetchCVEs(page, rowsPerPage);
-      }
-    };
+    dispatch(fetchCVEList({
+      skip: page * rowsPerPage,
+      limit: rowsPerPage,
+      search: searchQuery
+    }));
+  }, [dispatch, page, rowsPerPage, searchQuery, user]);
 
-    loadData();
-  }, [user, page, rowsPerPage, searchQuery]);
+  // 검색 디바운스 처리
+  const debouncedSearch = useCallback(
+    debounce((query) => {
+      dispatch(fetchCVEList({
+        skip: 0,
+        limit: rowsPerPage,
+        search: query
+      }));
+    }, 300),
+    [dispatch, rowsPerPage]
+  );
 
+  // 검색어 변경 핸들러
   const handleSearch = (e) => {
-    setSearchQuery(e.target.value);
-    setPage(0);  // 검색 시 첫 페이지로 이동
+    const newSearchQuery = e.target.value;
+    dispatch(updateFilters({ 
+      search: newSearchQuery,
+      page: 0
+    }));
+    debouncedSearch(newSearchQuery);
   };
 
+  // 새로고침 핸들러
   const handleRefresh = () => {
-    if (searchQuery) {
-      debouncedSearch(searchQuery, page, rowsPerPage);
-    } else {
-      fetchCVEs(page, rowsPerPage);
-    }
+    dispatch(fetchCVEList({
+      skip: page * rowsPerPage,
+      limit: rowsPerPage,
+      search: searchQuery
+    }));
   };
 
   const handleChangePage = (event, newPage) => {
-    setPage(newPage);
+    dispatch(updateFilters({ page: newPage }));
   };
 
   const handleChangeRowsPerPage = (event) => {
-    setRowsPerPage(parseInt(event.target.value, 10));
-    setPage(0);
+    const newRowsPerPage = parseInt(event.target.value, 10);
+    dispatch(updateFilters({
+      rowsPerPage: newRowsPerPage,
+      page: 0
+    }));
   };
 
   const handleCVEClick = (cve) => {
@@ -205,16 +157,15 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
   };
 
   const handleCVECreated = () => {
-    fetchCVEs();
+    dispatch(fetchCVEList({
+      skip: page * rowsPerPage,
+      limit: rowsPerPage
+    }));
     setCreateDialogOpen(false);
   };
 
   const handleCVEUpdated = (updatedCVE) => {
-    setCves((prevCves) =>
-      prevCves.map((cve) =>
-        cve.cveId === updatedCVE.cveId ? updatedCVE : cve
-      )
-    );
+    dispatch(updateCVEFromWebSocket(updatedCVE));
   };
 
   const handleDeleteClick = (e, cve) => {
@@ -226,12 +177,15 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
   const handleDeleteConfirm = async () => {
     try {
       await api.delete(`/cves/${cveToDelete.cveId}`);
-      setCves((prevCves) => prevCves.filter(cve => cve.cveId !== cveToDelete.cveId));
+      dispatch(fetchCVEList({
+        skip: page * rowsPerPage,
+        limit: rowsPerPage
+      }));
       setDeleteDialogOpen(false);
       setCveToDelete(null);
     } catch (error) {
       console.error('Error deleting CVE:', error);
-      setError('CVE 삭제 중 오류가 발생했습니다.');
+      dispatch(updateFilters({ error: 'CVE 삭제 중 오류가 발생했습니다.' }));
     }
   };
 
@@ -246,10 +200,11 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
       setSelectedCVE(response.data);
     } catch (error) {
       console.error('Error fetching CVE details:', error);
-      const errorMessage = error.response?.data?.detail || 'CVE 상세 정보를 가져오는 중 오류가 발생했습니다.';
-      setError(errorMessage);
+      dispatch(updateFilters({ 
+        error: error.response?.data?.detail || 'CVE 상세 정보를 가져오는 중 오류가 발생했습니다.' 
+      }));
     }
-  }, []);
+  }, [dispatch]);
 
   const renderSkeletons = () => (
     Array(rowsPerPage).fill(0).map((_, index) => (

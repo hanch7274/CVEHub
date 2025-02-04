@@ -1,6 +1,6 @@
 from functools import lru_cache
 from ..services.user import UserService
-from ..services.cve import CVEService
+from ..services.cve_service import CVEService
 from ..services.notification import NotificationService
 
 @lru_cache()

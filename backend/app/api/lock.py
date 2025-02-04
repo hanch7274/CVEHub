@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
-from ..models.cve import CVEModel
+from ..models.cve_model import CVEModel
 from ..auth.user import get_current_user
 
 router = APIRouter()

@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime
-from ...models.cve import CreateCVERequest, PatchCVERequest
+from ...models.cve_model import CreateCVERequest, PatchCVERequest
 from ...core.exceptions import NotFoundException
 from zoneinfo import ZoneInfo
 

@@ -5,10 +5,10 @@ from beanie import init_beanie
 from ..main import app
 from ..core.config import get_app_settings
 from ..models.user import User
-from ..models.cve import CVEModel
+from ..models.cve_model import CVEModel
 from ..models.notification import Notification
 from ..models.comment import Comment
-from ..services.cve import CVEService
+from ..services.cve_service import CVEService
 from ..services.notification import NotificationService
 from ..repositories.cve import CVERepository
 from ..repositories.notification import NotificationRepository

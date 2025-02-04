@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, status as http_status, Depends
 from typing import List, Optional
-from ..models.cve import CVEModel, PoC, SnortRule, Reference, ModificationHistory, Comment
+from ..models.cve_model import CVEModel, PoC, SnortRule, Reference, ModificationHistory, Comment
 from ..models.user import User
 from datetime import datetime
 from pydantic import BaseModel, Field, ValidationError
@@ -12,7 +12,7 @@ import re
 from bson import ObjectId
 import traceback
 import logging
-from ..services.cve import CVEService
+from ..services.cve_service import CVEService
 from ..core.dependencies import get_cve_service
 
 router = APIRouter()
@@ -27,6 +27,8 @@ class CreateSnortRuleRequest(BaseModel):
     rule: str
     type: str
     description: Optional[str] = None
+    date_added: Optional[datetime] = None
+    added_by: Optional[str] = None
 
 class CreateCVERequest(BaseModel):
     cve_id: str
@@ -67,6 +69,9 @@ class PatchCVERequest(BaseModel):
 
     class Config:
         extra = "allow"  # 추가 필드 허용
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 
 class CommentCreate(BaseModel):
     content: str
@@ -164,13 +169,34 @@ async def update_cve(
     cve_service: CVEService = Depends(get_cve_service)
 ):
     """CVE를 수정합니다."""
-    cve = await cve_service.update_cve(cve_id, cve_data, current_user.username)
-    if not cve:
+    try:
+        # snort_rules가 있는 경우 date_added와 added_by 필드 추가
+        if cve_data.snort_rules is not None:
+            for rule in cve_data.snort_rules:
+                if not rule.date_added:
+                    rule.date_added = datetime.now(ZoneInfo("Asia/Seoul"))
+                if not rule.added_by:
+                    rule.added_by = current_user.username
+
+        cve = await cve_service.update_cve(cve_id, cve_data, current_user.username)
+        if not cve:
+            raise HTTPException(
+                status_code=http_status.HTTP_404_NOT_FOUND,
+                detail="CVE not found"
+            )
+        return cve
+    except ValidationError as e:
         raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND,
-            detail="CVE not found"
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e)
         )
-    return cve
+    except Exception as e:
+        logging.error(f"Error updating CVE: {str(e)}")
+        logging.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update CVE"
+        )
 
 @router.delete("/{cve_id}")
 async def delete_cve(

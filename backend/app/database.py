@@ -3,7 +3,7 @@ import logging
 import traceback
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
-from app.models.cve import CVEModel
+from backend.app.models.cve_model import CVEModel
 from .models.user import User, RefreshToken
 from .models.notification import Notification
 from .core.config import settings

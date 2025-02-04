@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel, Field
-from ..models.cve import CVEModel, Comment
+from ..models.cve_model import CVEModel, Comment
 from ..models.user import User
 from ..models.notification import Notification, NotificationCreate
 from ..core.auth import get_current_user

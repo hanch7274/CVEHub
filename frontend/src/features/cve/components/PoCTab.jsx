@@ -1,29 +1,39 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
+  Typography,
+  Chip,
   Box,
-  Button,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField,
+  IconButton,
+  Tooltip,
+  Fade,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
-  List,
-  ListItem,
-  ListItemText,
-  IconButton,
-  Chip,
-  Alert
+  TextField,
+  Button
 } from '@mui/material';
 import {
   Add as AddIcon,
-  Delete as DeleteIcon,
   Edit as EditIcon,
-  Launch as LaunchIcon
+  Delete as DeleteIcon,
+  Launch as LaunchIcon,
+  Code as CodeIcon
 } from '@mui/icons-material';
+import {
+  StyledListItem,
+  ActionButton,
+  ActionIconButton,
+  ListHeader,
+  ChipLabel,
+  EmptyState
+} from './CommonStyles';
+import { useDispatch } from 'react-redux';
+import { updateCVEDetail } from '../../../store/cveSlice';
 
 const POC_SOURCES = {
   Etc: { label: 'Etc', color: 'default' },
@@ -31,106 +41,226 @@ const POC_SOURCES = {
   'Nuclei-Templates': { label: 'Nuclei Templates', color: 'primary' }
 };
 
-const PoCTab = ({
-  pocs = [],
-  newPoc,
-  setNewPoc,
-  pocDialogOpen,
-  setPocDialogOpen,
-  onAddPoc,
-  onDeletePoc,
-  onUpdatePoc,
-  loading,
-  error,
-  editingPocId,
-  editingPocData,
-  setEditingPocId,
-  setEditingPocData
-}) => {
+const DEFAULT_POC = {
+  source: 'Etc',
+  url: '',
+  description: ''
+};
+
+const PoCTab = ({ cve, setSuccessMessage, currentUser }) => {
+  const dispatch = useDispatch();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [selectedPoc, setSelectedPoc] = useState(null);
+  const [newPoc, setNewPoc] = useState(DEFAULT_POC);
+
+  const handleAddClick = () => {
+    setSelectedPoc(null);
+    setOpen(true);
+  };
+
+  const handleEditClick = (poc) => {
+    setSelectedPoc(poc);
+    setOpen(true);
+  };
+
+  const handleAddPoc = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const updatedPocs = [...(cve.pocs || []), newPoc];
+      await dispatch(updateCVEDetail({
+        cveId: cve.cveId,
+        data: { pocs: updatedPocs }
+      })).unwrap();
+
+      setSuccessMessage('PoC가 추가되었습니다.');
+      setOpen(false);
+      setNewPoc(DEFAULT_POC);
+    } catch (error) {
+      setError('PoC 추가 중 오류가 발생했습니다.');
+      console.error('Failed to add PoC:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeletePoc = async (pocIndex) => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const updatedPocs = (cve.pocs || []).filter((_, index) => index !== pocIndex);
+      await dispatch(updateCVEDetail({
+        cveId: cve.cveId,
+        data: { pocs: updatedPocs }
+      })).unwrap();
+
+      setSuccessMessage('PoC가 삭제되었습니다.');
+    } catch (error) {
+      setError('PoC 삭제 중 오류가 발생했습니다.');
+      console.error('Failed to delete PoC:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdatePoc = async () => {
+    if (!selectedPoc) return;
+
+    try {
+      setLoading(true);
+      setError(null);
+
+      const updatedPocs = (cve.pocs || []).map((poc, index) =>
+        index === selectedPoc.id ? selectedPoc : poc
+      );
+
+      await dispatch(updateCVEDetail({
+        cveId: cve.cveId,
+        data: { pocs: updatedPocs }
+      })).unwrap();
+
+      setSuccessMessage('PoC가 수정되었습니다.');
+      setOpen(false);
+      setSelectedPoc(null);
+    } catch (error) {
+      setError('PoC 수정 중 오류가 발생했습니다.');
+      console.error('Failed to update PoC:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <Box>
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-      <Box sx={{ mb: 2 }}>
-        <Button
-          variant="contained"
+    <Box sx={{
+      display: 'flex',
+      flexDirection: 'column'
+    }}>
+      <ListHeader>
+        <Typography variant="h6" color="text.primary">
+          Proof of Concept ({cve.pocs?.length || 0})
+        </Typography>
+        <ActionButton
+          variant="outlined"
           startIcon={<AddIcon />}
-          onClick={() => setPocDialogOpen(true)}
-          disabled={loading}
+          onClick={handleAddClick}
         >
-          PoC 추가
-        </Button>
-      </Box>
+          Add PoC
+        </ActionButton>
+      </ListHeader>
 
-      <List>
-        {pocs.map((poc) => (
-          <ListItem
-            key={poc.id}
-            secondaryAction={
-              <>
-                <IconButton
-                  edge="end"
-                  onClick={() => {
-                    setEditingPocId(poc.id);
-                    setEditingPocData({ ...poc });
-                  }}
-                  disabled={loading}
-                >
-                  <EditIcon />
-                </IconButton>
-                <IconButton
-                  edge="end"
-                  onClick={() => onDeletePoc(poc.id)}
-                  disabled={loading}
-                >
-                  <DeleteIcon />
-                </IconButton>
-              </>
-            }
-          >
-            <ListItemText
-              primary={
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+      {(!cve.pocs || cve.pocs.length === 0) ? (
+        <EmptyState>
+          <CodeIcon sx={{ fontSize: 48, mb: 2, opacity: 0.5 }} />
+          <Typography variant="h6" gutterBottom>
+            No PoCs Available
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            There are no proof of concept codes available for this CVE yet.
+          </Typography>
+        </EmptyState>
+      ) : (
+        <Box sx={{ 
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 2
+        }}>
+          {cve.pocs.map((poc, index) => (
+            <StyledListItem 
+              key={`poc-${poc.id || index}`} 
+              elevation={0}
+            >
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
                   <Chip
-                    label={POC_SOURCES[poc.source]?.label || poc.source}
-                    color={POC_SOURCES[poc.source]?.color || 'default'}
+                    label={
+                      <ChipLabel>
+                        <CodeIcon sx={{ fontSize: 16 }} />
+                        {POC_SOURCES[poc.source]?.label || poc.source}
+                      </ChipLabel>
+                    }
                     size="small"
+                    variant="outlined"
+                    color={POC_SOURCES[poc.source]?.color || 'default'}
                   />
-                  {poc.url && (
-                    <>
-                      <Box component="span" sx={{ mx: 1 }}>
-                        {poc.url}
-                      </Box>
-                      <IconButton
-                        size="small"
-                        href={poc.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        <LaunchIcon />
-                      </IconButton>
-                    </>
-                  )}
+                  <Typography variant="body2">
+                    {poc.url}
+                  </Typography>
                 </Box>
-              }
-              secondary={poc.description}
-            />
-          </ListItem>
-        ))}
-      </List>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Tooltip title="Open URL" arrow>
+                    <ActionIconButton
+                      size="small"
+                      component="a"
+                      href={poc.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <LaunchIcon />
+                    </ActionIconButton>
+                  </Tooltip>
+                  <Tooltip title="Edit" arrow>
+                    <ActionIconButton
+                      size="small"
+                      onClick={() => handleEditClick({ ...poc, id: index })}
+                    >
+                      <EditIcon />
+                    </ActionIconButton>
+                  </Tooltip>
+                  <Tooltip title="Delete" arrow>
+                    <ActionIconButton
+                      size="small"
+                      onClick={() => handleDeletePoc(index)}
+                    >
+                      <DeleteIcon />
+                    </ActionIconButton>
+                  </Tooltip>
+                </Box>
+              </Box>
+              {poc.description && (
+                <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                  {poc.description}
+                </Typography>
+              )}
+            </StyledListItem>
+          ))}
+        </Box>
+      )}
 
-      <Dialog open={pocDialogOpen} onClose={() => setPocDialogOpen(false)}>
-        <DialogTitle>PoC 추가</DialogTitle>
+      <Dialog
+        open={open}
+        onClose={() => {
+          setOpen(false);
+          setSelectedPoc(null);
+        }}
+        maxWidth="sm"
+        fullWidth
+        TransitionComponent={Fade}
+        PaperProps={{
+          sx: {
+            borderRadius: 3
+          }
+        }}
+      >
+        <DialogTitle>
+          {selectedPoc ? 'Edit PoC' : 'Add PoC'}
+        </DialogTitle>
         <DialogContent>
           <FormControl fullWidth sx={{ mt: 2 }}>
-            <InputLabel>소스</InputLabel>
+            <InputLabel>Source</InputLabel>
             <Select
-              value={newPoc.source}
-              onChange={(e) => setNewPoc({ ...newPoc, source: e.target.value })}
-              label="소스"
+              value={selectedPoc ? selectedPoc.source : newPoc.source}
+              onChange={(e) => {
+                if (selectedPoc) {
+                  setSelectedPoc({ ...selectedPoc, source: e.target.value });
+                } else {
+                  setNewPoc({ ...newPoc, source: e.target.value });
+                }
+              }}
+              label="Source"
             >
               {Object.entries(POC_SOURCES).map(([value, { label }]) => (
                 <MenuItem key={value} value={value}>
@@ -142,98 +272,45 @@ const PoCTab = ({
           <TextField
             fullWidth
             label="URL"
-            value={newPoc.url}
-            onChange={(e) => setNewPoc({ ...newPoc, url: e.target.value })}
+            value={selectedPoc ? selectedPoc.url : newPoc.url}
+            onChange={(e) => {
+              if (selectedPoc) {
+                setSelectedPoc({ ...selectedPoc, url: e.target.value });
+              } else {
+                setNewPoc({ ...newPoc, url: e.target.value });
+              }
+            }}
             sx={{ mt: 2 }}
           />
           <TextField
             fullWidth
-            label="설명"
-            value={newPoc.description}
-            onChange={(e) => setNewPoc({ ...newPoc, description: e.target.value })}
+            label="Description"
+            value={selectedPoc ? selectedPoc.description : newPoc.description}
+            onChange={(e) => {
+              if (selectedPoc) {
+                setSelectedPoc({ ...selectedPoc, description: e.target.value });
+              } else {
+                setNewPoc({ ...newPoc, description: e.target.value });
+              }
+            }}
             multiline
             rows={4}
             sx={{ mt: 2 }}
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setPocDialogOpen(false)}>취소</Button>
-          <Button onClick={onAddPoc} variant="contained" disabled={loading}>
-            추가
+          <Button onClick={() => {
+            setOpen(false);
+            setSelectedPoc(null);
+          }}>
+            Cancel
           </Button>
-        </DialogActions>
-      </Dialog>
-
-      <Dialog
-        open={!!editingPocId}
-        onClose={() => {
-          setEditingPocId(null);
-          setEditingPocData(null);
-        }}
-      >
-        <DialogTitle>PoC 수정</DialogTitle>
-        <DialogContent>
-          {editingPocData && (
-            <>
-              <FormControl fullWidth sx={{ mt: 2 }}>
-                <InputLabel>소스</InputLabel>
-                <Select
-                  value={editingPocData.source}
-                  onChange={(e) =>
-                    setEditingPocData({
-                      ...editingPocData,
-                      source: e.target.value
-                    })
-                  }
-                  label="소스"
-                >
-                  {Object.entries(POC_SOURCES).map(([value, { label }]) => (
-                    <MenuItem key={value} value={value}>
-                      {label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <TextField
-                fullWidth
-                label="URL"
-                value={editingPocData.url}
-                onChange={(e) =>
-                  setEditingPocData({
-                    ...editingPocData,
-                    url: e.target.value
-                  })
-                }
-                sx={{ mt: 2 }}
-              />
-              <TextField
-                fullWidth
-                label="설명"
-                value={editingPocData.description}
-                onChange={(e) =>
-                  setEditingPocData({
-                    ...editingPocData,
-                    description: e.target.value
-                  })
-                }
-                multiline
-                rows={4}
-                sx={{ mt: 2 }}
-              />
-            </>
-          )}
-        </DialogContent>
-        <DialogActions>
           <Button
-            onClick={() => {
-              setEditingPocId(null);
-              setEditingPocData(null);
-            }}
+            variant="contained"
+            onClick={selectedPoc ? handleUpdatePoc : handleAddPoc}
+            disabled={loading}
           >
-            취소
-          </Button>
-          <Button onClick={onUpdatePoc} variant="contained" disabled={loading}>
-            수정
+            {selectedPoc ? 'Save' : 'Add'}
           </Button>
         </DialogActions>
       </Dialog>

@@ -1,10 +1,14 @@
 from typing import List, Optional, Tuple
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from beanie import PydanticObjectId
-from ..repositories.cve import CVERepository
-from ..models.cve import CVEModel, CreateCVERequest, PatchCVERequest, Comment, CommentCreate, CommentUpdate, PoC, SnortRule
+from ..repositories.cve_repository import CVERepository
+from ..models.cve_model import CVEModel, CreateCVERequest, PatchCVERequest, Comment, CommentCreate, CommentUpdate, PoC, SnortRule, ModificationHistory
 from ..models.notification import Notification
 from ..core.websocket import manager
+import logging
+import traceback
+from pydantic import ValidationError
 
 class CVEService:
     """CVE 관련 서비스"""
@@ -42,41 +46,78 @@ class CVEService:
         cve = await self.repository.create(cve_data)
         if cve:
             # 웹소켓을 통해 새로운 CVE 생성 알림
-            await manager.broadcast({
-                "type": "cve_created",
-                "data": {
-                    "cve_id": cve.cve_id,
-                    "title": cve.title,
-                    "created_by": current_user
-                }
+            await manager.broadcast("cve_created", {
+                "cve_id": cve.cve_id,
+                "title": cve.title,
+                "created_by": current_user
             })
         return cve
 
-    async def update_cve(
-        self, 
-        cve_id: str, 
-        cve_data: PatchCVERequest,
-        current_user: str = "anonymous",
-        is_crawler: bool = False,
-        crawler_name: Optional[str] = None
-    ) -> Optional[CVEModel]:
-        """CVE를 수정합니다."""
-        cve = await self.repository.get_by_cve_id(cve_id)
-        if not cve:
-            return None
+    async def update_cve(self, cve_id: str, cve_data: PatchCVERequest, username: str) -> Optional[CVEModel]:
+        """CVE를 업데이트합니다."""
+        try:
+            # 현재 CVE 데이터 조회
+            current_cve = await CVEModel.find_one({"cve_id": cve_id})
+            if not current_cve:
+                logging.error(f"CVE not found with ID: {cve_id}")
+                return None
 
-        updated_cve = await self.repository.update(str(cve.id), cve_data)
-        if updated_cve:
-            # 웹소켓을 통해 CVE 업데이트 알림
-            await manager.broadcast({
-                "type": "cve_updated",
-                "data": {
-                    "cve_id": updated_cve.cve_id,
-                    "title": updated_cve.title,
-                    "updated_by": current_user
+            # 수정 이력 생성
+            modification = ModificationHistory(
+                modified_by=username,
+                modified_at=datetime.now(ZoneInfo("Asia/Seoul"))
+            )
+
+            # PatchCVERequest를 dict로 변환
+            update_dict = cve_data.dict(exclude_unset=True)
+            logging.info(f"Converted update data: {update_dict}")
+
+            # snort_rules 업데이트 처리
+            if "snort_rules" in update_dict:
+                logging.info(f"Updating snort_rules for CVE {cve_id}")
+                logging.info(f"Current rules: {current_cve.snort_rules}")
+                logging.info(f"New rules: {update_dict['snort_rules']}")
+                
+                # 새로운 규칙에 필수 필드 추가
+                for rule in update_dict["snort_rules"]:
+                    if isinstance(rule, dict):
+                        if not rule.get("date_added"):
+                            rule["date_added"] = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
+                        if not rule.get("added_by"):
+                            rule["added_by"] = username
+
+            # 수정 이력 추가
+            if not current_cve.modification_history:
+                current_cve.modification_history = []
+            current_cve.modification_history.append(modification)
+
+            # 데이터 업데이트
+            update_data = {
+                "$set": {
+                    **update_dict,
+                    "modification_history": current_cve.modification_history,
+                    "last_modified": modification.modified_at
                 }
-            })
-        return updated_cve
+            }
+
+            logging.info(f"Updating CVE {cve_id} with data: {update_data}")
+
+            # 업데이트 수행
+            await current_cve.update(update_data)
+            
+            # 업데이트된 CVE 반환
+            updated_cve = await CVEModel.find_one({"cve_id": cve_id})
+            if updated_cve:
+                logging.info(f"Successfully updated CVE {cve_id}")
+                logging.info(f"Updated snort_rules: {updated_cve.snort_rules}")
+            else:
+                logging.error(f"Failed to fetch updated CVE {cve_id}")
+            return updated_cve
+
+        except Exception as e:
+            logging.error(f"Error updating CVE {cve_id}: {str(e)}")
+            logging.error(traceback.format_exc())
+            return None
 
     async def delete_cve(self, cve_id: str) -> bool:
         """CVE를 삭제합니다."""
@@ -196,11 +237,21 @@ class CVEService:
                 if not cve_id:
                     raise ValueError("CVE ID is required")
 
+                # dict를 PatchCVERequest로 변환
+                try:
+                    patch_request = PatchCVERequest(**cve_data)
+                except ValidationError as ve:
+                    results["errors"]["details"].append({
+                        "cve_id": cve_id,
+                        "error": f"Validation error: {str(ve)}"
+                    })
+                    results["errors"]["count"] += 1
+                    continue
+
                 cve = await self.update_cve(
                     cve_id,
-                    PatchCVERequest(**cve_data),
-                    is_crawler=True,
-                    crawler_name=crawler_name
+                    patch_request,
+                    username="system"
                 )
                 if cve:
                     results["success"]["cves"].append(cve)
@@ -212,6 +263,8 @@ class CVEService:
                     })
                     results["errors"]["count"] += 1
             except Exception as e:
+                logging.error(f"Error in bulk update for CVE {cve_data.get('cve_id', 'Unknown')}: {str(e)}")
+                logging.error(traceback.format_exc())
                 results["errors"]["details"].append({
                     "cve_id": cve_data.get("cve_id", "Unknown"),
                     "error": str(e)

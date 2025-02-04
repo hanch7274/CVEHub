@@ -21,7 +21,23 @@ export const WS_EVENT_TYPE = {
     ERROR: 'error',
     PING: 'ping',
     PONG: 'pong',
-    CLOSE: 'close'  // 명시적 종료 메시지 추가
+    CLOSE: 'close',
+    // CVE 관련 이벤트 타입 추가
+    CVE_UPDATED: 'cve_updated',
+    CVE_COMMENT_ADDED: 'comment_added',
+    CVE_COMMENT_UPDATED: 'comment_updated',
+    CVE_COMMENT_DELETED: 'comment_deleted',
+    CVE_POC_ADDED: 'poc_added',
+    CVE_POC_UPDATED: 'poc_updated',
+    CVE_POC_DELETED: 'poc_deleted',
+    CVE_SNORT_RULE_ADDED: 'snort_rule_added',
+    CVE_SNORT_RULE_UPDATED: 'snort_rule_updated',
+    CVE_SNORT_RULE_DELETED: 'snort_rule_deleted',
+    CVE_REFERENCE_ADDED: 'reference_added',
+    CVE_REFERENCE_DELETED: 'reference_deleted',
+    // CVE 구독 관련 이벤트 타입
+    CVE_SUBSCRIBE: 'cve_subscribe',
+    CVE_UNSUBSCRIBE: 'cve_unsubscribe'
 };
 
 // WebSocket 에러 코드

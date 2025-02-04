@@ -3,12 +3,14 @@ import { persistStore, persistReducer, FLUSH, REHYDRATE, PAUSE, PERSIST, PURGE, 
 import storage from 'redux-persist/lib/storage';
 import authReducer from './authSlice';
 import notificationReducer from './notificationSlice';
+import cveReducer from './cveSlice';
 import { injectStore } from '../utils/auth';
 
 // 루트 리듀서 생성
 const rootReducer = combineReducers({
   auth: authReducer,
   notifications: notificationReducer,
+  cve: cveReducer,
 });
 
 // Redux Persist 설정

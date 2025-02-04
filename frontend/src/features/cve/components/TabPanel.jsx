@@ -2,20 +2,36 @@ import React from 'react';
 import { Box } from '@mui/material';
 
 const TabPanel = ({ children, value, index, ...other }) => {
+  if (value !== index) return null;  // 선택되지 않은 탭은 렌더링하지 않음
+
   return (
-    <div
+    <Box
       role="tabpanel"
-      hidden={value !== index}
-      {...other}
-      style={{ 
-        backgroundColor: '#fff',
-        borderRadius: '0 0 8px 8px',
-        padding: '24px',
-        minHeight: '300px'
+      id={`tabpanel-${index}`}
+      aria-labelledby={`tab-${index}`}
+      sx={{
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'auto',
+        '&::-webkit-scrollbar': {
+          width: '8px',
+          backgroundColor: 'transparent'
+        },
+        '&::-webkit-scrollbar-thumb': {
+          backgroundColor: 'rgba(0, 0, 0, 0.1)',
+          borderRadius: '4px',
+          '&:hover': {
+            backgroundColor: 'rgba(0, 0, 0, 0.2)'
+          }
+        }
       }}
+      {...other}
     >
-      {value === index && <Box>{children}</Box>}
-    </div>
+      <Box sx={{ p: 3 }}>
+        {children}
+      </Box>
+    </Box>
   );
 };
 
