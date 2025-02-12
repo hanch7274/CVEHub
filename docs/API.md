@@ -299,7 +299,12 @@ Authorization: Bearer <access_token>
 - **WS** `/ws`
 - Query Parameters:
   - `token`: string (access_token)
-  - `session_id`: string (UUID v4 format)
+
+#### 멀티 탭/브라우저 지원
+- 동일한 사용자가 여러 탭이나 브라우저에서 동시에 연결 가능
+- 각 연결은 독립적으로 관리됨
+- 한 탭의 연결이 끊어져도 다른 탭의 연결은 유지됨
+- 모든 연결에 동일한 메시지가 전송됨
 
 #### 메시지 타입
 
@@ -310,8 +315,7 @@ Authorization: Bearer <access_token>
 {
   "type": "connected",
   "data": {
-    "requires_ack": true,
-    "session_id": "string",
+    "user_id": "string",
     "timestamp": "string"
   }
 }
@@ -322,7 +326,6 @@ Authorization: Bearer <access_token>
 {
   "type": "connect_ack",
   "data": {
-    "sessionId": "string",
     "timestamp": "string"
   }
 }
@@ -375,7 +378,6 @@ Authorization: Bearer <access_token>
   "type": "ping",
   "data": {
     "timestamp": "string",
-    "sessionId": "string"
   }
 }
 ```
@@ -386,7 +388,6 @@ Authorization: Bearer <access_token>
   "type": "pong",
   "data": {
     "timestamp": "string",
-    "sessionId": "string"
   }
 }
 ```
@@ -399,7 +400,6 @@ Authorization: Bearer <access_token>
   "type": "close",
   "data": {
     "timestamp": "string",
-    "sessionId": "string",
     "reason": "string"
   }
 }
@@ -427,26 +427,12 @@ Authorization: Bearer <access_token>
 Client                      Server
   |                          |
   |------ WebSocket -------->|  1. 초기 WebSocket 연결 요청
-  |                          |     (token과 session_id 포함)
+  |                          |     (token 포함)
   |                          |
   |<----- connected ---------|  2. 서버가 연결 성공 메시지 전송
   |                          |
   |------ connect_ack ------>|  3. 클라이언트가 ACK 전송
-  |                          |
-  |<----- connect_ack -------|  4. 서버가 ACK 응답
   |                          |     (이후 ping/pong 시작)
-```
-
-#### 연결 종료 과정
-```
-Client                      Server
-  |                          |
-  |-------- close --------->|  1. 종료 요청 메시지 전송
-  |                          |
-  |<-------- close ---------|  2. 서버가 종료 확인 응답
-  |                          |
-  |------ WebSocket.close -->|  3. WebSocket 연결 종료
-  |                          |
 ```
 
 #### 주의사항
@@ -454,8 +440,10 @@ Client                      Server
 2. 모든 메시지에는 `type`과 `data` 필드가 필수입니다.
 3. `timestamp`는 ISO 8601 형식(UTC)이어야 합니다.
 4. 연결이 끊어진 경우 클라이언트는 자동으로 재연결을 시도합니다 (최대 5회).
-5. ping/pong 메시지는 15초 간격으로 전송됩니다.
-6. 60초 동안 pong 응답이 없으면 연결이 종료됩니다.
+5. ping/pong 메시지는 30초 간격으로 전송됩니다.
+6. 60초 동안 pong 응답이 없으면 해당 연결이 종료됩니다.
+7. 동일한 사용자의 여러 연결이 허용되며, 각 연결은 독립적으로 관리됩니다.
+8. 모든 알림과 업데이트는 사용자의 모든 활성 연결에 전송됩니다.
 
 ## 에러 응답
 모든 API는 다음과 같은 형식의 에러 응답을 반환합니다:
@@ -474,3 +462,46 @@ Client                      Server
 - 404: 리소스 없음
 - 422: 유효성 검사 실패
 - 500: 서버 오류
+
+# API 규칙
+
+## 케이스 변환 규칙
+
+### 자동 변환
+프로젝트에서는 axios 인터셉터를 통해 자동으로 케이스 변환이 이루어집니다:
+
+1. **요청 시 (Request)**
+   - 프론트엔드: 카멜 케이스 (예: `parentId`, `createdAt`)
+   - 백엔드로 전송 시: 자동으로 스네이크 케이스로 변환 (예: `parent_id`, `created_at`)
+   - 예외: `application/x-www-form-urlencoded` 타입의 요청
+
+2. **응답 시 (Response)**
+   - 백엔드: 스네이크 케이스 (예: `user_id`, `is_active`)
+   - 프론트엔드 수신 시: 자동으로 카멜 케이스로 변환 (예: `userId`, `isActive`)
+
+### 사용 방법
+```javascript
+// 올바른 사용 예시
+const commentData = {
+  content: "내용",
+  parentId: "123",  // 자동으로 parent_id로 변환됨
+  isDeleted: false  // 자동으로 is_deleted로 변환됨
+};
+
+await api.post('/comments', commentData);
+
+// 잘못된 사용 예시 - 직접 스네이크 케이스 사용하지 않기
+const wrongData = {
+  content: "내용",
+  parent_id: "123",  // ❌ 직접 스네이크 케이스 사용
+  is_deleted: false  // ❌ 직접 스네이크 케이스 사용
+};
+```
+
+### 주의사항
+1. 프론트엔드 코드에서는 항상 카멜 케이스를 사용합니다.
+2. 케이스 변환은 axios 인터셉터에서 자동으로 처리되므로, 직접 변환하지 않습니다.
+3. form-urlencoded 형식의 요청(예: 로그인)은 자동 변환에서 제외됩니다.
+
+## API 엔드포인트
+...

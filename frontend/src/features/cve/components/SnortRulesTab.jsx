@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Typography,
   Box,
@@ -16,12 +16,14 @@ import {
   MenuItem,
   TextField,
   Button,
-  Alert
+  Paper,
+  Grid,
+  CircularProgress
 } from '@mui/material';
 import {
   Add as AddIcon,
-  Edit as EditIcon,
   Delete as DeleteIcon,
+  Edit as EditIcon,
   Shield as ShieldIcon
 } from '@mui/icons-material';
 import {
@@ -33,9 +35,12 @@ import {
   EmptyState
 } from './CommonStyles';
 import { useDispatch } from 'react-redux';
-import { updateCVEDetail } from '../../../store/cveSlice';
+import { updateCVEDetail, fetchCVEDetail } from '../../../store/slices/cveSlice';
+import { useWebSocketMessage } from '../../../contexts/WebSocketContext';
+import { WS_EVENT_TYPE } from '../../../services/websocket';
+import { useSnackbar } from 'notistack';
 
-const SNORT_RULE_TYPES = {
+const RULE_TYPES = {
   USER_DEFINED: { label: '사용자 정의', color: 'default' },
   IPS: { label: 'IPS', color: 'primary' },
   ONE: { label: 'ONE', color: 'secondary' },
@@ -47,47 +52,54 @@ const SNORT_RULE_TYPES = {
 const DEFAULT_RULE = {
   type: 'USER_DEFINED',
   rule: '',
-  description: '',
-  dateAdded: new Date().toISOString(),
-  addedBy: ''
+  description: ''
 };
 
-const SnortRulesTab = ({ cve, setSuccessMessage, currentUser }) => {
+const SnortRulesTab = ({ cve, currentUser, onCountChange, refreshTrigger }) => {
   const dispatch = useDispatch();
+  const { sendCustomMessage } = useWebSocketMessage();
+  const { enqueueSnackbar, closeSnackbar } = useSnackbar();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(false);
   const [selectedRule, setSelectedRule] = useState(null);
-  const [newRule, setNewRule] = useState({ 
-    ...DEFAULT_RULE, 
-    addedBy: currentUser?.username || 'anonymous',
-    dateAdded: new Date().toISOString()
+  const [newRule, setNewRule] = useState({
+    rule: '',
+    type: 'USER_DEFINED',
+    description: ''
   });
+  const [isAdding, setIsAdding] = useState(false);
 
-  // 디버깅을 위한 로그 추가
-  console.log('CVE Data:', cve);
-  console.log('Snort Rules:', cve?.snortRules);
-  console.log('Snort Rules Length:', cve?.snortRules?.length);
+  useEffect(() => {
+    if (cve?.snortRules) {
+      onCountChange?.(cve.snortRules.length);
+    }
+  }, [cve?.snortRules, onCountChange]);
 
-  if (!cve) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
-        <Typography variant="body1" color="text.secondary">
-          Loading...
-        </Typography>
-      </Box>
-    );
-  }
-
-  console.log('Current CVE data:', cve); // 디버깅을 위한 로그 추가
+  // refreshTrigger가 변경될 때마다 데이터 새로고침
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      const currentRules = JSON.stringify(cve?.snortRules || []);
+      
+      dispatch(fetchCVEDetail(cve.cveId)).then((action) => {
+        const newRules = JSON.stringify(action.payload?.snortRules || []);
+        if (currentRules !== newRules) {
+          enqueueSnackbar('Snort Rules에 새로운 업데이트가 있습니다.', {
+            variant: 'info',
+            action: (key) => (
+              <Button color="inherit" size="small" onClick={() => closeSnackbar(key)}>
+                확인
+              </Button>
+            )
+          });
+        }
+      });
+    }
+  }, [refreshTrigger, dispatch, cve?.cveId, enqueueSnackbar, closeSnackbar]);
 
   const handleAddClick = () => {
     setSelectedRule(null);
-    setNewRule({ 
-      ...DEFAULT_RULE, 
-      addedBy: currentUser?.username || 'anonymous',
-      dateAdded: new Date().toISOString()
-    });
+    setNewRule(DEFAULT_RULE);
     setOpen(true);
   };
 
@@ -96,61 +108,50 @@ const SnortRulesTab = ({ cve, setSuccessMessage, currentUser }) => {
     setOpen(true);
   };
 
-  const handleDeleteRule = async (ruleIndex) => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      // 선택된 규칙을 제외한 새로운 배열 생성
-      const updatedRules = (cve.snortRules || []).filter((_, index) => index !== ruleIndex);
-
-      const response = await dispatch(updateCVEDetail({
-        cveId: cve.cveId,
-        data: { snortRules: updatedRules }  // snortRules 필드만 업데이트
-      })).unwrap();
-
-      if (response && response.snortRules) {
-        setSuccessMessage('Snort Rule이 삭제되었습니다.');
-      }
-    } catch (error) {
-      console.error('Failed to delete Snort Rule:', error);
-      if (error.status === 403) {
-        setError('관리자만 삭제할 수 있습니다.');
-      } else {
-        setError('Snort Rule 삭제 중 오류가 발생했습니다.');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleAddRule = async () => {
+    if (!newRule.rule || newRule.rule.trim() === '') {
+      enqueueSnackbar('Rule은 필수 입력 항목입니다.', { 
+        variant: 'error',
+        anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+      });
+      return;
+    }
+
     try {
+      setIsAdding(true);
       setLoading(true);
       setError(null);
 
-      // 기존 규칙들을 유지하면서 새 규칙 추가
-      const updatedRules = [...(cve.snortRules || []), newRule];
+      const ruleToAdd = {
+        ...newRule,
+        dateAdded: new Date().toISOString(),
+        addedBy: currentUser?.username || 'anonymous'
+      };
 
+      const updatedRules = [...(cve.snortRules || []), ruleToAdd];
       const response = await dispatch(updateCVEDetail({
         cveId: cve.cveId,
-        data: { snortRules: updatedRules }
+        data: { snort_rules: updatedRules }
       })).unwrap();
 
-      if (response && response.snortRules) {
-        setSuccessMessage('Snort Rule이 추가되었습니다.');
+      if (response) {
+        await sendCustomMessage(
+          WS_EVENT_TYPE.CVE_UPDATED,
+          {
+            cveId: cve.cveId,
+            cve: response.data
+          }
+        );
+        enqueueSnackbar('Snort Rule이 추가되었습니다.', { variant: 'success' });
         setOpen(false);
-        setNewRule({ 
-          ...DEFAULT_RULE, 
-          addedBy: currentUser?.username || 'anonymous',
-          dateAdded: new Date().toISOString()
-        });
+        setNewRule(DEFAULT_RULE);
       }
     } catch (error) {
       console.error('Failed to add Snort Rule:', error);
-      setError('Snort Rule 추가 중 오류가 발생했습니다.');
+      enqueueSnackbar(error.message || 'Snort Rule 추가 중 오류가 발생했습니다.', { variant: 'error' });
     } finally {
       setLoading(false);
+      setIsAdding(false);
     }
   };
 
@@ -162,22 +163,64 @@ const SnortRulesTab = ({ cve, setSuccessMessage, currentUser }) => {
       setError(null);
 
       const updatedRules = (cve.snortRules || []).map((rule, index) =>
-        index === selectedRule.id ? { ...selectedRule } : rule
+        index === selectedRule.id ? {
+          ...selectedRule,
+          dateAdded: rule.dateAdded,
+          addedBy: rule.addedBy
+        } : rule
       );
 
       const response = await dispatch(updateCVEDetail({
         cveId: cve.cveId,
-        data: { snortRules: updatedRules }
+        data: { snort_rules: updatedRules }
       })).unwrap();
 
-      if (response && response.snortRules) {
-        setSuccessMessage('Snort Rule이 수정되었습니다.');
+      if (response) {
+        await sendCustomMessage(
+          WS_EVENT_TYPE.CVE_UPDATED,
+          {
+            cveId: cve.cveId,
+            cve: response.data
+          }
+        );
+        enqueueSnackbar('Snort Rule이 수정되었습니다.', { variant: 'success' });
         setOpen(false);
         setSelectedRule(null);
       }
     } catch (error) {
       console.error('Failed to update Snort Rule:', error);
-      setError('Snort Rule 수정 중 오류가 발생했습니다.');
+      enqueueSnackbar(error.message || 'Snort Rule 수정 중 오류가 발생했습니다.', { variant: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteRule = async (ruleIndex) => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const updatedRules = (cve.snortRules || [])
+        .filter((_, index) => index !== ruleIndex);
+
+      const response = await dispatch(updateCVEDetail({
+        cveId: cve.cveId,
+        data: { snort_rules: updatedRules }
+      })).unwrap();
+
+      if (response) {
+        await sendCustomMessage(
+          WS_EVENT_TYPE.CVE_UPDATED,
+          {
+            cveId: cve.cveId,
+            cve: response.data
+          }
+        );
+        enqueueSnackbar('Snort Rule이 삭제되었습니다.', { variant: 'success' });
+      }
+    } catch (error) {
+      console.error('Failed to delete Snort Rule:', error);
+      enqueueSnackbar(error.message || 'Snort Rule 삭제 중 오류가 발생했습니다.', { variant: 'error' });
     } finally {
       setLoading(false);
     }
@@ -191,103 +234,99 @@ const SnortRulesTab = ({ cve, setSuccessMessage, currentUser }) => {
     }
   };
 
+  // Rule 유효성 검사 함수
+  const isRuleValid = (rule) => rule && rule.trim() !== '';
+
+  // Add/Save 버튼 활성화 여부
+  const isButtonEnabled = selectedRule ? 
+    isRuleValid(selectedRule.rule) && !loading : 
+    isRuleValid(newRule.rule) && !loading;
+
   return (
-    <Box sx={{ 
-      display: 'flex', 
-      flexDirection: 'column',
-      height: '100%',
-      minHeight: 0  // 중요: flex 컨테이너 내에서 스크롤을 위해 필요
-    }}>
-      <Box sx={{ flex: '0 0 auto' }}>  {/* 고정 높이 영역을 위한 컨테이너 */}
-        <ListHeader>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <ListHeader>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <ShieldIcon color="primary" />
           <Typography variant="h6" color="text.primary">
             Snort Rules ({cve.snortRules?.length || 0})
           </Typography>
-          <ActionButton
+        </Box>
+        <ActionButton
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={handleAddClick}
+        >
+          Add Rule
+        </ActionButton>
+      </ListHeader>
+
+      {(!cve.snortRules || cve.snortRules.length === 0) ? (
+        <EmptyState>
+          <ShieldIcon sx={{ fontSize: 48, color: 'primary.main', opacity: 0.7 }} />
+          <Typography variant="h6" gutterBottom>
+            No Snort Rules Available
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            There are no Snort rules defined for this CVE yet.
+          </Typography>
+          <Button
             variant="outlined"
             startIcon={<AddIcon />}
             onClick={handleAddClick}
-            disabled={loading}
+            sx={{ mt: 2 }}
           >
-            Add Rule
-          </ActionButton>
-        </ListHeader>
-
-        {error && (
-          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-            {error}
-          </Alert>
-        )}
-      </Box>
-
-      <Box sx={{ 
-        flex: 1,
-        minHeight: 0,  // 중요: flex 컨테이너 내에서 스크롤을 위해 필요
-        overflowY: 'auto',
-        display: 'flex',
-        flexDirection: 'column'
-      }}>
-        {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
-            <Typography variant="body1" color="text.secondary">
-              Loading...
-            </Typography>
-          </Box>
-        ) : (!cve.snortRules || cve.snortRules.length === 0) ? (
-          <EmptyState>
-            <ShieldIcon sx={{ fontSize: 48, mb: 2, opacity: 0.5 }} />
-            <Typography variant="h6" gutterBottom>
-              No Snort Rules Available
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              There are no Snort rules defined for this CVE yet.
-            </Typography>
-          </EmptyState>
-        ) : (
-          <Box sx={{ 
-            display: 'flex', 
-            flexDirection: 'column', 
-            gap: 2
-          }}>
-            {cve.snortRules.map((rule, index) => (
-              <StyledListItem 
-                key={`snort-rule-${index}`} 
-                elevation={0}
-              >
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            Add First Rule
+          </Button>
+        </EmptyState>
+      ) : (
+        <Box sx={{ 
+          flex: 1,
+          overflowY: 'auto',
+          px: 2,
+          py: 1,
+          '& > *:not(:last-child)': { mb: 2 }
+        }}>
+          {cve.snortRules.map((rule, index) => (
+            <StyledListItem key={index} elevation={1}>
+              <Box sx={{ 
+                display: 'flex', 
+                flexDirection: 'column',
+                width: '100%',
+                gap: 1
+              }}>
+                <Box sx={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between',
+                  alignItems: 'flex-start'
+                }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Chip
                       label={
                         <ChipLabel>
                           <ShieldIcon sx={{ fontSize: 16 }} />
-                          {SNORT_RULE_TYPES[rule.type]?.label || rule.type}
+                          {RULE_TYPES[rule.type]?.label || rule.type}
                         </ChipLabel>
                       }
                       size="small"
+                      color={RULE_TYPES[rule.type]?.color || 'default'}
                       variant="outlined"
-                      color={SNORT_RULE_TYPES[rule.type]?.color || 'default'}
+                      sx={{ minWidth: 80 }}
                     />
-                    {rule.addedBy && (
-                      <Typography variant="caption" color="text.secondary">
-                        Added by {rule.addedBy}
-                      </Typography>
-                    )}
                   </Box>
                   <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Tooltip title="Edit" arrow>
-                      <ActionIconButton
-                        size="small"
+                    <Tooltip title="Edit">
+                      <ActionIconButton 
+                        size="small" 
                         onClick={() => handleEditClick(rule, index)}
-                        disabled={loading}
                       >
                         <EditIcon />
                       </ActionIconButton>
                     </Tooltip>
-                    <Tooltip title="Delete" arrow>
-                      <ActionIconButton
+                    <Tooltip title="Delete">
+                      <ActionIconButton 
                         size="small"
+                        color="error"
                         onClick={() => handleDeleteRule(index)}
-                        disabled={loading}
                       >
                         <DeleteIcon />
                       </ActionIconButton>
@@ -297,70 +336,81 @@ const SnortRulesTab = ({ cve, setSuccessMessage, currentUser }) => {
                 <Typography 
                   variant="body2" 
                   sx={{ 
-                    ml: 1,
                     fontFamily: 'monospace',
-                    bgcolor: 'background.default',
-                    p: 2,
-                    borderRadius: 1,
-                    overflowX: 'auto'
+                    pl: 2,
+                    borderLeft: '2px solid',
+                    borderColor: 'divider'
                   }}
                 >
                   {rule.rule}
                 </Typography>
                 {rule.description && (
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1, ml: 1 }}>
+                  <Typography 
+                    variant="body2" 
+                    color="text.secondary"
+                    sx={{ 
+                      pl: 2,
+                      borderLeft: '2px solid',
+                      borderColor: 'divider'
+                    }}
+                  >
                     {rule.description}
                   </Typography>
                 )}
-              </StyledListItem>
-            ))}
-          </Box>
-        )}
-      </Box>
+                <Box sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center',
+                  gap: 1,
+                  mt: 0.5
+                }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Added by {rule.addedBy}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    •
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {new Date(rule.dateAdded).toLocaleString()}
+                  </Typography>
+                </Box>
+              </Box>
+            </StyledListItem>
+          ))}
+        </Box>
+      )}
 
       <Dialog
         open={open}
         onClose={() => {
           setOpen(false);
           setSelectedRule(null);
-          setNewRule({ 
-            ...DEFAULT_RULE, 
-            addedBy: currentUser?.username || 'anonymous',
-            dateAdded: new Date().toISOString()
-          });
+          setNewRule(DEFAULT_RULE);
         }}
         maxWidth="sm"
         fullWidth
         TransitionComponent={Fade}
         PaperProps={{
-          sx: {
-            borderRadius: 3
-          }
+          sx: { borderRadius: 3 }
         }}
       >
-        <DialogTitle>{selectedRule ? 'Snort Rule 수정' : 'Snort Rule 추가'}</DialogTitle>
+        <DialogTitle>
+          {selectedRule ? 'Edit Snort Rule' : 'Add Snort Rule'}
+        </DialogTitle>
         <DialogContent>
           <FormControl fullWidth sx={{ mt: 2 }}>
-            <InputLabel>유형</InputLabel>
+            <InputLabel>Type</InputLabel>
             <Select
               value={selectedRule ? selectedRule.type : newRule.type}
               onChange={(e) => {
                 if (selectedRule) {
-                  setSelectedRule({
-                    ...selectedRule,
-                    type: e.target.value
-                  });
+                  setSelectedRule({ ...selectedRule, type: e.target.value });
                 } else {
-                  setNewRule({
-                    ...newRule,
-                    type: e.target.value
-                  });
+                  setNewRule({ ...newRule, type: e.target.value });
                 }
               }}
-              label="유형"
-              disabled={loading}
+              label="Type"
             >
-              {Object.entries(SNORT_RULE_TYPES).map(([value, { label }]) => (
+              {Object.entries(RULE_TYPES).map(([value, { label }]) => (
                 <MenuItem key={value} value={value}>
                   {label}
                 </MenuItem>
@@ -368,68 +418,53 @@ const SnortRulesTab = ({ cve, setSuccessMessage, currentUser }) => {
             </Select>
           </FormControl>
           <TextField
+            required
             fullWidth
-            label="Rule Content"
+            label="Rule"
             value={selectedRule ? selectedRule.rule : newRule.rule}
             onChange={(e) => {
               if (selectedRule) {
-                setSelectedRule({
-                  ...selectedRule,
-                  rule: e.target.value
-                });
+                setSelectedRule({ ...selectedRule, rule: e.target.value });
               } else {
-                setNewRule({
-                  ...newRule,
-                  rule: e.target.value
-                });
+                setNewRule({ ...newRule, rule: e.target.value });
               }
             }}
+            error={!isRuleValid(selectedRule ? selectedRule.rule : newRule.rule)}
+            helperText={!isRuleValid(selectedRule ? selectedRule.rule : newRule.rule) ? "Rule은 필수 입력 항목입니다." : ""}
             multiline
-            rows={4}
+            rows={3}
             sx={{ mt: 2 }}
-            disabled={loading}
           />
           <TextField
             fullWidth
-            label="설명"
+            label="Description"
             value={selectedRule ? selectedRule.description : newRule.description}
             onChange={(e) => {
               if (selectedRule) {
-                setSelectedRule({
-                  ...selectedRule,
-                  description: e.target.value
-                });
+                setSelectedRule({ ...selectedRule, description: e.target.value });
               } else {
-                setNewRule({
-                  ...newRule,
-                  description: e.target.value
-                });
+                setNewRule({ ...newRule, description: e.target.value });
               }
             }}
             multiline
             rows={2}
             sx={{ mt: 2 }}
-            disabled={loading}
           />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => {
             setOpen(false);
             setSelectedRule(null);
-            setNewRule({ 
-              ...DEFAULT_RULE, 
-              addedBy: currentUser?.username || 'anonymous',
-              dateAdded: new Date().toISOString()
-            });
+            setNewRule(DEFAULT_RULE);
           }}>
-            취소
+            Cancel
           </Button>
           <Button
-            onClick={handleSave}
             variant="contained"
-            disabled={loading}
+            onClick={handleSave}
+            disabled={!isButtonEnabled}
           >
-            {selectedRule ? '수정' : '추가'}
+            {selectedRule ? 'Save' : 'Add'}
           </Button>
         </DialogActions>
       </Dialog>

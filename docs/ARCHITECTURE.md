@@ -213,7 +213,6 @@ class Notification(Document):
 - 로컬 스토리지 기반의 토큰 관리
   - accessToken: 인증된 API 요청에 사용
   - refreshToken: 액세스 토큰 갱신에 사용
-  - sessionId: WebSocket 연결 식별에 사용
 - 순수 스토리지 작업만 담당
 
 ### 2. 인증 서비스 (`frontend/src/services/authService.js`)

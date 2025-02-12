@@ -2,22 +2,18 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# 시스템 의존성 및 timezone 설정
-RUN apt-get update && apt-get install -y \
+# 시스템 패키지 설치 및 타임존 설정
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
     build-essential \
-    tzdata \
-    && rm -rf /var/lib/apt/lists/*
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime \
+    && echo "Asia/Seoul" > /etc/timezone
 
-# 타임존 설정
-ENV TZ=Asia/Seoul
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-
-# Python 의존성 설치
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 애플리케이션 코드 복사
-COPY ./app ./app
+COPY . .
 
-# FastAPI 서버 실행
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

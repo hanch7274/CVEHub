@@ -18,7 +18,7 @@ import {
   Divider
 } from '@mui/material';
 import { Email, Lock, Visibility, VisibilityOff } from '@mui/icons-material';
-import { loginThunk } from '../../store/authSlice';
+import { loginThunk } from '../../store/slices/authSlice';
 
 const Login = () => {
   const navigate = useNavigate();

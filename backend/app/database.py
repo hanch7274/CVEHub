@@ -3,6 +3,7 @@ import logging
 import traceback
 from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
+from pymongo import IndexModel, ASCENDING, DESCENDING, TEXT
 from backend.app.models.cve_model import CVEModel
 from .models.user import User, RefreshToken
 from .models.notification import Notification
@@ -18,7 +19,7 @@ client = AsyncIOMotorClient(
     uuidRepresentation="standard"
 )
 
-db = client[settings.MONGODB_DB_NAME]
+db = client[settings.DATABASE_NAME]
 
 async def init_db():
     """데이터베이스 초기화"""
@@ -37,6 +38,27 @@ async def init_db():
                 RefreshToken
             ]
         )
+        
+        # CVE 컬렉션 인덱스 생성
+        await CVEModel.create_indexes([
+            IndexModel([("cve_id", ASCENDING)], unique=True),
+            IndexModel([("last_modified_date", DESCENDING)]),
+            IndexModel([("created_at", DESCENDING)]),
+            IndexModel([("status", ASCENDING)]),
+            # 검색을 위한 복합 텍스트 인덱스
+            IndexModel([
+                ("cve_id", TEXT),
+                ("title", TEXT),
+                ("description", TEXT)
+            ], name="search_index"),
+            # 정렬과 필터링을 위한 복합 인덱스
+            IndexModel([
+                ("status", ASCENDING),
+                ("last_modified_date", DESCENDING)
+            ], name="status_date_index")
+        ])
+        
+        logging.info("Database indexes created successfully")
         
         # 초기화 후 컬렉션 목록 확인
         collections = await db.list_collection_names()

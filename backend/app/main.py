@@ -1,48 +1,73 @@
 """메인 애플리케이션"""
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from datetime import datetime
+import json
 import logging
 import traceback
 import sys
 from beanie import init_beanie
 from motor.motor_asyncio import AsyncIOMotorClient
+import os
+from zoneinfo import ZoneInfo
 
 from .models.user import User, RefreshToken
 from .models.cve_model import CVEModel
 from .models.notification import Notification
 from .models.comment import Comment
-from .core.config.app import get_app_settings
-from .core.config.db import get_db_settings
-from .api import cve_router, notification, user, crawler, auth, comment
+from .core.config import get_settings
+from .api.api import api_router
+from .api.websocket import router as websocket_router
+from .core.websocket import manager
 from .core.exceptions import CVEHubException
 from .core.error_handlers import (
     cvehub_exception_handler,
     validation_exception_handler,
-    general_exception_handler
+    general_exception_handler,
+    request_validation_exception_handler,
+    http_exception_handler
 )
 from pydantic import ValidationError
-from .core.websocket import router as websocket_router
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException
+from fastapi.websockets import WebSocketDisconnect, WebSocketState
 
 # 설정 초기화
-app_settings = get_app_settings()
-db_settings = get_db_settings()
+settings = get_settings()
 
-# 로깅 설정
+# 로깅 포맷터에 KST 시간대 적용
+class KSTFormatter(logging.Formatter):
+    def converter(self, timestamp):
+        dt = datetime.fromtimestamp(timestamp)
+        return dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("Asia/Seoul"))
+        
+    def formatTime(self, record, datefmt=None):
+        dt = self.converter(record.created)
+        if datefmt:
+            return dt.strftime(datefmt)
+        return dt.strftime("%Y-%m-%d %H:%M:%S %z")
+
+# 루트 로거 설정
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',  # ISO 포맷에서 일반 시간 포맷으로 변경
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-# 모든 로거의 레벨을 DEBUG로 설정
-for name in logging.root.manager.loggerDict:
-    logging.getLogger(name).setLevel(logging.DEBUG)
+# 모든 로거에 KST 포맷터 적용
+kst_formatter = KSTFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+for handler in logging.root.handlers:
+    handler.setFormatter(kst_formatter)
+
+# 애플리케이션 로거 설정
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="CVEHub API",
+    title=settings.PROJECT_NAME,
     description="CVE 관리 및 모니터링을 위한 API",
-    version="1.0.0",
+    version=settings.VERSION,
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json"
@@ -51,7 +76,7 @@ app = FastAPI(
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=app_settings.CORS_ORIGINS,
+    allow_origins=["*"],  # 실제 운영 환경에서는 구체적인 origin을 지정해야 합니다
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -96,15 +121,15 @@ async def catch_exceptions_middleware(request: Request, call_next):
 app.add_exception_handler(CVEHubException, cvehub_exception_handler)
 app.add_exception_handler(ValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, general_exception_handler)
+app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
+app.add_exception_handler(HTTPException, http_exception_handler)
 
 # API 라우터 등록
-app.include_router(cve_router.router, prefix="/cves", tags=["cve"])
-app.include_router(comment.router, prefix="/cves", tags=["comment"])
-app.include_router(notification.router, prefix="/notification", tags=["notification"])
-app.include_router(user.router, prefix="/user", tags=["user"])
-app.include_router(crawler.router, prefix="/crawler", tags=["crawler"])
-app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(api_router)
 app.include_router(websocket_router)
+
+# 애플리케이션 시작 시 KST 타임존 설정
+os.environ['TZ'] = 'Asia/Seoul'
 
 @app.on_event("startup")
 async def startup_event():
@@ -112,13 +137,13 @@ async def startup_event():
     try:
         # MongoDB 클라이언트 생성
         client = AsyncIOMotorClient(
-            db_settings.MONGODB_URL,
-            maxPoolSize=db_settings.MAX_CONNECTIONS_COUNT,
-            minPoolSize=db_settings.MIN_CONNECTIONS_COUNT
+            settings.MONGODB_URL,
+            maxPoolSize=settings.MAX_CONNECTIONS_COUNT,
+            minPoolSize=settings.MIN_CONNECTIONS_COUNT
         )
         # Beanie 모델 초기화
         await init_beanie(
-            database=client[db_settings.MONGODB_DB_NAME],
+            database=client[settings.DATABASE_NAME],
             document_models=[
                 User,
                 CVEModel,
@@ -127,9 +152,19 @@ async def startup_event():
                 RefreshToken
             ]
         )
-        logging.info("Database initialized successfully")
+        logger.info("Database initialized successfully")
+        
+        # 데이터베이스 연결 테스트
+        await client.admin.command('ping')
+        logger.info("Successfully connected to MongoDB")
+        
+        # CVE 컬렉션 데이터 수 확인
+        cve_count = await CVEModel.find().count()
+        logger.info(f"Total CVEs in database: {cve_count}")
+        
     except Exception as e:
-        logging.error(f"Failed to initialize database: {e}")
+        logger.error(f"Failed to initialize database: {e}")
+        logger.error(traceback.format_exc())
         raise
 
 @app.get("/")
@@ -141,3 +176,25 @@ async def root():
         "docs_url": "/docs",
         "redoc_url": "/redoc"
     }
+
+# 커스텀 JSON 인코더 클래스 정의
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
+# FastAPI의 JSONResponse에 커스텀 인코더 적용
+class CustomJSONResponse(JSONResponse):
+    def render(self, content) -> bytes:
+        return json.dumps(
+            content,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+            cls=CustomJSONEncoder
+        ).encode("utf-8")
+
+# 기본 JSONResponse를 커스텀 JSONResponse로 교체
+app.router.default_response_class = CustomJSONResponse

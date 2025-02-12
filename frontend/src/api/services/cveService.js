@@ -4,20 +4,40 @@ import { CVE } from '../config/endpoints';
 export const cveService = {
   // CVE 관리
   getCVEs: async (params) => {
-    const response = await api.get(CVE.BASE, { params });
-    return response.data;
+    try {
+      console.log('Requesting CVEs with params:', params);
+      const response = await api.get('/cves', { params });
+      console.log('CVE response:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching CVEs:', error);
+      throw error;
+    }
   },
 
   // CVE 상세 조회
-  getCVEById: async (id, params) => {
-    const response = await api.get(CVE.DETAIL(id), { params });
-    return response.data;
+  getCVEById: async (cveId) => {
+    try {
+      console.log('Requesting CVE:', cveId);
+      const response = await api.get(`/cves/${cveId}`);
+      console.log('CVE response:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('Error in getCVEById:', error);
+      throw error;
+    }
   },
 
   // CVE 생성
   createCVE: async (data) => {
-    const response = await api.post(CVE.BASE, data);
-    return response.data;
+    try {
+      console.log('Creating CVE with data:', data);
+      const response = await api.post(CVE.BASE, data);
+      return response.data;
+    } catch (error) {
+      console.error('Error creating CVE:', error.response?.data || error);
+      throw error;
+    }
   },
 
   // CVE 수정
@@ -73,6 +93,17 @@ export const cveService = {
   // Snort Rule 추가
   addSnortRule: async (id, data) => {
     const response = await api.post(CVE.SNORT_RULE(id), data);
+    return response.data;
+  },
+
+  // Lock 관리
+  acquireLock: async (id) => {
+    const response = await api.post(CVE.LOCK(id));
+    return response.data;
+  },
+
+  releaseLock: async (id) => {
+    const response = await api.delete(CVE.LOCK(id));
     return response.data;
   },
 }; 

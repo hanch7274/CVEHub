@@ -2,10 +2,12 @@ import axios from 'axios';
 import { getAccessToken, clearAuthStorage } from '../../utils/storage/tokenStorage';
 import { camelToSnake, snakeToCamel } from '../../utils/caseConverter';
 import { refreshToken as refreshAuthToken } from '../../services/authService';
+import { formatInTimeZone } from 'date-fns-tz';
+import { getAPITimestamp, formatToKST, DATE_FORMATS } from '../../utils/dateUtils';
 
 const baseURL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
-const axiosInstance = axios.create({
+const api = axios.create({
   baseURL,
   timeout: 10000,
   headers: {
@@ -14,7 +16,7 @@ const axiosInstance = axios.create({
 });
 
 // Request Interceptor
-axiosInstance.interceptors.request.use(
+api.interceptors.request.use(
   async (config) => {
     try {
       console.log('=== Request Interceptor Debug [Start] ===');
@@ -22,7 +24,7 @@ axiosInstance.interceptors.request.use(
         url: config.url,
         method: config.method,
         headers: config.headers,
-        timestamp: new Date().toISOString()
+        timestamp: formatToKST(new Date(), DATE_FORMATS.DISPLAY.DEFAULT)
       });
 
       // 인증이 필요하지 않은 엔드포인트 체크 (로그인, 회원가입 등)
@@ -66,8 +68,8 @@ axiosInstance.interceptors.request.use(
               tokenPayload: payload
             });
             
-            // 토큰 만료 체크 (만료 10분 전부터 갱신 시도)
-            if (payload.exp && (payload.exp - now < 600)) {
+            // 토큰 만료 체크 (만료 5분 전부터 갱신 시도)
+            if (payload.exp && (payload.exp - now < 300)) {
               console.log('7. Token Refresh Needed');
               try {
                 console.log('8. Starting Token Refresh');
@@ -83,17 +85,23 @@ axiosInstance.interceptors.request.use(
                     });
                   } else {
                     console.error('11. New Token Missing After Refresh');
+                    clearAuthStorage();
+                    window.location.href = '/login';
                     return Promise.reject(new Error('Token refresh failed'));
                   }
                 }
               } catch (refreshError) {
                 console.error('12. Token Refresh Failed:', refreshError);
-                // 토큰 갱신 실패 시에도 기존 토큰으로 계속 시도
+                if (refreshError.response?.status === 401) {
+                  clearAuthStorage();
+                  window.location.href = '/login';
+                  return Promise.reject(refreshError);
+                }
+                // 401이 아닌 경우 기존 토큰으로 계속 시도
                 config.headers.Authorization = `Bearer ${token}`;
                 console.log('13. Using Existing Token:', {
                   preview: `${token.substring(0, 20)}...`
                 });
-                return config;
               }
             } else {
               console.log('14. Using Current Token');
@@ -104,13 +112,14 @@ axiosInstance.interceptors.request.use(
               error: e.message,
               stack: e.stack
             });
-            // 토큰 검증 실패시에도 기존 토큰 사용 시도
-            config.headers.Authorization = `Bearer ${token}`;
-            console.log('16. Using Token Despite Validation Error');
-            return config;
+            clearAuthStorage();
+            window.location.href = '/login';
+            return Promise.reject(e);
           }
         } else {
           console.log('17. No Token Available');
+          clearAuthStorage();
+          window.location.href = '/login';
           return Promise.reject(new Error('Authentication required'));
         }
       } else {
@@ -119,8 +128,9 @@ axiosInstance.interceptors.request.use(
 
       // 요청 데이터가 있고 form-urlencoded가 아닌 경우 스네이크 케이스로 변환
       if (config.data && config.headers['Content-Type'] !== 'application/x-www-form-urlencoded') {
+        console.log('[Axios] Before conversion:', config.data);
         config.data = camelToSnake(config.data);
-        console.log('Request Data (Converted):', config.data);
+        console.log('[Axios] After conversion:', config.data);
       }
 
       // 쿼리 파라미터가 있는 경우 스네이크 케이스로 변환
@@ -141,7 +151,7 @@ axiosInstance.interceptors.request.use(
       console.log('Headers:', config.headers);
       console.log('Data:', config.data);
       console.log('Params:', config.params);
-      console.log('Timestamp:', new Date().toISOString());
+      console.log('Timestamp:', formatToKST(new Date(), DATE_FORMATS.DISPLAY.DEFAULT));
 
       return config;
     } catch (error) {
@@ -158,13 +168,13 @@ axiosInstance.interceptors.request.use(
 );
 
 // Response Interceptor
-axiosInstance.interceptors.response.use(
+api.interceptors.response.use(
   (response) => {
     console.log('=== Response Success Debug ===');
     console.log('Response:', {
       url: response.config.url,
       status: response.status,
-      timestamp: new Date().toISOString()
+      timestamp: formatToKST(new Date(), DATE_FORMATS.DISPLAY.DEFAULT)
     });
 
     if (response.data) {
@@ -179,21 +189,28 @@ axiosInstance.interceptors.response.use(
       url: error.config?.url,
       method: error.config?.method,
       status: error.response?.status,
-      timestamp: new Date().toISOString()
+      timestamp: formatToKST(new Date(), DATE_FORMATS.DISPLAY.DEFAULT)
     });
 
     // 401 에러 처리 (인증 실패)
     if (error.response?.status === 401) {
       console.log('=== Auth Error Debug ===');
-      const token = getAccessToken();
       
+      // /auth/token 엔드포인트의 401 에러는 별도 처리
+      if (error.config.url.includes('/auth/token')) {
+        console.log('Login attempt failed, skipping token refresh');
+        clearAuthStorage();
+        return Promise.reject(error);  // 로그인 실패는 그대로 에러 반환
+      }
+
+      const token = getAccessToken();
       console.log('Current Token:', {
         exists: !!token,
         preview: token ? `${token.substring(0, 20)}...` : 'No token'
       });
 
       // 토큰이 있는 경우 갱신 시도
-      if (token) {
+      if (token && !error.config.url.includes('/auth/refresh')) {
         try {
           console.log('Attempting final token refresh...');
           const refreshResult = await refreshAuthToken();
@@ -206,17 +223,35 @@ axiosInstance.interceptors.response.use(
           }
         } catch (refreshError) {
           console.error('Final refresh failed:', refreshError);
-          // 로그아웃 처리하지 않고 에러만 반환
-          return Promise.reject(error);
+          clearAuthStorage();
+          window.location.href = '/login';
+          return Promise.reject(refreshError);
+        }
+      } else {
+        clearAuthStorage();
+        // /auth/token 엔드포인트가 아닌 경우에만 리다이렉트
+        if (!error.config.url.includes('/auth/token')) {
+          window.location.href = '/login';
         }
       }
-      
-      // 토큰이 없는 경우도 로그아웃하지 않고 에러만 반환
-      return Promise.reject(error);
     }
 
     return Promise.reject(error);
   }
 );
 
-export default axiosInstance; 
+// camelCase를 snake_case로 변환하는 함수
+function camelToSnakeCase(data) {
+  if (Array.isArray(data)) {
+    return data.map(item => camelToSnakeCase(item));
+  } else if (data !== null && typeof data === 'object') {
+    return Object.keys(data).reduce((acc, key) => {
+      const snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+      acc[snakeKey] = camelToSnakeCase(data[key]);
+      return acc;
+    }, {});
+  }
+  return data;
+}
+
+export default api; 

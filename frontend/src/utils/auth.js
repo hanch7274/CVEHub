@@ -7,8 +7,11 @@ import {
   getRefreshToken,
   setUser,
   getUser,
-  clearAuthStorage 
+  clearAuthStorage,
+  removeAccessToken,
+  removeRefreshToken
 } from './storage/tokenStorage';
+import WebSocketService from '../services/websocket';
 
 // store를 동적으로 주입하기 위한 변수
 let store = null;
@@ -35,11 +38,9 @@ export const injectErrorHandler = (_errorHandler) => {
   errorHandler = _errorHandler;
 };
 
-// 상수 정의
-const SESSION_ID_KEY = 'sessionId';
 
 // 토큰 갱신
-const refreshTokenFn = async () => {
+export const refreshTokenFn = async () => {
   try {
     const refreshToken = getRefreshToken();
     if (!refreshToken) {
@@ -61,11 +62,6 @@ const refreshTokenFn = async () => {
       }
     );
 
-    console.log('=== Token Refresh Response ===');
-    console.log('Status:', response.status);
-    console.log('Data:', response.data);
-
-    // snake_case로 받은 데이터 처리
     const { access_token: newAccessToken, refresh_token: newRefreshToken, user } = response.data;
     
     if (!newAccessToken) {
@@ -92,44 +88,25 @@ const refreshTokenFn = async () => {
 
 // Axios 인스턴스 생성
 export const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:8000',
+  baseURL: process.env.REACT_APP_API_URL,
   headers: {
-    'Content-Type': 'application/json',
-  },
+    'Content-Type': 'application/json'
+  }
 });
 
 // 요청 인터셉터
-api.interceptors.request.use((config) => {
-  // skipAuthRefresh가 true인 경우 인터셉터 스킵
-  if (config.skipAuthRefresh) {
+api.interceptors.request.use(
+  (config) => {
+    const token = getAccessToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
     return config;
+  },
+  (error) => {
+    return Promise.reject(error);
   }
-
-  // URL에서 /api prefix 제거
-  if (config.url?.startsWith('/api/')) {
-    config.url = config.url.replace('/api/', '/');
-  }
-
-  // 토큰이 있으면 헤더에 추가
-  const token = getAccessToken();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-
-  // 요청 데이터가 있는 경우 스네이크 케이스로 변환
-  if (config.data) {
-    config.data = camelToSnake(config.data);
-  }
-
-  // 쿼리 파라미터가 있는 경우 스네이크 케이스로 변환
-  if (config.params) {
-    config.params = camelToSnake(config.params);
-  }
-
-  return config;
-}, (error) => {
-  return Promise.reject(error);
-});
+);
 
 // 응답 인터셉터
 api.interceptors.response.use(
@@ -232,7 +209,7 @@ export const login = async (email, password) => {
       setRefreshToken(refreshToken);
     }
     if (user) {
-      setUser(user);
+      setUser(user);  // 서버에서 받은 실제 사용자 정보 저장
     }
     
     // store에 로그인 상태 업데이트
@@ -243,7 +220,7 @@ export const login = async (email, password) => {
         isAuthenticated: true
       } 
     });
-    
+
     return response.data;
   } catch (error) {
     console.error('Login error:', error);
@@ -262,9 +239,24 @@ export const getCurrentUser = async () => {
 };
 
 // 로그아웃
-export const logout = () => {
-  clearAuthStorage();
-  store?.dispatch({ type: 'auth/logout' });
+export const logout = async () => {
+  try {
+    // 백엔드에 로그아웃 요청
+    const refreshToken = localStorage.getItem('refreshToken');
+    if (refreshToken) {
+      await api.post('/auth/logout', { refresh_token: refreshToken });
+    }
+  } catch (error) {
+    console.error('Logout error:', error);
+  } finally {
+    // 로컬 스토리지 데이터 정리
+    removeAccessToken();
+    removeRefreshToken();
+    localStorage.removeItem('user');
+    
+    // WebSocket 연결 종료
+    WebSocketService.disconnect();
+  }
 };
 
 // 로그인 여부 확인
@@ -272,16 +264,3 @@ export const isAuthenticated = () => {
   return !!getAccessToken();
 };
 
-// 세션 ID 관리
-export const getSessionId = () => {
-  let sessionId = localStorage.getItem(SESSION_ID_KEY);
-  if (!sessionId) {
-    sessionId = crypto.randomUUID();
-    localStorage.setItem(SESSION_ID_KEY, sessionId);
-  }
-  return sessionId;
-};
-
-export const removeSessionId = () => {
-  localStorage.removeItem(SESSION_ID_KEY);
-};

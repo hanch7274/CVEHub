@@ -1,83 +1,65 @@
-export const formatDate = (dateString) => {
-  if (!dateString) return '';
+import { formatInTimeZone } from 'date-fns-tz';
+import { ko } from 'date-fns/locale';
+
+// 자주 사용되는 날짜 포맷 상수
+export const DATE_FORMATS = {
+  // API 통신용 ISO 포맷 (백엔드와 통신할 때 사용)
+  API: "yyyy-MM-dd'T'HH:mm:ss.SSSxxx",
   
+  // 화면 표시용 포맷
+  DISPLAY: {
+    DEFAULT: 'yyyy-MM-dd HH:mm',
+    DATE_ONLY: 'yyyy-MM-dd',
+    TIME_ONLY: 'HH:mm:ss',
+    FULL: 'yyyy년 MM월 dd일 HH시 mm분 ss초'
+  }
+};
+
+// UTC -> KST 변환 및 포맷팅 (표시용)
+export const formatToKST = (dateString, format = DATE_FORMATS.DISPLAY.DEFAULT) => {
   try {
-    console.log('Input dateString:', dateString);
-    
-    // UTC 시간을 KST로 변환 (UTC+9)
-    const date = new Date(dateString);
-    console.log('Parsed date object:', date.toString());
-    console.log('Date in ISO:', date.toISOString());
-    console.log('Date in local timezone:', date.toLocaleString());
-    
-    if (isNaN(date.getTime())) return '날짜 오류';
-
-    // KST 기준으로 현재 시간 설정
-    const now = new Date();
-    const kstOffset = 9 * 60 * 60 * 1000; // 9시간을 밀리초로 변환
-    
-    // UTC 시간에 9시간을 더해 KST로 변환
-    const kstDate = new Date(date.getTime() + kstOffset);
-    const kstNow = new Date(now.getTime() + kstOffset);
-    
-    console.log('KST date:', kstDate.toLocaleString());
-    console.log('KST now:', kstNow.toLocaleString());
-    
-    const diff = kstNow - kstDate;
-    const seconds = Math.floor(diff / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-    const days = Math.floor(hours / 24);
-
-    // 1일 이내인 경우
-    if (days < 1) {
-      if (minutes < 1) return '방금 전';
-      if (hours < 1) return `${minutes}분 전`;
-      return `${hours}시간 전`;
+    if (!dateString) {
+      console.error('Date string is undefined or null');
+      return 'Invalid Date';
     }
-    
-    // 1일 이상인 경우 날짜와 시간 표시
-    const options = { 
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone: 'Asia/Seoul'
-    };
-    
-    const result = new Date(dateString).toLocaleString('ko-KR', options).replace(/\./g, '-').replace(/-$/, '');
-    console.log('Final formatted result:', result);
-    return result;
+
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) {
+      console.error('Invalid date string:', dateString);
+      return 'Invalid Date';
+    }
+
+    // 명시적으로 9시간 추가
+    const kstDate = new Date(date.getTime() + (9 * 60 * 60 * 1000));
+    return formatInTimeZone(kstDate, 'Asia/Seoul', format, { locale: ko });
   } catch (error) {
-    console.error('Date formatting error:', error);
-    return '날짜 오류';
+    console.error('Date formatting error:', error, 'for date string:', dateString);
+    return 'Invalid Date';
   }
 };
 
-export const formatDateTime = (dateString) => {
-  if (!dateString) return '';
-  
+// UTC 타임스탬프 생성 (API 요청시 사용)
+export const getAPITimestamp = () => {
+  return new Date().toISOString();
+};
+
+// 상대적 시간 표시 (예: "3시간 전")
+export const formatRelativeTime = (dateString) => {
   try {
     const date = new Date(dateString);
-    if (isNaN(date.getTime())) return '날짜 오류';
+    // KST로 변환
+    const kstDate = new Date(date.getTime() + (9 * 60 * 60 * 1000));
+    const now = new Date();
+    const diffInSeconds = Math.floor((now - kstDate) / 1000);
 
-    const options = { 
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone: 'Asia/Seoul'
-    };
+    if (diffInSeconds < 60) return '방금 전';
+    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}분 전`;
+    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}시간 전`;
+    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}일 전`;
     
-    return date.toLocaleString('ko-KR', options)
-      .replace(/\./g, '-')
-      .replace(/-$/, '');
+    return formatToKST(dateString, DATE_FORMATS.DISPLAY.DATE_ONLY);
   } catch (error) {
-    console.error('DateTime formatting error:', error);
-    return '날짜 오류';
+    console.error('Relative time formatting error:', error);
+    return 'Invalid Date';
   }
-};
+}; 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Typography,
   Box,
@@ -33,143 +33,194 @@ import {
   EmptyState
 } from './CommonStyles';
 import { useDispatch } from 'react-redux';
-import { updateCVEDetail } from '../../../store/cveSlice';
+import { updateCVEDetail, fetchCVEDetail } from '../../../store/slices/cveSlice';
+import { useWebSocketMessage } from '../../../contexts/WebSocketContext';
+import { WS_EVENT_TYPE } from '../../../services/websocket';
+import { useSnackbar } from 'notistack';
 
 const REFERENCE_TYPES = {
-  ADVISORY: 'Advisory',
+  NVD: 'NVD',
   EXPLOIT: 'Exploit',
   PATCH: 'Patch',
-  ARTICLE: 'Article',
   OTHER: 'Other'
+};
+
+const getReferenceTypeLabel = (type) => {
+  return REFERENCE_TYPES[type] || type;
 };
 
 const DEFAULT_REFERENCE = {
   type: 'OTHER',
   url: '',
-  description: ''
+  description: '',
+  dateAdded: new Date().toISOString(),
+  addedBy: 'anonymous'
 };
 
-const ReferencesTab = ({ cve, setSuccessMessage, currentUser }) => {
+const ReferencesTab = ({ cve, refreshTrigger }) => {
   const dispatch = useDispatch();
+  const { sendCustomMessage } = useWebSocketMessage();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(false);
   const [selectedReference, setSelectedReference] = useState(null);
-  const [newReference, setNewReference] = useState(DEFAULT_REFERENCE);
+  const [formData, setFormData] = useState(DEFAULT_REFERENCE);
+  const { enqueueSnackbar, closeSnackbar } = useSnackbar();
+
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      const currentRefs = JSON.stringify(cve?.references || []);
+      
+      dispatch(fetchCVEDetail(cve.cveId)).then((action) => {
+        const newRefs = JSON.stringify(action.payload?.references || []);
+        if (currentRefs !== newRefs) {
+          enqueueSnackbar('References에 새로운 업데이트가 있습니다.', {
+            variant: 'info',
+            action: (key) => (
+              <Button color="inherit" size="small" onClick={() => closeSnackbar(key)}>
+                확인
+              </Button>
+            )
+          });
+        }
+      });
+    }
+  }, [refreshTrigger, dispatch, cve?.cveId, enqueueSnackbar, closeSnackbar]);
+
+  if (!cve) {
+    return null;
+  }
 
   const handleAddClick = () => {
     setSelectedReference(null);
-    setNewReference(DEFAULT_REFERENCE);
+    setFormData(DEFAULT_REFERENCE);
     setOpen(true);
   };
 
   const handleEditClick = (reference, index) => {
-    setSelectedReference({ ...reference, id: index });
+    setSelectedReference({ ...reference, index });
+    setFormData(reference);
     setOpen(true);
   };
 
-  const handleDeleteReference = async (referenceIndex) => {
+  const handleDeleteReference = async (index) => {
     try {
       setLoading(true);
       setError(null);
 
-      const updatedReferences = (cve.references || []).filter((_, index) => index !== referenceIndex);
+      const updatedRefs = [...(cve.references || [])];
+      updatedRefs.splice(index, 1);
+
       const response = await dispatch(updateCVEDetail({
         cveId: cve.cveId,
-        data: { references: updatedReferences }
+        data: { references: updatedRefs }
       })).unwrap();
 
-      if (response && response.references) {
-        setSuccessMessage('참조가 삭제되었습니다.');
+      if (response) {
+        await sendCustomMessage(
+          WS_EVENT_TYPE.CVE_UPDATED,
+          {
+            cveId: cve.cveId,
+            cve: response.data
+          }
+        );
+        enqueueSnackbar('Reference가 삭제되었습니다.', { variant: 'success' });
       }
     } catch (error) {
-      console.error('Failed to delete reference:', error);
-      // HTTP 403 에러 처리
-      if (error.status === 403) {
-        setError('관리자만 삭제할 수 있습니다.');
-      } else {
-        setError('참조 삭제 중 오류가 발생했습니다.');
-      }
+      console.error('Failed to delete Reference:', error);
+      enqueueSnackbar(error.message || 'Reference 삭제 중 오류가 발생했습니다.', { variant: 'error' });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddReference = async () => {
+  // URL 중복 검사 함수
+  const isDuplicateUrl = (url, excludeIndex = -1) => {
+    return cve.references?.some((ref, index) => 
+      index !== excludeIndex && ref.url.toLowerCase() === url.toLowerCase()
+    );
+  };
+
+  const handleSave = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const referenceToAdd = {
-        ...newReference,
-        date_added: new Date().toISOString(),
-        added_by: currentUser?.username || 'anonymous'
+      const currentRefs = cve?.references || [];
+      const updatedRefs = [...currentRefs];
+      const urlToCheck = selectedReference ? selectedReference.url : formData.url;
+      const excludeIndex = selectedReference ? selectedReference.index : -1;
+
+      // URL 중복 검사
+      if (isDuplicateUrl(urlToCheck, excludeIndex)) {
+        enqueueSnackbar('이미 존재하는 URL입니다.', {
+          variant: 'error',
+          anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+        });
+        setLoading(false);
+        return;
+      }
+
+      // Reference 모델에 맞게 데이터 구조화
+      const newReference = {
+        type: formData.type,
+        url: formData.url,
+        description: formData.description || '',
+        dateAdded: new Date().toISOString(),
+        addedBy: 'anonymous'
       };
-
-      const updatedReferences = [...(cve.references || []), referenceToAdd];
-      const response = await dispatch(updateCVEDetail({
-        cveId: cve.cveId,
-        data: { references: updatedReferences }
-      })).unwrap();
-
-      if (response && response.references) {
-        setSuccessMessage('참조가 추가되었습니다.');
-        setOpen(false);
-        setNewReference(DEFAULT_REFERENCE);
+      
+      if (selectedReference) {
+        updatedRefs[selectedReference.index] = newReference;
+      } else {
+        updatedRefs.push(newReference);
       }
-    } catch (error) {
-      console.error('Failed to add reference:', error);
-      setError('참조 추가 중 오류가 발생했습니다.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleUpdateReference = async () => {
-    if (!selectedReference) return;
-
-    try {
-      setLoading(true);
-      setError(null);
-
-      const updatedReferences = (cve.references || []).map((ref, index) =>
-        index === selectedReference.id ? { ...selectedReference } : ref
-      );
 
       const response = await dispatch(updateCVEDetail({
         cveId: cve.cveId,
-        data: { references: updatedReferences }
+        data: { references: updatedRefs }
       })).unwrap();
 
-      if (response && response.references) {
-        setSuccessMessage('참조가 수정되었습니다.');
+      if (response) {
+        await sendCustomMessage(
+          WS_EVENT_TYPE.CVE_UPDATED,
+          {
+            cveId: cve.cveId,
+            cve: response.data
+          }
+        );
+        enqueueSnackbar(`Reference가 ${selectedReference ? '수정' : '추가'}되었습니다.`, { variant: 'success' });
         setOpen(false);
         setSelectedReference(null);
+        setFormData(DEFAULT_REFERENCE);
       }
     } catch (error) {
-      console.error('Failed to update reference:', error);
-      setError('참조 수정 중 오류가 발생했습니다.');
+      console.error('Failed to save Reference:', error);
+      enqueueSnackbar(error.message || 'Reference 저장 중 오류가 발생했습니다.', { variant: 'error' });
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSave = () => {
-    if (selectedReference) {
-      handleUpdateReference();
-    } else {
-      handleAddReference();
-    }
-  };
+  // URL 유효성 검사 함수
+  const isUrlValid = (url) => url && url.trim() !== '';
+
+  // Add/Save 버튼 활성화 여부
+  const isButtonEnabled = selectedReference ? 
+    isUrlValid(selectedReference.url) && !loading : 
+    isUrlValid(formData.url) && !loading;
 
   return (
-    <>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <ListHeader>
-        <Typography variant="h6" color="text.primary">
-          References ({cve.references?.length || 0})
-        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <LinkIcon color="primary" />
+          <Typography variant="h6" color="text.primary">
+            References ({cve.references?.length || 0})
+          </Typography>
+        </Box>
         <ActionButton
-          variant="outlined"
+          variant="contained"
           startIcon={<AddIcon />}
           onClick={handleAddClick}
         >
@@ -179,71 +230,121 @@ const ReferencesTab = ({ cve, setSuccessMessage, currentUser }) => {
 
       {(!cve.references || cve.references.length === 0) ? (
         <EmptyState>
-          <LinkIcon sx={{ fontSize: 48, mb: 2, opacity: 0.5 }} />
+          <LinkIcon sx={{ fontSize: 48, color: 'primary.main', opacity: 0.7 }} />
           <Typography variant="h6" gutterBottom>
             No References Available
           </Typography>
           <Typography variant="body2" color="text.secondary">
             There are no references linked to this CVE yet.
           </Typography>
+          <Button
+            variant="outlined"
+            startIcon={<AddIcon />}
+            onClick={handleAddClick}
+            sx={{ mt: 2 }}
+          >
+            Add First Reference
+          </Button>
         </EmptyState>
       ) : (
-        cve.references.map((reference, index) => (
-          <StyledListItem key={`reference-${index}`} elevation={0}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, flex: 1, mr: 2 }}>
-                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                  <Chip
-                    label={
-                      <ChipLabel>
-                        <LinkIcon sx={{ fontSize: 16 }} />
-                        {REFERENCE_TYPES[reference.type] || reference.type || 'External'}
-                      </ChipLabel>
-                    }
-                    size="small"
-                    variant="outlined"
-                  />
-                </Box>
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                  <Tooltip title="Open URL" arrow>
-                    <ActionIconButton
+        <Box sx={{ 
+          flex: 1,
+          overflowY: 'auto',
+          px: 2,
+          py: 1,
+          '& > *:not(:last-child)': { mb: 2 }
+        }}>
+          {cve.references.map((reference, index) => (
+            <StyledListItem key={index} elevation={1}>
+              <Box sx={{ 
+                display: 'flex', 
+                flexDirection: 'column',
+                width: '100%',
+                gap: 1
+              }}>
+                <Box sx={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between',
+                  alignItems: 'flex-start'
+                }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip
+                      label={REFERENCE_TYPES[reference.type] || reference.type}
                       size="small"
+                      color="primary"
+                      variant="outlined"
+                    />
+                    <Typography
                       component="a"
-                      href={reference.url}
+                      href={reference.url.startsWith('http') ? reference.url : `https://${reference.url}`}
                       target="_blank"
                       rel="noopener noreferrer"
+                      sx={{ 
+                        color: 'primary.main',
+                        textDecoration: 'none',
+                        '&:hover': { 
+                          textDecoration: 'underline',
+                          cursor: 'pointer'
+                        },
+                        fontWeight: 500
+                      }}
                     >
-                      <LaunchIcon />
-                    </ActionIconButton>
-                  </Tooltip>
+                      {reference.url}
+                    </Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <Tooltip title="Edit">
+                      <ActionIconButton 
+                        size="small" 
+                        onClick={() => handleEditClick(reference, index)}
+                      >
+                        <EditIcon />
+                      </ActionIconButton>
+                    </Tooltip>
+                    <Tooltip title="Delete">
+                      <ActionIconButton 
+                        size="small"
+                        color="error"
+                        onClick={() => handleDeleteReference(index)}
+                      >
+                        <DeleteIcon />
+                      </ActionIconButton>
+                    </Tooltip>
+                  </Box>
                 </Box>
                 {reference.description && (
-                  <Typography variant="body2" color="text.secondary">
+                  <Typography 
+                    variant="body2" 
+                    color="text.secondary"
+                    sx={{ 
+                      pl: 2,
+                      borderLeft: '2px solid',
+                      borderColor: 'divider'
+                    }}
+                  >
                     {reference.description}
                   </Typography>
                 )}
+                <Box sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center',
+                  gap: 1,
+                  mt: 0.5
+                }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Added by {reference.addedBy}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    •
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {new Date(reference.dateAdded).toLocaleString()}
+                  </Typography>
+                </Box>
               </Box>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <Tooltip title="Edit" arrow>
-                  <ActionIconButton
-                    size="small"
-                    onClick={() => handleEditClick(reference, index)}
-                  >
-                    <EditIcon />
-                  </ActionIconButton>
-                </Tooltip>
-                <Tooltip title="Delete" arrow>
-                  <ActionIconButton
-                    size="small"
-                    onClick={() => handleDeleteReference(index)}
-                  >
-                    <DeleteIcon />
-                  </ActionIconButton>
-                </Tooltip>
-              </Box>
-            </Box>
-          </StyledListItem>
-        ))
+            </StyledListItem>
+          ))}
+        </Box>
       )}
 
       <Dialog
@@ -251,37 +352,25 @@ const ReferencesTab = ({ cve, setSuccessMessage, currentUser }) => {
         onClose={() => {
           setOpen(false);
           setSelectedReference(null);
-          setNewReference(DEFAULT_REFERENCE);
+          setFormData(DEFAULT_REFERENCE);
         }}
         maxWidth="sm"
         fullWidth
         TransitionComponent={Fade}
         PaperProps={{
-          sx: {
-            borderRadius: 3
-          }
+          sx: { borderRadius: 2 }
         }}
       >
-        <DialogTitle>{selectedReference ? '참조 수정' : '참조 추가'}</DialogTitle>
-        <DialogContent>
+        <DialogTitle sx={{ pb: 1 }}>
+          {selectedReference ? 'Edit Reference' : 'Add Reference'}
+        </DialogTitle>
+        <DialogContent sx={{ pb: 2 }}>
           <FormControl fullWidth sx={{ mt: 2 }}>
-            <InputLabel>유형</InputLabel>
+            <InputLabel>Type</InputLabel>
             <Select
-              value={selectedReference ? selectedReference.type : newReference.type}
-              onChange={(e) => {
-                if (selectedReference) {
-                  setSelectedReference({
-                    ...selectedReference,
-                    type: e.target.value
-                  });
-                } else {
-                  setNewReference({
-                    ...newReference,
-                    type: e.target.value
-                  });
-                }
-              }}
-              label="유형"
+              value={formData.type}
+              onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+              label="Type"
             >
               {Object.entries(REFERENCE_TYPES).map(([value, label]) => (
                 <MenuItem key={value} value={value}>
@@ -291,64 +380,51 @@ const ReferencesTab = ({ cve, setSuccessMessage, currentUser }) => {
             </Select>
           </FormControl>
           <TextField
+            required
             fullWidth
             label="URL"
-            value={selectedReference ? selectedReference.url : newReference.url}
+            value={selectedReference ? selectedReference.url : formData.url}
             onChange={(e) => {
               if (selectedReference) {
-                setSelectedReference({
-                  ...selectedReference,
-                  url: e.target.value
-                });
+                setSelectedReference({ ...selectedReference, url: e.target.value });
               } else {
-                setNewReference({
-                  ...newReference,
-                  url: e.target.value
-                });
+                setFormData({ ...formData, url: e.target.value });
               }
             }}
+            error={!isUrlValid(selectedReference ? selectedReference.url : formData.url)}
+            helperText={!isUrlValid(selectedReference ? selectedReference.url : formData.url) ? "URL은 필수 입력 항목입니다." : ""}
             sx={{ mt: 2 }}
           />
           <TextField
             fullWidth
-            label="설명"
-            value={selectedReference ? selectedReference.description : newReference.description}
-            onChange={(e) => {
-              if (selectedReference) {
-                setSelectedReference({
-                  ...selectedReference,
-                  description: e.target.value
-                });
-              } else {
-                setNewReference({
-                  ...newReference,
-                  description: e.target.value
-                });
-              }
-            }}
+            label="Description"
+            value={formData.description}
+            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
             multiline
-            rows={2}
+            rows={3}
             sx={{ mt: 2 }}
           />
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => {
-            setOpen(false);
-            setSelectedReference(null);
-            setNewReference(DEFAULT_REFERENCE);
-          }}>
-            취소
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button 
+            onClick={() => {
+              setOpen(false);
+              setSelectedReference(null);
+              setFormData(DEFAULT_REFERENCE);
+            }}
+          >
+            Cancel
           </Button>
           <Button
-            onClick={handleSave}
             variant="contained"
-            disabled={loading}
+            onClick={handleSave}
+            disabled={!isButtonEnabled}
           >
-            {selectedReference ? '수정' : '추가'}
+            {selectedReference ? 'Save' : 'Add'}
           </Button>
         </DialogActions>
       </Dialog>
-    </>
+    </Box>
   );
 };
 

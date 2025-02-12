@@ -1,254 +1,249 @@
-import React, { createContext, useContext, useCallback, useEffect, useState, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import useWebSocket from '../hooks/useWebSocket';
-import { addNotification } from '../store/slices/notificationSlice';
-import { updateCVEFromWebSocket } from '../store/cveSlice';
 import { useSnackbar } from 'notistack';
-import { WS_EVENT_TYPE } from '../services/websocket';
-import { getAccessToken } from '../utils/storage/tokenStorage';
-import { getSessionId } from '../utils/auth';
+import WebSocketService, { WS_EVENT_TYPE } from '../services/websocket';
+import { 
+    updateCVEFromWebSocket, 
+    addCVEFromWebSocket, 
+    deleteCVEFromWebSocket,
+    refreshCVEList,
+    addCommentToStore
+} from '../store/slices/cveSlice';
+import { addNotification } from '../store/slices/notificationSlice';
+import { Box, CircularProgress, Typography, Button } from '@mui/material';
+import { selectCVEDetail } from '../store/slices/cveSlice';
+import { snakeToCamel } from '../utils/caseConverter';
 
-const WebSocketContext = createContext(null);
+// WebSocket 서비스 인스턴스 생성
+const webSocketInstance = new WebSocketService();
+
+export const WebSocketContext = createContext({
+    isConnected: false,
+    lastMessage: null,
+    sendMessage: () => {},
+});
+
+// useWebSocketMessage 훅 수정
+export const useWebSocketMessage = (messageHandler) => {
+    // 메시지 핸들러를 useCallback으로 감싸서 안정화
+    const stableMessageHandler = useCallback((message) => {
+        if (typeof messageHandler === 'function') {
+            messageHandler(message);
+        }
+    }, [messageHandler]);  // messageHandler를 의존성 배열에 추가
+
+    // 메시지 핸들러 등록 - 디버그 로그 제거
+    useEffect(() => {
+        if (webSocketInstance) {
+            webSocketInstance.addHandler('message', stableMessageHandler);
+            return () => {
+                webSocketInstance.removeHandler('message', stableMessageHandler);
+            };
+        }
+    }, [stableMessageHandler]);  // stableMessageHandler만 의존성으로 사용
+
+    // sendCustomMessage 함수를 useCallback으로 감싸서 안정화
+    const sendCustomMessage = useCallback(async (type, data) => {
+        if (webSocketInstance) {
+            await webSocketInstance.send(type, data);
+        }
+    }, []);
+
+    return { sendCustomMessage };
+};
 
 export const WebSocketProvider = ({ children }) => {
-  const { isAuthenticated } = useSelector(state => state.auth);
-  const [lastMessage, setLastMessage] = useState(null);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [isConnected, setIsConnected] = useState(false);
-  const messageQueueRef = useRef([]);
-  const dispatch = useDispatch();
-  const { enqueueSnackbar } = useSnackbar();
-
-  // 메시지 핸들러 맵
-  const messageHandlers = {
-    [WS_EVENT_TYPE.NOTIFICATION]: (data) => {
-      dispatch(addNotification(data.notification));
-      setUnreadCount(data.unreadCount);
-      enqueueSnackbar(`새로운 알림: ${data.notification.message}`, {
-        variant: 'info',
-        anchorOrigin: { vertical: 'top', horizontal: 'right' },
-      });
-    },
-    [WS_EVENT_TYPE.NOTIFICATION_READ]: (data) => {
-      setUnreadCount(data.unreadCount);
-    },
-    [WS_EVENT_TYPE.ALL_NOTIFICATIONS_READ]: () => {
-      setUnreadCount(0);
-    },
-    // CVE 업데이트 핸들러 추가
-    'cve_updated': (data) => {
-      if (data.cve) {
-        dispatch(updateCVEFromWebSocket(data.cve));
-        enqueueSnackbar('CVE 정보가 업데이트되었습니다.', {
-          variant: 'info',
-          anchorOrigin: { vertical: 'top', horizontal: 'right' },
-        });
-      }
-    }
-  };
-
-  // 메시지 처리
-  const handleMessage = useCallback((data) => {
-    if (!isAuthenticated || !getAccessToken()) return;
-
-    // connected 메시지는 무시 (이미 WebSocketService에서 처리)
-    if (data.type === 'connected') return;
-
-    setLastMessage(data);
+    const { isAuthenticated } = useSelector(state => state.auth);
+    const currentCVE = useSelector(selectCVEDetail);  // null을 반환할 수 있음
+    const dispatch = useDispatch();
+    const { enqueueSnackbar } = useSnackbar();
     
-    // 메시지 타입에 따른 핸들러 실행
-    const handler = messageHandlers[data.type];
-    if (handler) {
-      handler(data.data);
-    }
-  }, [isAuthenticated, dispatch, enqueueSnackbar]);
+    // WebSocket 상태 관리
+    const [isConnected, setIsConnected] = useState(false);
+    const [isReady, setIsReady] = useState(false);
+    const [error, setError] = useState(null);
 
-  // 에러 처리
-  const handleError = useCallback((error) => {
-    if (!isAuthenticated || !getAccessToken()) return;
+    // 구독 중인 CVE 목록 관리
+    const [subscribedCVEs, setSubscribedCVEs] = useState(new Set());
 
-    console.error('[WebSocket] 오류:', error);
-    enqueueSnackbar(error, {
-      variant: 'error',
-      anchorOrigin: { vertical: 'top', horizontal: 'right' },
-    });
-  }, [enqueueSnackbar, isAuthenticated]);
+    // 연결 상태 변경 핸들러를 useCallback으로 분리
+    const handleConnectionChange = useCallback((connected, connectionError) => {
+        console.log('[WebSocket] Connection state changed:', { 
+            connected, 
+            connectionError,
+            isAuthenticated 
+        });
+        
+        setIsConnected(connected);
+        setIsReady(connected);
+        setError(connectionError);
 
-  // 연결 상태 변경 처리
-  const handleConnectionChange = useCallback((connected, error) => {
-    if (!isAuthenticated || !getAccessToken()) return;
+        if (connectionError && !connectionError.message?.includes('401')) {
+            enqueueSnackbar(connectionError.message || '연결 오류가 발생했습니다.', {
+                variant: 'error',
+                anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+            });
+        }
+    }, [enqueueSnackbar, isAuthenticated]);
 
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[WebSocket] 연결 상태:', {
-        isConnected: connected,
-        timestamp: new Date().toISOString()
-      });
-    }
+    // 인증 상태에 따른 연결 관리
+    useEffect(() => {
+        console.log('[WebSocket] Auth state changed:', { 
+            isAuthenticated,
+            isConnected,
+            isReady 
+        });
 
-    // 연결 상태가 실제로 변경된 경우에만 처리
-    setIsConnected(prevState => {
-      if (prevState !== connected) {
-        return connected;
-      }
-      return prevState;
-    });
+        if (isAuthenticated) {
+            webSocketInstance.connect();
+        } else {
+            webSocketInstance.disconnect();
+            setIsConnected(false);
+            setIsReady(false);
+        }
+    }, [isAuthenticated]);
 
-    if (error) {
-      handleError(error);
-    }
-  }, [handleError, isAuthenticated]);
+    // 메시지 핸들러
+    const handleMessage = useCallback((message) => {
+        if (!['ping', 'pong'].includes(message.type)) {
+            console.log('[WebSocketContext] Received message:', message);
+        }
+        
+        const type = message.type;
+        const data = message.data;
 
-  // WebSocket 훅 사용
-  const {
-    error,
-    sendMessage,
-    disconnect,
-    reconnect
-  } = useWebSocket({
-    onMessage: handleMessage,
-    onError: handleError,
-    onConnectionChange: handleConnectionChange,
-    reconnectAttempts: 5,
-    reconnectInterval: 5000
-  });
+        switch (type) {
+            case 'subscribe_cve':
+                setSubscribedCVEs(prev => {
+                    const newSet = new Set(prev);
+                    newSet.add(data.cveId);
+                    return newSet;
+                });
+                break;
 
-  // 큐에 있는 메시지 처리를 위한 별도의 effect
-  useEffect(() => {
-    if (isConnected && messageQueueRef.current.length > 0 && sendMessage) {
-      console.log('[WebSocket] 큐에 있는 메시지 전송 시작:', messageQueueRef.current.length);
-      messageQueueRef.current.forEach(({ type, data }) => {
-        sendMessage({ type, data });
-      });
-      messageQueueRef.current = [];
-    }
-  }, [isConnected, sendMessage]);
+            case 'unsubscribe_cve':
+                setSubscribedCVEs(prev => {
+                    const newSet = new Set(prev);
+                    newSet.delete(data.cveId);
+                    return newSet;
+                });
+                break;
 
-  // 인증 상태 변경 감지 및 WebSocket 연결 관리
-  useEffect(() => {
-    const token = getAccessToken();
-    const shouldConnect = isAuthenticated && token && !isConnected;
-    const shouldDisconnect = (!isAuthenticated || !token) && isConnected;
+            case WS_EVENT_TYPE.CVE_UPDATED:
+                if (data.cve) {
+                    dispatch(updateCVEFromWebSocket(data.cve));
+                    
+                    // 디버깅 로그 추가
+                    console.log('[WebSocketContext] CVE Update Check:', {
+                        updatedCveId: data.cve.cve_id,
+                        currentCveId: currentCVE?.cveId,
+                        isMatch: data.cve.cve_id === currentCVE?.cveId,
+                        currentCVE
+                    });
+                    
+                    // 현재 보고 있는 CVE가 업데이트된 경우에만 알림
+                    if (data.cve.cve_id === currentCVE?.cveId) {
+                        console.log('[WebSocketContext] Showing notification for CVE update');
+                        enqueueSnackbar('CVE 세부 정보가 변경되었습니다. 새로고침 해주세요.', {
+                            variant: 'info',
+                            anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+                        });
+                    }
+                }
+                break;
 
-    console.log('=== WebSocket Connection Debug ===', {
-      isAuthenticated,
-      hasToken: !!token,
-      isConnected,
-      shouldConnect,
-      shouldDisconnect,
-      timestamp: new Date().toISOString()
-    });
+            case WS_EVENT_TYPE.CVE_CREATED:
+                dispatch(addCVEFromWebSocket(data.cve));
+                dispatch(refreshCVEList());
+                break;
 
-    if (shouldDisconnect) {
-      console.log('Disconnecting WebSocket...');
-      disconnect();
-      setLastMessage(null);
-      setUnreadCount(0);
-      setIsConnected(false);
-    } else if (shouldConnect) {
-      // 연결 시도 전 상태 로깅
-      console.log('Preparing to connect WebSocket...', {
-        isAuthenticated,
-        hasToken: !!token,
+            case WS_EVENT_TYPE.CVE_DELETED:
+                dispatch(deleteCVEFromWebSocket(data.cveId));
+                dispatch(refreshCVEList());
+                break;
+
+            case WS_EVENT_TYPE.COMMENT_ADDED:
+                if (data.comment) {
+                    // 댓글 추가 시에는 전체 CVE를 업데이트하지 않고
+                    // 해당 댓글만 추가하는 액션 디스패치
+                    dispatch(addCommentToStore({
+                        cveId: data.cveId,
+                        comment: data.comment
+                    }));
+                    
+                    // 현재 보고 있는 CVE의 댓글이 업데이트된 경우에만 알림
+                    if (data.cveId === currentCVE?.cveId) {
+                        enqueueSnackbar('새로운 댓글이 추가되었습니다.', {
+                            variant: 'info'
+                        });
+                    }
+                }
+                break;
+
+            default:
+                break;
+        }
+    }, [dispatch, enqueueSnackbar, currentCVE]);
+
+    // 메시지 핸들러 등록
+    useEffect(() => {
+        console.log('[WebSocketContext] Setting up message handlers');
+        
+        if (webSocketInstance) {
+            console.log('[WebSocketContext] Adding message and connection handlers');
+            webSocketInstance.addHandler('message', handleMessage);
+            webSocketInstance.addHandler('connection', handleConnectionChange);
+
+            return () => {
+                console.log('[WebSocketContext] Removing message and connection handlers');
+                webSocketInstance.removeHandler('message', handleMessage);
+                webSocketInstance.removeHandler('connection', handleConnectionChange);
+            };
+        }
+    }, [handleMessage, handleConnectionChange]);
+
+    // Context 값 메모이제이션
+    const value = useMemo(() => ({
         isConnected,
-        timestamp: new Date().toISOString()
-      });
-      
-      // 약간의 지연 후 연결 시도 (React Strict Mode 및 상태 안정화를 위해)
-      const connectTimeout = setTimeout(() => {
-        console.log('Attempting WebSocket connection...');
-        reconnect();
-      }, 1000);  // 1초 지연
+        isReady,
+        error,
+        currentCVE,  // currentCVE를 context value에 추가
+        sendMessage: webSocketInstance.send.bind(webSocketInstance)
+    }), [isConnected, isReady, error, currentCVE]);
 
-      return () => {
-        console.log('Cleaning up connection attempt...');
-        clearTimeout(connectTimeout);
-      };
-    }
-  }, [isAuthenticated, isConnected, disconnect, reconnect]);
+    // 로딩 상태일 때 표시할 컴포넌트
+    const loadingComponent = (
+        <Box
+            display="flex"
+            flexDirection="column"
+            alignItems="center"
+            justifyContent="center"
+            minHeight="100vh"
+        >
+            <CircularProgress />
+            <Typography variant="body1" sx={{ mt: 2 }}>
+                {error ? "연결 실패. 페이지를 새로고침해주세요." : "연결 중..."}
+            </Typography>
+            {error && (
+                <Typography color="error" variant="body2" sx={{ mt: 1 }}>
+                    {error.message}
+                </Typography>
+            )}
+        </Box>
+    );
 
-  // 컴포넌트 언마운트 시 연결 정리
-  useEffect(() => {
-    return () => {
-      if (isConnected) {
-        console.log('Component unmounting, cleaning up WebSocket connection...');
-        disconnect();
-      }
-    };
-  }, [isConnected, disconnect]);
-
-  // Context 값 업데이트 로직 개선
-  const contextValue = {
-    isConnected: isAuthenticated && isConnected && !!getAccessToken(),
-    error: isAuthenticated ? error : null,
-    lastMessage: isAuthenticated ? lastMessage : null,
-    unreadCount: isAuthenticated ? unreadCount : 0,
-    sendMessage: (isAuthenticated && getAccessToken()) ? sendMessage : () => {
-      console.warn('WebSocket is not connected: User is not authenticated or token is missing');
-    },
-    disconnect,
-    reconnect: (isAuthenticated && getAccessToken()) ? reconnect : () => {
-      console.warn('Cannot reconnect: User is not authenticated or token is missing');
-    }
-  };
-
-  return (
-    <WebSocketContext.Provider value={contextValue}>
-      {children}
-    </WebSocketContext.Provider>
-  );
+    return (
+        <WebSocketContext.Provider value={value}>
+            {isAuthenticated && !isReady ? loadingComponent : children}
+        </WebSocketContext.Provider>
+    );
 };
 
-// 커스텀 훅: WebSocket Context 사용
+// 커스텀 훅
 export const useWebSocketContext = () => {
-  const context = useContext(WebSocketContext);
-  if (!context) {
-    throw new Error('useWebSocketContext must be used within a WebSocketProvider');
-  }
-  return context;
-};
-
-// 메시지 전송 헬퍼 함수들
-export const useWebSocketMessage = () => {
-  const { sendMessage, isConnected } = useWebSocketContext();
-  const { isAuthenticated } = useSelector(state => state.auth);
-  const messageQueueRef = useRef([]);
-
-  const sendMessageIfConnected = useCallback((type, data) => {
-    if (!isAuthenticated || !getAccessToken()) {
-      console.warn('Cannot send message: User is not authenticated or token is missing');
-      return;
+    const context = useContext(WebSocketContext);
+    if (!context) {
+        throw new Error('useWebSocketContext must be used within a WebSocketProvider');
     }
-
-    // 연결이 되어있지 않으면 메시지를 큐에 저장
-    if (!isConnected) {
-      console.log('[WebSocket] 메시지를 큐에 저장:', { type, data });
-      messageQueueRef.current.push({ type, data });
-      return;
-    }
-
-    // 연결이 되어있으면 바로 전송
-    sendMessage({ type, data });
-  }, [isAuthenticated, isConnected, sendMessage]);
-
-  return {
-    // 알림 읽음 표시
-    markNotificationAsRead: (notificationId) => {
-      sendMessageIfConnected('notification_read', { notificationId });
-    },
-
-    // 모든 알림 읽음 표시
-    markAllNotificationsAsRead: () => {
-      sendMessageIfConnected('all_notifications_read');
-    },
-
-    // 채팅 메시지 전송
-    sendChatMessage: (message) => {
-      sendMessageIfConnected('chat_message', { message });
-    },
-
-    // 사용자 정의 메시지 전송
-    sendCustomMessage: (type, data) => {
-      sendMessageIfConnected(type, data);
-    }
-  };
+    return context;
 };

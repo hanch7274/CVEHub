@@ -18,14 +18,16 @@ import {
   fetchNotifications, 
   markAsRead, 
   markAllAsRead,
-  fetchUnreadCount
-} from '../../store/notificationSlice';
+  fetchUnreadCount,
+  selectNotifications,
+  selectUnreadCount,
+  selectNotificationLoading
+} from '../../store/slices/notificationSlice';
 import CVEDetail from '../cve/CVEDetail';
 
 const NotificationBell = memo(() => {
   const [anchorEl, setAnchorEl] = useState(null);
   const [page, setPage] = useState(0);
-  const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [snackbar, setSnackbar] = useState({
     open: false,
@@ -37,9 +39,9 @@ const NotificationBell = memo(() => {
 
   const dispatch = useDispatch();
   
-  // notifications와 unreadCount를 직접 구독
-  const notifications = useSelector(state => state.notifications.notifications);
-  const unreadCount = useSelector(state => state.notifications.unreadCount);
+  const notifications = useSelector(selectNotifications);
+  const unreadCount = useSelector(selectUnreadCount);
+  const loading = useSelector(selectNotificationLoading);
 
   const ITEMS_PER_PAGE = 5;
 
@@ -58,14 +60,12 @@ const NotificationBell = memo(() => {
 
   const loadNotifications = useCallback(async (newPage = 0) => {
     try {
-      setLoading(true);
       const skip = newPage * ITEMS_PER_PAGE;
       const result = await dispatch(fetchNotifications({ 
         skip, 
         limit: ITEMS_PER_PAGE 
       })).unwrap();
       
-      // 더 로드할 데이터가 있는지 확인
       setHasMore(result.length === ITEMS_PER_PAGE);
     } catch (error) {
       console.error('알림을 가져오는 중 오류 발생:', error);
@@ -74,8 +74,6 @@ const NotificationBell = memo(() => {
         message: '알림을 불러오는데 실패했습니다.',
         severity: 'error'
       });
-    } finally {
-      setLoading(false);
     }
   }, [dispatch]);
 
@@ -195,66 +193,58 @@ const NotificationBell = memo(() => {
         color="inherit"
         onClick={handleClick}
         aria-label={`${unreadCount}개의 새로운 알림`}
-        sx={{ color: '#FFD700' }}
+        sx={{ 
+          color: '#FFD700',  // 원래 색상 복원
+          position: 'relative' 
+        }}
       >
         <Badge badgeContent={unreadCount} color="error">
           <NotificationsIcon sx={{ fontSize: '2rem' }} />
         </Badge>
       </IconButton>
+
       <Menu
         anchorEl={anchorEl}
         open={Boolean(anchorEl)}
         onClose={handleClose}
         PaperProps={{
-          style: {
-            maxHeight: '500px',
+          sx: {
+            maxHeight: '80vh',
             width: '400px',
-            overflowY: 'hidden'
+            overflowX: 'hidden'
           }
         }}
       >
-        <Box sx={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center',
-          padding: '8px 16px',
-          borderBottom: '1px solid rgba(0, 0, 0, 0.12)'
-        }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 'bold' }}>
-            알림
-          </Typography>
+        <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Typography variant="h6">알림</Typography>
           {unreadCount > 0 && (
-            <Button
-              size="small"
-              onClick={handleMarkAllAsRead}
-              sx={{ 
-                minWidth: 'auto',
-                textTransform: 'none',
-                fontSize: '0.8rem'
-              }}
-            >
-              모두 읽기
+            <Button onClick={handleMarkAllAsRead} size="small">
+              모두 읽음
             </Button>
           )}
         </Box>
-        <Box sx={{ maxHeight: '400px', overflowY: 'auto' }}>
-          {notifications.length === 0 ? (
-            <MenuItem disabled>
-              <Typography variant="body2" color="textSecondary">
-                알림이 없습니다
+        <Divider />
+        <Box sx={{ maxHeight: '60vh', overflowY: 'auto' }}>
+          {loading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+              <CircularProgress size={20} />
+            </Box>
+          ) : !Array.isArray(notifications) || notifications.length === 0 ? (
+            <Box sx={{ p: 2, textAlign: 'center' }}>
+              <Typography color="textSecondary">
+                알림이 없습니다.
               </Typography>
-            </MenuItem>
+            </Box>
           ) : (
             notifications.map((notification, index) => (
-              <React.Fragment key={getNotificationId(notification) || index}>
+              <React.Fragment key={notification.id}>
                 <MenuItem
                   onClick={() => handleNotificationClick(notification)}
                   sx={{
-                    backgroundColor: notification.is_read ? 'transparent' : '#e3f2fd',
+                    backgroundColor: notification.is_read ? 'inherit' : 'action.hover',
                     '&:hover': {
-                      backgroundColor: notification.is_read ? '#f5f5f5' : '#bbdefb'
-                    },
-                    padding: '8px 16px'
+                      backgroundColor: 'action.selected'
+                    }
                   }}
                 >
                   <Box sx={{ width: '100%' }}>

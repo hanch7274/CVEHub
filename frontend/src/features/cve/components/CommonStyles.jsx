@@ -1,5 +1,5 @@
 import { styled } from '@mui/material/styles';
-import { Paper, Button, IconButton } from '@mui/material';
+import { Paper, Button, IconButton, Box } from '@mui/material';
 
 export const StyledListItem = styled(Paper)(({ theme }) => ({
   padding: theme.spacing(2),
@@ -55,4 +55,30 @@ export const EmptyState = styled(Paper)(({ theme }) => ({
   backgroundColor: theme.palette.background.default,
   border: `1px dashed ${theme.palette.divider}`,
   color: theme.palette.text.secondary
+}));
+
+export const TabContentContainer = styled(Box)(({ theme }) => ({
+  display: 'flex',
+  flexDirection: 'column',
+  height: '100%',
+  minHeight: 0,
+  overflow: 'hidden'
+}));
+
+export const TabContentScroll = styled(Box)(({ theme }) => ({
+  flex: 1,
+  minHeight: 0,
+  overflowY: 'auto',
+  padding: theme.spacing(2),
+  '&::-webkit-scrollbar': {
+    width: '8px',
+    backgroundColor: 'transparent'
+  },
+  '&::-webkit-scrollbar-thumb': {
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+    borderRadius: '4px',
+    '&:hover': {
+      backgroundColor: 'rgba(0, 0, 0, 0.2)'
+    }
+  }
 })); 

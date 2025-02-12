@@ -1,6 +1,10 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { login as authLogin, getCurrentUser } from '../services/authService';
-import { getAccessToken } from '../utils/storage/tokenStorage';
+import { 
+  login as authLogin, 
+  getCurrentUser,
+  logout as authLogout  // logout 함수 직접 import
+} from '../../services/authService';
+import { getAccessToken } from '../../utils/storage/tokenStorage';
 
 // 초기 상태
 const initialState = {
@@ -43,19 +47,27 @@ export const getCurrentUserThunk = createAsyncThunk(
   }
 );
 
+// 로그아웃 액션 생성
+export const logout = createAsyncThunk(
+  'auth/logout',
+  async (_, { rejectWithValue }) => {
+    try {
+      await authLogout();  // authService.logout() 대신 authLogout() 사용
+      return null;
+    } catch (error) {
+      return rejectWithValue(error.message || '로그아웃 실패');
+    }
+  }
+);
+
 // Auth Slice
-export const authSlice = createSlice({
+const authSlice = createSlice({
   name: 'auth',
   initialState,
   reducers: {
     setUser: (state, action) => {
       state.user = action.payload;
       state.isAuthenticated = !!action.payload;
-    },
-    logout: (state) => {
-      state.user = null;
-      state.isAuthenticated = false;
-      state.isInitialized = true;
     },
     clearError: (state) => {
       state.error = null;
@@ -98,10 +110,25 @@ export const authSlice = createSlice({
         state.user = null;
         state.isAuthenticated = false;
         state.isInitialized = true;
+      })
+      // 로그아웃 액션 처리
+      .addCase(logout.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(logout.fulfilled, (state) => {
+        state.user = null;
+        state.isAuthenticated = false;
+        state.loading = false;
+        state.error = null;
+      })
+      .addCase(logout.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
       });
   }
 });
 
-export const { setUser, logout, clearError } = authSlice.actions;
+export const { setUser, clearError } = authSlice.actions;
 
 export default authSlice.reducer;

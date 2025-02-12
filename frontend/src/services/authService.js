@@ -102,7 +102,6 @@ export const login = async (credentials) => {
     console.log('Request Data:', credentials);
     console.log('API Base URL:', process.env.REACT_APP_API_URL || 'http://localhost:8000');
 
-    // OAuth2 형식에 맞게 데이터 변환
     const formData = new URLSearchParams();
     formData.append('username', credentials.email);
     formData.append('password', credentials.password);
@@ -119,20 +118,14 @@ export const login = async (credentials) => {
     console.log('Response Status:', response.status);
     console.log('Raw Response Data:', response.data);
 
-    // 응답 데이터에서 토큰과 사용자 정보 추출
     const { accessToken, refreshToken, user } = response.data;
 
-    console.log('=== Extracted Data Debug ===');
-    console.log('Access Token:', accessToken ? 'Present' : 'Missing');
-    console.log('Refresh Token:', refreshToken ? 'Present' : 'Missing');
-    console.log('User Data:', user ? 'Present' : 'Missing');
-
     // 토큰 유효성 검사
-    if (!accessToken) {
-      throw new Error('Access token is missing in the response');
+    if (!accessToken || !user) {
+      throw new Error('Invalid response data: Missing access token or user data');
     }
 
-    // 토큰과 사용자 정보 저장
+    // 순차적으로 저장 - 에러 발생 가능성이 있는 작업들을 try-catch로 감싸기
     try {
       setAccessToken(accessToken);
       console.log('Access token saved successfully');
@@ -142,20 +135,13 @@ export const login = async (credentials) => {
         console.log('Refresh token saved successfully');
       }
 
-      if (user) {
-        setUser(user);
-        console.log('User data saved successfully');
-      }
+      setUser(user);
+      console.log('User data saved successfully');
     } catch (storageError) {
-      console.error('Error saving to storage:', storageError);
+      console.error('Error saving authentication data:', storageError);
+      clearAuthStorage(); // 저장 중 에러 발생 시 스토리지 초기화
       throw new Error('Failed to save authentication data');
     }
-
-    // 저장된 데이터 확인
-    console.log('=== Storage Verification ===');
-    console.log('Access Token in Storage:', !!getAccessToken());
-    console.log('Refresh Token in Storage:', !!getRefreshToken());
-    console.log('User Data in Storage:', !!user);
 
     return {
       user,

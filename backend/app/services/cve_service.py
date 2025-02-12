@@ -1,14 +1,19 @@
 from typing import List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from beanie import PydanticObjectId
 from ..repositories.cve_repository import CVERepository
-from ..models.cve_model import CVEModel, CreateCVERequest, PatchCVERequest, Comment, CommentCreate, CommentUpdate, PoC, SnortRule, ModificationHistory
+from ..models.cve_model import CVEModel, CreateCVERequest, PatchCVERequest, Comment, CommentCreate, CommentUpdate, PoC, SnortRule, ModificationHistory, ChangeItem
 from ..models.notification import Notification
-from ..core.websocket import manager
+from ..models.user import User
+from ..core.websocket import manager, DateTimeEncoder
 import logging
 import traceback
 from pydantic import ValidationError
+import json
+
+# 로거 설정
+logger = logging.getLogger(__name__)
 
 class CVEService:
     """CVE 관련 서비스"""
@@ -35,89 +40,73 @@ class CVEService:
         """CVE를 조회합니다."""
         return await self.repository.get_by_cve_id(cve_id)
 
-    async def create_cve(
-        self, 
-        cve_data: CreateCVERequest,
-        current_user: str = "anonymous",
-        is_crawler: bool = False,
-        crawler_name: Optional[str] = None
-    ) -> Optional[CVEModel]:
-        """CVE를 생성합니다."""
-        cve = await self.repository.create(cve_data)
-        if cve:
-            # 웹소켓을 통해 새로운 CVE 생성 알림
-            await manager.broadcast("cve_created", {
-                "cve_id": cve.cve_id,
-                "title": cve.title,
-                "created_by": current_user
-            })
-        return cve
-
-    async def update_cve(self, cve_id: str, cve_data: PatchCVERequest, username: str) -> Optional[CVEModel]:
-        """CVE를 업데이트합니다."""
+    async def create_cve(self, cve_data: dict, username: str) -> Optional[CVEModel]:
+        """새로운 CVE를 생성합니다."""
         try:
-            # 현재 CVE 데이터 조회
-            current_cve = await CVEModel.find_one({"cve_id": cve_id})
-            if not current_cve:
-                logging.error(f"CVE not found with ID: {cve_id}")
-                return None
-
-            # 수정 이력 생성
-            modification = ModificationHistory(
-                modified_by=username,
-                modified_at=datetime.now(ZoneInfo("Asia/Seoul"))
-            )
-
-            # PatchCVERequest를 dict로 변환
-            update_dict = cve_data.dict(exclude_unset=True)
-            logging.info(f"Converted update data: {update_dict}")
-
-            # snort_rules 업데이트 처리
-            if "snort_rules" in update_dict:
-                logging.info(f"Updating snort_rules for CVE {cve_id}")
-                logging.info(f"Current rules: {current_cve.snort_rules}")
-                logging.info(f"New rules: {update_dict['snort_rules']}")
-                
-                # 새로운 규칙에 필수 필드 추가
-                for rule in update_dict["snort_rules"]:
-                    if isinstance(rule, dict):
-                        if not rule.get("date_added"):
-                            rule["date_added"] = datetime.now(ZoneInfo("Asia/Seoul")).isoformat()
-                        if not rule.get("added_by"):
-                            rule["added_by"] = username
-
-            # 수정 이력 추가
-            if not current_cve.modification_history:
-                current_cve.modification_history = []
-            current_cve.modification_history.append(modification)
-
-            # 데이터 업데이트
-            update_data = {
-                "$set": {
-                    **update_dict,
-                    "modification_history": current_cve.modification_history,
-                    "last_modified": modification.modified_at
-                }
-            }
-
-            logging.info(f"Updating CVE {cve_id} with data: {update_data}")
-
-            # 업데이트 수행
-            await current_cve.update(update_data)
+            # DateTimeEncoder 사용
+            logging.info(f"Creating CVE with data: {json.dumps(cve_data, indent=2, cls=DateTimeEncoder)}")
             
-            # 업데이트된 CVE 반환
-            updated_cve = await CVEModel.find_one({"cve_id": cve_id})
-            if updated_cve:
-                logging.info(f"Successfully updated CVE {cve_id}")
-                logging.info(f"Updated snort_rules: {updated_cve.snort_rules}")
-            else:
-                logging.error(f"Failed to fetch updated CVE {cve_id}")
-            return updated_cve
+            # 날짜 필드 KST 설정
+            current_time = datetime.now(ZoneInfo("Asia/Seoul"))
+            date_fields = ["published_date", "created_at", "last_modified_date"]
+            
+            for field in date_fields:
+                if field in cve_data:
+                    date_value = cve_data[field]
+                    if isinstance(date_value, str):
+                        dt = datetime.fromisoformat(date_value.replace('Z', '+00:00'))
+                        cve_data[field] = dt.astimezone(ZoneInfo("Asia/Seoul"))
+                    elif isinstance(date_value, datetime):
+                        cve_data[field] = date_value.astimezone(ZoneInfo("Asia/Seoul"))
 
+            # CVE 생성
+            cve = await self.repository.create(cve_data)
+            if cve:
+                logging.info(f"CVE created successfully: {cve.cve_id}")
+                return cve
+            
+            logging.error("Failed to create CVE: Repository returned None")
+            return None
+        
         except Exception as e:
-            logging.error(f"Error updating CVE {cve_id}: {str(e)}")
+            logging.error(f"Error in create_cve: {str(e)}")
             logging.error(traceback.format_exc())
             return None
+
+    async def update_cve(self, cve_id: str, update_data: dict, current_user: str) -> Optional[CVEModel]:
+        try:
+            # 기존 CVE 조회
+            existing_cve = await self.get_cve(cve_id)
+            if not existing_cve:
+                return None
+
+            # 기존 modification_history 가져오기
+            existing_history = existing_cve.modification_history or []
+            
+            # 새로운 history 항목이 있다면 기존 history에 추가
+            if "modification_history" in update_data:
+                new_history = update_data.pop("modification_history")
+                existing_history.extend(new_history)
+
+            # 최종 업데이트할 데이터 준비
+            final_update = {
+                **update_data,
+                "modification_history": existing_history,
+                "last_modified_date": datetime.now(ZoneInfo("Asia/Seoul"))
+            }
+
+            # CVE 업데이트
+            filter_query = {"cve_id": cve_id}
+            updated_cve = await self.repository.update_one(filter_query, final_update)
+            
+            if updated_cve:
+                return await self.get_cve(cve_id)  # 업데이트된 문서 반환
+            return None
+
+        except Exception as e:
+            logging.error(f"Error in update_cve: {str(e)}")
+            logging.error(traceback.format_exc())
+            raise
 
     async def delete_cve(self, cve_id: str) -> bool:
         """CVE를 삭제합니다."""
@@ -271,4 +260,47 @@ class CVEService:
                 })
                 results["errors"]["count"] += 1
 
-        return results 
+        return results
+
+    async def acquire_lock(self, cve_id: str, username: str) -> tuple[bool, str]:
+        """CVE 편집 락을 획득합니다."""
+        cve = await self.get_cve(cve_id)
+        if not cve:
+            return False, "CVE not found"
+
+        now = datetime.now(ZoneInfo("Asia/Seoul"))
+        
+        # 락이 없거나 만료된 경우
+        if not cve.is_locked or (cve.lock_expires_at and cve.lock_expires_at < now):
+            cve.is_locked = True
+            cve.locked_by = username
+            cve.lock_timestamp = now
+            cve.lock_expires_at = now + timedelta(minutes=30)
+            await self.repository.update(cve)
+            return True, "Lock acquired"
+            
+        # 이미 해당 사용자가 락을 가지고 있는 경우
+        if cve.locked_by == username:
+            # 락 시간 갱신
+            cve.lock_expires_at = now + timedelta(minutes=30)
+            await self.repository.update(cve)
+            return True, "Lock renewed"
+            
+        return False, f"CVE is currently being edited by {cve.locked_by}"
+
+    async def release_lock(self, cve_id: str, username: str) -> bool:
+        """CVE 편집 락을 해제합니다."""
+        cve = await self.get_cve(cve_id)
+        if not cve:
+            return False
+
+        # 락이 없거나 다른 사용자의 락인 경우
+        if not cve.is_locked or cve.locked_by != username:
+            return False
+
+        cve.is_locked = False
+        cve.locked_by = None
+        cve.lock_timestamp = None
+        cve.lock_expires_at = None
+        await self.repository.update(cve)
+        return True 

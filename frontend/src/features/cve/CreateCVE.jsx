@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useDispatch } from 'react-redux';
 import {
   Dialog,
   DialogTitle,
@@ -20,7 +21,8 @@ import {
   Add as AddIcon,
   Delete as DeleteIcon,
 } from '@mui/icons-material';
-import { api } from '../../utils/auth';
+import api from '../../api/config/axios';
+import { fetchCVEList } from '../../store/slices/cveSlice';
 
 const POC_SOURCES = {
   Etc: "Etc",
@@ -50,6 +52,7 @@ const STATUS_OPTIONS = [
 ];
 
 const CreateCVE = ({ onClose, onSuccess }) => {
+  const dispatch = useDispatch();
   const [formData, setFormData] = useState({
     cveId: '',
     title: '',
@@ -137,55 +140,65 @@ const CreateCVE = ({ onClose, onSuccess }) => {
     setError(null);
     setLoading(true);
 
-    try {
-      console.log('Form data: ', formData);
-      console.log('Request data:', {
-        cveId: formData.cveId,
-        title: formData.title,
-        description: formData.description,
-        status: formData.status,
-        publishedDate: formData.publishedDate,
-        pocs: formData.pocs,
-        snortRules: formData.snortRules,
-        references: formData.references
-      });
+    // CVE ID 형식 검증 (필수 필드만 검증)
+    const cveIdPattern = /^CVE-\d{4}-\d{4,}$/;
+    if (!cveIdPattern.test(formData.cveId)) {
+        setError('CVE ID 형식이 올바르지 않습니다. (예: CVE-2024-1234)');
+        setLoading(false);
+        return;
+    }
 
+    try {
+      const currentTime = new Date().toISOString();
       const requestData = {
         cveId: formData.cveId,
         title: formData.title,
         description: formData.description,
         status: formData.status,
-        publishedDate: formData.publishedDate,
+        publishedDate: currentTime,
         pocs: formData.pocs.map(poc => ({
           source: poc.source,
           url: poc.url,
-          description: poc.description || ''
+          description: poc.description || '',
+          dateAdded: currentTime
         })),
         snortRules: formData.snortRules.map(rule => ({
           rule: rule.rule,
           type: rule.type,
-          description: rule.description || ''
+          description: rule.description || '',
+          dateAdded: currentTime
         })),
         references: formData.references.map(ref => ({
-          url: ref.url
+          url: ref.url,
+          dateAdded: currentTime
         }))
       };
 
+      // 요청 데이터 로깅
+      console.log('[CreateCVE] Submitting data:', {
+        rawData: requestData,
+        formData,
+        currentTime
+      });
+      
+      console.log('[CreateCVE] Request Data:', requestData);
       const response = await api.post('/cves', requestData);
+      console.log('[CreateCVE] Response received:', response.data);
 
-      console.log('Received response:', response.data);
+      // CVE 리스트 갱신
+      await dispatch(fetchCVEList({ skip: 0, limit: 10 }));
 
       if (onSuccess) {
         onSuccess(response.data);
       }
       onClose();
     } catch (err) {
-      console.log('Error details: ', err);
-      if (err.response) {
-        console.log('Response data:', err.response.data);
-        console.log('Response status:', err.response.status);
-        console.log('Response headers:', err.response.headers);
-      }
+      console.error('[CreateCVE] Error:', {
+        status: err.response?.status,
+        data: err.response?.data,
+        message: err.message,
+        stack: err.stack
+      });
       setError(err.response?.data?.detail || err.message);
     } finally {
       setLoading(false);

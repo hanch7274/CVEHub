@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { loginThunk, getCurrentUserThunk, logout as logoutAction } from '../store/authSlice';
+import { loginThunk, getCurrentUserThunk, logout as logoutAction } from '../store/slices/authSlice';
 import WebSocketService from '../services/websocket';
 
 const AuthContext = createContext(null);

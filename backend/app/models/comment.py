@@ -1,21 +1,26 @@
 from datetime import datetime
 from typing import Optional, List
-from beanie import Document, Link
+from beanie import Document, Link, PydanticObjectId
 from pydantic import BaseModel, Field
 from .user import User
 
 class Comment(Document):
+    id: Optional[PydanticObjectId] = Field(default_factory=PydanticObjectId, alias="_id")
     cve_id: str
     content: str
     username: str
-    parent_id: Optional[str] = None
-    mentions: List[str] = Field(default_factory=list)  # 멘션된 사용자의 이메일 목록
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    parent_id: Optional[str] = None  # parent_id를 문자열로 처리
+    depth: int = 0
+    is_deleted: bool = False
+    created_at: datetime
     updated_at: Optional[datetime] = None
-    deleted: bool = False
+    mentions: List[str] = []
 
-    class Settings:
-        name = "comments"
+    class Config:
+        populate_by_name = True
+        json_encoders = {
+            PydanticObjectId: str
+        }
 
     @property
     def id(self) -> str:
@@ -39,7 +44,7 @@ class Comment(Document):
 
 class CommentCreate(BaseModel):
     content: str
-    parent_id: Optional[str] = None
+    parent_id: Optional[str] = None  # parent_id를 문자열로 처리
     mentions: List[str] = []
 
 class CommentUpdate(BaseModel):

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -18,7 +18,7 @@ import {
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import { api } from '../../../utils/auth';
-import MentionInput from '../../../features/comment/components/MentionInput';
+import MentionInput from './MentionInput';
 import { highlightMentions } from '../../../utils/mentionUtils';
 
 const Comment = ({
@@ -32,29 +32,17 @@ const Comment = ({
   onReplySubmit,
   onReplyCancel,
   cveId,
-  children
+  children,
+  isAdmin
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(comment.content);
   const [showOriginal, setShowOriginal] = useState(false);
   const [replyContent, setReplyContent] = useState('');
-  const [mentionedUsers, setMentionedUsers] = useState([]);
-  const [showMentionSuggestions, setShowMentionSuggestions] = useState(false);
-  const [mentionQuery, setMentionQuery] = useState("");
-  const [mentionSuggestions, setMentionSuggestions] = useState([]);
-  const [cursorPosition, setCursorPosition] = useState(0);
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] = useState(false);
-  const [showReplyConfirmDialog, setShowReplyConfirmDialog] = useState(false);
-  const [showEditConfirmDialog, setShowEditConfirmDialog] = useState(false);
-  const [showCancelEditDialog, setShowCancelEditDialog] = useState(false);
-  const [showCancelReplyDialog, setShowCancelReplyDialog] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [isPermanentDeleting, setIsPermanentDeleting] = useState(false);
 
+
+  // 권한 및 상태 체크
   const isDeleted = comment.isDeleted;
-  const isAdmin = currentUsername === 'admin';
   const isAuthor = currentUsername === comment.username;
   const canModify = isAdmin || isAuthor;
 
@@ -75,21 +63,8 @@ const Comment = ({
     }
   };
 
-  const handlePermanentDelete = async () => {
-    if (window.confirm('이 댓글을 완전히 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')) {
-      try {
-        await api.delete(`/cves/${cveId}/comments/${comment.id}/permanent`);
-        onDelete(comment.id, true);
-      } catch (error) {
-        console.error('Error permanently deleting comment:', error);
-      }
-    }
-  };
-
   const handleDelete = () => {
-    if (window.confirm('이 댓글을 삭제하시겠습니까?')) {
-      onDelete(comment.id, false);
-    }
+    onDelete(comment.id, isAdmin);
   };
 
   const formatDate = (dateString) => {
@@ -162,6 +137,15 @@ const Comment = ({
     );
   };
 
+  // 답글 아이콘 클릭 핸들러
+  const handleReplyClick = () => {
+    if (replyMode) {
+      onReplyCancel();
+    } else {
+      onReply(comment);
+    }
+  };
+
   return (
     <Box
       sx={{
@@ -169,21 +153,11 @@ const Comment = ({
         mb: 2,
         p: 2,
         borderRadius: 1,
-        bgcolor: replyMode ? 'action.hover' : 'background.paper',  
-        border: replyMode ? '1px solid' : 'none',  
-        borderColor: 'primary.main',  
-        transition: 'all 0.3s ease',  
-        position: 'relative',  
-        '&::before': replyMode ? {  
-          content: '""',
-          position: 'absolute',
-          left: 0,
-          top: 0,
-          bottom: 0,
-          width: 4,
-          backgroundColor: 'primary.main',
-          borderRadius: '4px 0 0 4px'
-        } : {}
+        bgcolor: replyMode ? 'action.hover' : 'background.paper',
+        border: replyMode ? '1px solid' : 'none',
+        borderColor: 'primary.main',
+        transition: 'all 0.3s ease',
+        position: 'relative',
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
@@ -199,36 +173,44 @@ const Comment = ({
           {renderContent()}
         </Box>
         <Box>
-          {!isDeleted && (
+          {!comment.isDeleted && (
             <Stack direction="row" spacing={1}>
               {canModify && (
                 <>
                   <IconButton size="small" onClick={handleEdit}>
                     <EditIcon fontSize="small" />
                   </IconButton>
-                  <IconButton size="small" onClick={handleDelete} color="error">
+                  <IconButton 
+                    size="small" 
+                    onClick={handleDelete}
+                    color="error"
+                  >
                     <DeleteIcon fontSize="small" />
                   </IconButton>
                 </>
               )}
-              <IconButton size="small" onClick={() => onReply(comment)}>
+              <IconButton size="small" onClick={handleReplyClick}>
                 <ReplyIcon fontSize="small" />
               </IconButton>
             </Stack>
           )}
-          {isDeleted && isAdmin && (
-            <Tooltip title="영구 삭제">
-              <IconButton size="small" onClick={handlePermanentDelete} color="error">
-                <DeleteForeverIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          )}
-          {isDeleted && (
-            <Tooltip title={showOriginal ? "삭제된 댓글 숨기기" : "삭제된 댓글 보기"}>
-              <IconButton size="small" onClick={() => setShowOriginal(!showOriginal)}>
-                {showOriginal ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
-              </IconButton>
-            </Tooltip>
+          {comment.isDeleted && isAdmin && (
+            <Stack direction="row" spacing={1}>
+              <Tooltip title="영구 삭제">
+                <IconButton 
+                  size="small" 
+                  onClick={handleDelete}
+                  color="error"
+                >
+                  <DeleteForeverIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title={showOriginal ? "삭제된 댓글 숨기기" : "삭제된 댓글 보기"}>
+                <IconButton size="small" onClick={() => setShowOriginal(!showOriginal)}>
+                  {showOriginal ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                </IconButton>
+              </Tooltip>
+            </Stack>
           )}
         </Box>
       </Box>
@@ -246,7 +228,12 @@ const Comment = ({
             placeholder="답글을 입력하세요..."
           />
           <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-            <Button size="small" onClick={handleReplySubmit} variant="contained">
+            <Button 
+              size="small" 
+              onClick={handleReplySubmit} 
+              variant="contained"
+              disabled={!replyContent.trim()}
+            >
               답글 달기
             </Button>
             <Button size="small" onClick={onReplyCancel}>
@@ -256,11 +243,7 @@ const Comment = ({
         </Box>
       )}
 
-      {comment.children?.length > 0 && (
-        <Box sx={{ mt: 2 }}>
-          {children}
-        </Box>
-      )}
+      {children}
     </Box>
   );
 };

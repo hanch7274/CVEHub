@@ -9,6 +9,7 @@ services:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
     networks:
       - cvehub-network
     healthcheck:
@@ -29,6 +30,7 @@ services:
       - ./backend:/app
       - /app/__pycache__
       - ./backend/.env:/app/.env
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
     environment:
       - MONGODB_URL=mongodb://mongodb:27017/cvehub
     depends_on:
@@ -47,9 +49,12 @@ services:
       - "3000:3000"
     volumes:
       - ./frontend:/app
+      - ./frontend/node_modules:/app/node_modules
     environment:
       - REACT_APP_API_URL=http://localhost:8000
       - WDS_SOCKET_PORT=0
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
     depends_on:
       - backend
     networks:

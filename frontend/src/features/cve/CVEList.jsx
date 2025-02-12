@@ -24,7 +24,8 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
-  DialogActions
+  DialogActions,
+  CircularProgress
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -43,12 +44,20 @@ import { useDispatch, useSelector } from 'react-redux';
 import {
   fetchCVEList,
   updateFilters,
-  selectCVEList,
-  selectCVEFilters,
+  selectCVEListData,
+  selectCVEFiltersData,
   selectCVELoading,
+  refreshCVEList,
+  searchCVEs,
+  deleteCVE,
+  addCVEFromWebSocket,
   updateCVEFromWebSocket,
-  searchCVEs
-} from '../../store/cveSlice';
+  deleteCVEFromWebSocket
+} from '../../store/slices/cveSlice';
+import { useSnackbar } from 'notistack';
+import { useWebSocketContext } from '../../contexts/WebSocketContext';
+
+import { useWebSocketMessage } from '../../contexts/WebSocketContext';
 
 const STATUS_COLORS = {
   '미할당': 'default',
@@ -57,15 +66,36 @@ const STATUS_COLORS = {
   '대응완료': 'success'
 };
 
-const CVEList = ({ selectedCVE, setSelectedCVE }) => {
+const CVEList = () => {
   const dispatch = useDispatch();
-  const { items: cves, total: totalCount, loading, error } = useSelector(selectCVEList);
-  const { page, rowsPerPage, search: searchQuery } = useSelector(selectCVEFilters);
+  const { enqueueSnackbar } = useSnackbar();
+  const { isConnected, isReady } = useWebSocketContext();
+  
+  // Redux selectors
+  const { items: cves, total: totalCount, loading, error, forceRefresh } = 
+    useSelector(selectCVEListData);
+  const { page, rowsPerPage, search: searchQuery } = 
+    useSelector(selectCVEFiltersData);
+
   const { user } = useAuth();
   const navigate = useNavigate();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [cveToDelete, setCveToDelete] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const initialLoadRef = useRef(false);
+  const lastFetchParamsRef = useRef(null);
+  const [selectedCVE, setSelectedCVE] = useState(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+
+  console.log('[CVE] Current state:', {
+    cves,
+    loading,
+    error,
+    page,
+    rowsPerPage,
+    searchQuery
+  });
 
   useEffect(() => {
     if (selectedCVE?.id) {
@@ -81,70 +111,83 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
     }
   }, [user, navigate]);
 
-  // 초기 데이터 로드
+  // 데이터 로딩 로직
   useEffect(() => {
-    if (!user) return;
+    const fetchData = () => {
+      console.log('Fetching CVE data with params:', {
+        skip: page * rowsPerPage,
+        limit: rowsPerPage,
+        search: searchQuery
+      });
+      
+      dispatch(fetchCVEList({
+        skip: page * rowsPerPage,
+        limit: rowsPerPage,
+        search: searchQuery
+      }))
+      .unwrap()
+      .then(response => {
+        console.log('CVE data fetched successfully:', response);
+      })
+      .catch(error => {
+        console.error('Failed to fetch CVE data:', error);
+        enqueueSnackbar('CVE 목록을 불러오는데 실패했습니다.', { 
+          variant: 'error' 
+        });
+      });
+    };
 
-    dispatch(fetchCVEList({
-      skip: page * rowsPerPage,
-      limit: rowsPerPage,
-      search: searchQuery
-    }));
-  }, [dispatch, page, rowsPerPage, searchQuery, user]);
+    if (user && isReady) {
+      fetchData();
+    }
+  }, [dispatch, page, rowsPerPage, searchQuery, user, isReady, enqueueSnackbar]);
 
   // 검색 디바운스 처리
   const debouncedSearch = useCallback(
     debounce((query) => {
-      dispatch(fetchCVEList({
-        skip: 0,
-        limit: rowsPerPage,
-        search: query
+      dispatch(updateFilters({ 
+        search: query,
+        page: 0
       }));
     }, 300),
-    [dispatch, rowsPerPage]
+    [dispatch]
   );
 
   // 검색어 변경 핸들러
   const handleSearch = (e) => {
     const newSearchQuery = e.target.value;
-    dispatch(updateFilters({ 
-      search: newSearchQuery,
-      page: 0
-    }));
+    setSearchTerm(newSearchQuery);
     debouncedSearch(newSearchQuery);
+  };
+
+  // 페이지 변경 핸들러
+  const handlePageChange = (event, newPage) => {
+    dispatch(updateFilters({ page: newPage }));
+  };
+
+  // 페이지당 행 수 변경 핸들러
+  const handleRowsPerPageChange = (event) => {
+    const newRowsPerPage = parseInt(event.target.value, 10);
+    dispatch(updateFilters({ 
+      page: 0,
+      rowsPerPage: newRowsPerPage
+    }));
   };
 
   // 새로고침 핸들러
   const handleRefresh = () => {
-    dispatch(fetchCVEList({
-      skip: page * rowsPerPage,
-      limit: rowsPerPage,
-      search: searchQuery
-    }));
+    dispatch(refreshCVEList());
   };
 
-  const handleChangePage = (event, newPage) => {
-    dispatch(updateFilters({ page: newPage }));
-  };
-
-  const handleChangeRowsPerPage = (event) => {
-    const newRowsPerPage = parseInt(event.target.value, 10);
-    dispatch(updateFilters({
-      rowsPerPage: newRowsPerPage,
-      page: 0
-    }));
-  };
-
+  // CVE 클릭 핸들러 수정
   const handleCVEClick = (cve) => {
-    if (cve && cve.cveId) {
-      console.log('CVE 클릭:', cve.cveId);
-      setSelectedCVE(cve);
-    } else {
-      console.error('유효하지 않은 CVE 데이터:', cve);
-    }
+    console.log('Clicked CVE:', cve);
+    setSelectedCVE(cve);
+    setDetailOpen(true);
   };
 
-  const handleCloseDetail = () => {
+  const handleDetailClose = () => {
+    setDetailOpen(false);
     setSelectedCVE(null);
   };
 
@@ -157,41 +200,43 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
   };
 
   const handleCVECreated = () => {
-    dispatch(fetchCVEList({
-      skip: page * rowsPerPage,
-      limit: rowsPerPage
-    }));
-    setCreateDialogOpen(false);
+    handleCloseCreate();
+    dispatch(refreshCVEList());
   };
 
   const handleCVEUpdated = (updatedCVE) => {
-    dispatch(updateCVEFromWebSocket(updatedCVE));
+    dispatch(refreshCVEList());
   };
 
   const handleDeleteClick = (e, cve) => {
-    e.stopPropagation();
+    e.stopPropagation();  // 이벤트 전파 중단
     setCveToDelete(cve);
     setDeleteDialogOpen(true);
-  };
-
-  const handleDeleteConfirm = async () => {
-    try {
-      await api.delete(`/cves/${cveToDelete.cveId}`);
-      dispatch(fetchCVEList({
-        skip: page * rowsPerPage,
-        limit: rowsPerPage
-      }));
-      setDeleteDialogOpen(false);
-      setCveToDelete(null);
-    } catch (error) {
-      console.error('Error deleting CVE:', error);
-      dispatch(updateFilters({ error: 'CVE 삭제 중 오류가 발생했습니다.' }));
-    }
   };
 
   const handleDeleteCancel = () => {
     setDeleteDialogOpen(false);
     setCveToDelete(null);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!cveToDelete) return;
+
+    try {
+      await dispatch(deleteCVE(cveToDelete.cveId)).unwrap();
+      enqueueSnackbar('CVE가 성공적으로 삭제되었습니다.', {
+        variant: 'success',
+        anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+      });
+    } catch (error) {
+      enqueueSnackbar(error.message || 'CVE 삭제 중 오류가 발생했습니다.', {
+        variant: 'error',
+        anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+      });
+    } finally {
+      setDeleteDialogOpen(false);
+      setCveToDelete(null);
+    }
   };
 
   const openCVEDetail = useCallback(async (cveId) => {
@@ -216,6 +261,48 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
       </TableRow>
     ))
   );
+
+  // WebSocket 메시지 핸들러
+  useWebSocketMessage('cve_update', () => {
+    // 새로고침 버튼 클릭 시 실행될 콜백
+    dispatch(refreshCVEList());
+  });
+
+  // 로딩 상태 표시
+  if (!user) {
+    return (
+      <Box sx={{ 
+        display: 'flex', 
+        flexDirection: 'column',
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        height: '100vh' 
+      }}>
+        <CircularProgress />
+        <Typography sx={{ mt: 2 }}>
+          인증 확인 중...
+        </Typography>
+      </Box>
+    );
+  }
+
+  if (!isReady) {
+    console.log('Waiting for WebSocket connection...', { isReady });
+    return (
+      <Box sx={{ 
+        display: 'flex', 
+        flexDirection: 'column',
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        height: '100vh' 
+      }}>
+        <CircularProgress />
+        <Typography sx={{ mt: 2 }}>
+          서버와 연결 설정 중...
+        </Typography>
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ width: '100%', mb: 2 }}>
@@ -306,10 +393,12 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {loading ? renderSkeletons() : (
+                {loading ? (
+                  renderSkeletons()
+                ) : Array.isArray(cves) && cves.length > 0 ? (
                   cves.map((cve) => (
                     <TableRow
-                      key={cve.cveId}
+                      key={cve.Id || cve.cveId}
                       sx={{ 
                         '&:last-child td, &:last-child th': { border: 0 },
                         '&:hover': { bgcolor: 'action.hover' },
@@ -330,7 +419,7 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
                       <TableCell>{cve.title || '제목 없음'}</TableCell>
                       <TableCell>
                         <Chip
-                          label={cve.status}
+                          label={cve.status || '상태 없음'}
                           color={STATUS_COLORS[cve.status] || 'default'}
                           size="small"
                           sx={{ 
@@ -345,7 +434,7 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
                             <IconButton
                               size="medium"
                               onClick={(e) => {
-                                e.stopPropagation();
+                                e.stopPropagation();  // 이벤트 전파 중단
                                 handleCVEClick(cve);
                               }}
                               sx={{ 
@@ -364,7 +453,7 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
                           <Tooltip title="삭제">
                             <IconButton
                               size="medium"
-                              onClick={(e) => handleDeleteClick(e, cve)}
+                              onClick={(e) => handleDeleteClick(e, cve)}  // 이벤트 객체 전달
                               sx={{ 
                                 width: 36,
                                 height: 36,
@@ -382,8 +471,7 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
                       </TableCell>
                     </TableRow>
                   ))
-                )}
-                {!loading && cves.length === 0 && (
+                ) : (
                   <TableRow>
                     <TableCell colSpan={4} align="center" sx={{ py: 8 }}>
                       <Typography variant="body1" color="text.secondary">
@@ -402,8 +490,8 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
             count={totalCount}
             rowsPerPage={rowsPerPage}
             page={page}
-            onPageChange={handleChangePage}
-            onRowsPerPageChange={handleChangeRowsPerPage}
+            onPageChange={handlePageChange}
+            onRowsPerPageChange={handleRowsPerPageChange}
             sx={{
               borderTop: '1px solid',
               borderColor: 'divider'
@@ -412,10 +500,10 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
         </CardContent>
       </Card>
 
-      {selectedCVE && (
+      {detailOpen && selectedCVE && (
         <CVEDetail
-          open={!!selectedCVE}
-          onClose={handleCloseDetail}
+          open={detailOpen}
+          onClose={handleDetailClose}
           cveId={selectedCVE.cveId}
         />
       )}
@@ -440,7 +528,12 @@ const CVEList = ({ selectedCVE, setSelectedCVE }) => {
         </DialogContent>
         <DialogActions>
           <Button onClick={handleDeleteCancel}>취소</Button>
-          <Button onClick={handleDeleteConfirm} color="error" variant="contained">
+          <Button 
+            onClick={handleDeleteConfirm} 
+            color="error" 
+            variant="contained"
+            disabled={!cveToDelete}
+          >
             삭제
           </Button>
         </DialogActions>

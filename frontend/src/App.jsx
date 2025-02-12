@@ -13,8 +13,8 @@ import PrivateRoute from './features/auth/PrivateRoute';
 import AuthRoute from './features/auth/AuthRoute';
 import { AuthProvider } from './contexts/AuthContext';
 import CVEDetail from './features/cve/CVEDetail';
-import { addNotificationAsync } from './store/notificationSlice';
-import { store } from './store';
+import { addNotificationAsync } from './store/slices/notificationSlice';
+import { store, persistor } from './store';
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
 import { Provider } from 'react-redux';
 import { SnackbarProvider } from 'notistack';
@@ -23,8 +23,10 @@ import CssBaseline from '@mui/material/CssBaseline';
 import theme from './theme';
 import { injectStore, injectErrorHandler } from './utils/auth';
 import { ErrorProvider, useError } from './contexts/ErrorContext';
+import { ToastContainer } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 
-const MainLayout = ({ children }) => {
+const MainLayout = React.memo(({ children }) => {
   const [selectedCVE, setSelectedCVE] = useState(null);
   const [snackbar, setSnackbar] = useState({
     open: false,
@@ -33,35 +35,15 @@ const MainLayout = ({ children }) => {
   });
   const dispatch = useDispatch();
   const { user } = useSelector((state) => state.auth);
-  const { isConnected, lastMessage } = useWebSocketContext();
-
-  // 웹소켓 메시지 처리
-  useEffect(() => {
-    if (lastMessage?.type === 'notification') {
-      // notification과 unreadCount를 함께 전달
-      dispatch(addNotificationAsync({
-        notification: lastMessage.data.notification,
-        unreadCount: lastMessage.data.unreadCount
-      }));
-
-      // 토스트 메시지 표시
-      if (lastMessage.data.toast) {
-        setSnackbar({
-          open: true,
-          message: lastMessage.data.toast.message,
-          severity: lastMessage.data.toast.severity
-        });
-      }
-    }
-  }, [lastMessage, dispatch]);
+  const { isConnected } = useWebSocketContext();
 
   const handleSnackbarClose = useCallback(() => {
     setSnackbar(prev => ({ ...prev, open: false }));
   }, []);
 
-  const handleOpenCVEDetail = (cveId, commentId) => {
+  const handleOpenCVEDetail = useCallback((cveId, commentId) => {
     setSelectedCVE(cveId);
-  };
+  }, []);
 
   return (
     <Box sx={{ display: 'flex' }}>
@@ -94,7 +76,7 @@ const MainLayout = ({ children }) => {
       </Snackbar>
     </Box>
   );
-};
+});
 
 const AuthLayout = ({ children }) => (
   <Box
@@ -192,10 +174,22 @@ const App = () => {
     injectStore(store);
   }, []);
 
+  const [selectedCVE, setSelectedCVE] = useState(null);
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+
   return (
     <Provider store={store}>
       <ThemeProvider theme={theme}>
-        <SnackbarProvider maxSnack={3}>
+        <SnackbarProvider
+          maxSnack={3}
+          anchorOrigin={{
+            vertical: 'bottom',
+            horizontal: 'center'
+          }}
+          style={{
+            marginBottom: '20px'
+          }}
+        >
           <AuthProvider>
             <WebSocketProvider>
               <Router>
@@ -209,6 +203,25 @@ const App = () => {
             </WebSocketProvider>
           </AuthProvider>
         </SnackbarProvider>
+        <ToastContainer
+          position="bottom-center"
+          autoClose={3000}
+          hideProgressBar={false}
+          newestOnTop={false}
+          closeOnClick
+          rtl={false}
+          pauseOnFocusLoss
+          draggable
+          pauseOnHover
+          theme="colored"
+        />
+        {selectedCVE && (
+          <CVEDetail 
+            cveId={selectedCVE}
+            open={true}
+            onClose={() => setSelectedCVE(null)}
+          />
+        )}
       </ThemeProvider>
     </Provider>
   );

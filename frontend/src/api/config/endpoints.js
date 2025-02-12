@@ -9,13 +9,14 @@ export const AUTH = {
 
 // CVE endpoints
 export const CVE = {
-  BASE: '/cve',
-  DETAIL: (id) => `/cve/${id}`,
-  SEARCH: '/cve/search',
-  COMMENTS: (id) => `/cve/${id}/comments`,
-  COMMENT: (cveId, commentId) => `/cve/${cveId}/comments/${commentId}`,
-  POC: (id) => `/cve/${id}/poc`,
-  SNORT_RULE: (id) => `/cve/${id}/snort-rule`,
+  BASE: '/cves',
+  DETAIL: (id) => `/cves/${id}`,
+  SEARCH: '/cves/search',
+  COMMENTS: (id) => `/cves/${id}/comments`,
+  COMMENT: (cveId, commentId) => `/cves/${cveId}/comments/${commentId}`,
+  POC: (id) => `/cves/${id}/pocs`,
+  SNORT_RULE: (id) => `/cves/${id}/snort-rules`,
+  LOCK: (id) => `/cves/${id}/lock`
 };
 
 // Notification endpoints
@@ -34,6 +35,18 @@ export const CRAWLER = {
 
 // WebSocket endpoints
 export const WEBSOCKET = {
-  CONNECT: (token, sessionId) => 
-    `/ws?token=${encodeURIComponent(token)}&session_id=${sessionId}`,
+  CONNECT: (token) => {
+    // 기본 WebSocket URL 설정
+    const wsUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:8000';
+    // URL 끝에 슬래시가 있는지 확인하고 적절히 처리
+    const baseUrl = wsUrl.endsWith('/') ? wsUrl.slice(0, -1) : wsUrl;
+    // 최종 WebSocket URL 구성
+    return `${baseUrl}/ws?token=${encodeURIComponent(token)}`;
+  }
+};
+
+// User endpoints
+export const USER = {
+  SEARCH: '/user/search',
+  // ... other user endpoints
 }; 

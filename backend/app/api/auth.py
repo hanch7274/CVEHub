@@ -7,7 +7,7 @@ from passlib.context import CryptContext
 from ..models.user import User, UserCreate, UserInDB, Token, TokenData, UserResponse
 from ..services.user import UserService
 from ..core.dependencies import get_user_service
-from ..core.config.auth import get_auth_settings
+from ..core.config import get_settings
 from ..core.auth import (
     create_access_token,
     create_refresh_token,
@@ -19,7 +19,7 @@ from beanie import PydanticObjectId
 import logging
 
 router = APIRouter()
-auth_settings = get_auth_settings()
+settings = get_settings()
 logger = logging.getLogger(__name__)
 
 # 비밀번호 해싱을 위한 컨텍스트
@@ -57,8 +57,8 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     })
     encoded_jwt = jwt.encode(
         to_encode,
-        auth_settings.SECRET_KEY,
-        algorithm=auth_settings.ALGORITHM
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM
     )
     return encoded_jwt
 
@@ -72,8 +72,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     try:
         payload = jwt.decode(
             token,
-            auth_settings.SECRET_KEY,
-            algorithms=[auth_settings.ALGORITHM]
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM]
         )
         email: str = payload.get("email")
         if email is None:

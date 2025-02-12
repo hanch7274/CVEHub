@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box } from '@mui/material';
+import PropTypes from 'prop-types';
 
 const TabPanel = ({ children, value, index, ...other }) => {
   if (value !== index) return null;  // 선택되지 않은 탭은 렌더링하지 않음
@@ -33,6 +34,12 @@ const TabPanel = ({ children, value, index, ...other }) => {
       </Box>
     </Box>
   );
+};
+
+TabPanel.propTypes = {
+  children: PropTypes.node,
+  index: PropTypes.number.isRequired,
+  value: PropTypes.number.isRequired
 };
 
 export default TabPanel;

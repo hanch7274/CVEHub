@@ -15,14 +15,26 @@ import { useTheme } from '@mui/material/styles';
 import LogoutIcon from '@mui/icons-material/Logout';
 import SettingsIcon from '@mui/icons-material/Settings';
 import PersonIcon from '@mui/icons-material/Person';
+import SignalWifiStatusbar4BarIcon from '@mui/icons-material/SignalWifiStatusbar4Bar';
+import SignalWifiConnectedNoInternet4Icon from '@mui/icons-material/SignalWifiConnectedNoInternet4';
 import { useAuth } from '../contexts/AuthContext';
 import { getAnimalEmoji } from '../utils/avatarUtils';
 import NotificationBell from '../features/notification/NotificationBell';
+import { useWebSocketContext } from '../contexts/WebSocketContext';
+import { useDispatch } from 'react-redux';
+import { logout } from '../store/slices/authSlice';
+import WebSocketService from '../services/websocket';
+import { useSnackbar } from 'notistack';
+import { useNavigate } from 'react-router-dom';
 
 const Header = ({ onOpenCVEDetail }) => {
   const theme = useTheme();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
+  const { isConnected, isReady } = useWebSocketContext();
   const [anchorEl, setAnchorEl] = useState(null);
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
+  const { enqueueSnackbar } = useSnackbar();
 
   const handleMenu = (event) => {
     setAnchorEl(event.currentTarget);
@@ -32,9 +44,39 @@ const Header = ({ onOpenCVEDetail }) => {
     setAnchorEl(null);
   };
 
-  const handleLogout = () => {
-    handleClose();
-    logout();
+  const handleLogout = async () => {
+    try {
+      handleClose();
+      
+      // 1. 로그아웃 API 호출 (가장 먼저 수행)
+      console.log('[Logout] 1. Calling logout API...');
+      try {
+        await dispatch(logout()).unwrap();
+      } catch (logoutError) {
+        console.warn('[Logout] API call failed:', logoutError);
+      }
+      
+      // 2. 웹소켓 연결 종료
+      console.log('[Logout] 2. Disconnecting WebSocket...');
+      WebSocketService.disconnect();
+      
+      // 3. 리덕스 스토어 초기화
+      console.log('[Logout] 3. Resetting Redux Store...');
+      dispatch({ type: 'RESET_STORE' });
+      
+      // 4. 로컬 스토리지 완전 정리 (마지막에 수행)
+      console.log('[Logout] 4. Clearing localStorage...');
+      localStorage.clear();
+      
+      // 5. 페이지 이동 (즉시 수행)
+      console.log('[Logout] 5. Navigating to login page...');
+      navigate('/login', { replace: true });
+    } catch (error) {
+      console.error('[Logout] Final error:', error);
+      // 에러가 발생해도 로컬 스토리지 정리 및 페이지 이동
+      localStorage.clear();
+      navigate('/login', { replace: true });
+    }
   };
 
   const handleNotificationClick = (cveId, commentId) => {
@@ -45,6 +87,30 @@ const Header = ({ onOpenCVEDetail }) => {
 
   // 이메일이 없는 경우 기본 아바타 사용
   const animalEmoji = user?.email ? getAnimalEmoji(user.email) : '👤';
+
+  // 웹소켓 연결 상태 표시 아이콘
+  const renderConnectionStatus = () => {
+    if (!user) return null;  // 로그인하지 않은 경우 표시하지 않음
+
+    return (
+      <Tooltip title={isConnected ? "서버와 연결됨" : "서버와 연결 끊김"}>
+        <IconButton size="small" sx={{ ml: 2 }}>
+          {isConnected ? (
+            <SignalWifiStatusbar4BarIcon 
+              sx={{ 
+                color: theme.palette.success.main,
+                animation: isReady ? 'none' : 'pulse 1.5s infinite'
+              }} 
+            />
+          ) : (
+            <SignalWifiConnectedNoInternet4Icon 
+              sx={{ color: theme.palette.error.main }} 
+            />
+          )}
+        </IconButton>
+      </Tooltip>
+    );
+  };
 
   return (
     <AppBar 
@@ -69,45 +135,17 @@ const Header = ({ onOpenCVEDetail }) => {
 
         <Box sx={{ flexGrow: 1 }} />
 
-        {/* 알림 벨 컴포넌트 */}
-        {user && (
-          <NotificationBell onNotificationClick={handleNotificationClick} />
-        )}
-
-        {/* 사용자 메뉴 */}
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
-          <Typography 
-            variant="body1" 
-            sx={{ 
-              mr: 1,
-              color: theme.palette.text.primary,
-              fontWeight: 500
-            }}
+          {renderConnectionStatus()}
+          <NotificationBell onNotificationClick={handleNotificationClick} />
+          <IconButton
+            onClick={handleMenu}
+            sx={{ ml: 2 }}
           >
-            {user?.username || 'Guest'}
-          </Typography>
-          <Tooltip title="계정 메뉴">
-            <IconButton
-              onClick={handleMenu}
-              size="small"
-              sx={{ 
-                ml: 1,
-                bgcolor: 'action.hover',
-                '&:hover': { bgcolor: 'action.selected' }
-              }}
-            >
-              <Avatar 
-                sx={{ 
-                  width: 32, 
-                  height: 32,
-                  bgcolor: 'primary.light',
-                  fontSize: '1.2rem'
-                }}
-              >
-                {animalEmoji}
-              </Avatar>
-            </IconButton>
-          </Tooltip>
+            <Avatar sx={{ bgcolor: 'primary.main' }}>
+              {animalEmoji}
+            </Avatar>
+          </IconButton>
         </Box>
 
         <Menu

@@ -51,6 +51,7 @@ const InlineEditText = ({ value, onSave, placeholder, multiline = false, disable
       sx={{
         position: 'relative',
         cursor: disabled ? 'default' : 'pointer',
+        width: '100%',
         '&:hover': !disabled && {
           '& .edit-icon': {
             opacity: 1
@@ -65,10 +66,7 @@ const InlineEditText = ({ value, onSave, placeholder, multiline = false, disable
           fullWidth
           multiline={multiline}
           value={editedValue}
-          onChange={(e) => {
-            console.log('TextField value changing:', e.target.value);
-            setEditedValue(e.target.value);
-          }}
+          onChange={(e) => setEditedValue(e.target.value)}
           onBlur={handleBlur}
           onKeyPress={handleKeyPress}
           autoFocus
@@ -85,7 +83,8 @@ const InlineEditText = ({ value, onSave, placeholder, multiline = false, disable
             '& .MuiInputBase-root': {
               padding: '4px 8px',
               bgcolor: 'background.paper',
-              borderRadius: 1
+              borderRadius: 1,
+              width: '100%'
             }
           }}
         />
@@ -96,14 +95,16 @@ const InlineEditText = ({ value, onSave, placeholder, multiline = false, disable
             alignItems: 'flex-start', 
             gap: 1,
             p: '4px 8px',
-            minHeight: '32px'
+            minHeight: '32px',
+            width: '100%'
           }}
         >
           <Typography
             sx={{
               flex: 1,
               minHeight: multiline ? '3em' : 'auto',
-              whiteSpace: multiline ? 'pre-wrap' : 'normal'
+              whiteSpace: multiline ? 'pre-wrap' : 'normal',
+              wordBreak: 'break-word'
             }}
           >
             {value || placeholder}

@@ -4,6 +4,7 @@ from ..models.notification import Notification, NotificationCreate
 from ..models.user import User
 from ..api.auth import get_current_user
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import logging
 from beanie import PydanticObjectId
 from ..core.websocket import manager
@@ -89,7 +90,7 @@ async def get_unread_count(
     current_user: User = Depends(get_current_user),
     notification_service: NotificationService = Depends(get_notification_service)
 ):
-    """읽지 않은 알림의 개수를 조회합니다."""
+    """현재 로그인한 사용자의 읽지 않은 알림 개수를 조회합니다."""
     try:
         count = await notification_service.get_unread_count(current_user.id)
         return {"count": count}

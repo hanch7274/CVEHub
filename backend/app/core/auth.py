@@ -6,20 +6,18 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi.security import OAuth2PasswordBearer
-from .config.auth import get_auth_settings
+from .config import get_settings
 import logging
 import secrets
 
 logger = logging.getLogger(__name__)
-
-# 설정 초기화
-auth_settings = get_auth_settings()
+settings = get_settings()
 
 # 비밀번호 해싱을 위한 context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # OAuth2 토큰 검증을 위한 객체
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl=auth_settings.TOKEN_URL)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """비밀번호 검증"""
@@ -35,12 +33,12 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
-        expire = datetime.utcnow() + auth_settings.ACCESS_TOKEN_EXPIRE_DELTA
+        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire, "type": "access"})
     encoded_jwt = jwt.encode(
         to_encode,
-        auth_settings.SECRET_KEY,
-        algorithm=auth_settings.ALGORITHM
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM
     )
     return encoded_jwt
 
@@ -49,7 +47,7 @@ async def create_refresh_token(user_id: str) -> Tuple[str, datetime]:
     logger.debug("=== Create Refresh Token Debug ===")
     logger.debug(f"Creating refresh token for user_id: {user_id}")
     
-    expires_at = datetime.utcnow() + auth_settings.REFRESH_TOKEN_EXPIRE_DELTA
+    expires_at = datetime.utcnow() + settings.REFRESH_TOKEN_EXPIRE_DELTA
     token = secrets.token_urlsafe(32)
     
     refresh_token = RefreshToken(
@@ -110,8 +108,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     try:
         payload = jwt.decode(
             token,
-            auth_settings.SECRET_KEY,
-            algorithms=[auth_settings.ALGORITHM]
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM]
         )
         email: str = payload.get("email")
         token_type: str = payload.get("type")
@@ -136,3 +134,26 @@ async def get_current_admin_user(current_user: User = Depends(get_current_user))
             detail="The user doesn't have enough privileges"
         )
     return current_user
+
+async def verify_token(token: str) -> Optional[User]:
+    """토큰을 검증하고 사용자 정보를 반환합니다."""
+    try:
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM]
+        )
+        email: str = payload.get("email")
+        if email is None:
+            logger.error("토큰에 email 필드가 없습니다.")
+            return None
+            
+        user = await User.find_one({"email": email})
+        if not user:
+            logger.error(f"사용자를 찾을 수 없습니다: {email}")
+            return None
+            
+        return user
+    except JWTError as e:
+        logger.error(f"토큰 검증 중 오류: {str(e)}")
+        return None

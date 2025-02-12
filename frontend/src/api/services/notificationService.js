@@ -27,10 +27,10 @@ export const notificationService = {
   },
 
   // WebSocket 연결 URL 생성
-  getWebSocketUrl: (userId, token, sessionId) => {
+  getWebSocketUrl: (userId, token) => {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsHost = process.env.REACT_APP_API_URL || `${window.location.protocol}//${window.location.hostname}:8000`;
     const cleanHost = wsHost.replace(/^https?:\/\//, '');
-    return `${wsProtocol}//${cleanHost}${WEBSOCKET.CONNECT(userId, token, sessionId)}`;
+    return `${wsProtocol}//${cleanHost}${WEBSOCKET.CONNECT(userId, token)}`;
   },
 }; 

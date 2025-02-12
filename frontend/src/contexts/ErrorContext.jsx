@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
-import { logout } from '../store/authSlice';
+import { logout } from '../store/slices/authSlice';
 import { clearAuthStorage } from '../utils/storage/tokenStorage';
 
 const ErrorContext = createContext(null);
