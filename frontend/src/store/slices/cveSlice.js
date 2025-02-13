@@ -241,14 +241,17 @@ export const cveSlice = createSlice({
       // 업데이트
       .addCase(updateCVEDetail.fulfilled, (state, action) => {
         if (action.payload) {
-          // 상태 업데이트를 더 안전하게 처리
           const updatedCVE = action.payload;
-          state.detail.item = updatedCVE;
+          // currentCVE 업데이트 추가
           state.currentCVE = updatedCVE;
+          state.detail = {
+            ...state.detail,
+            item: updatedCVE
+          };
           if (updatedCVE.cveId) {
             state.byId[updatedCVE.cveId] = updatedCVE;
             
-            // list.items 업데이트도 추가
+            // list.items 업데이트
             const index = state.list.items.findIndex(cve => cve.cveId === updatedCVE.cveId);
             if (index !== -1) {
               state.list.items[index] = updatedCVE;

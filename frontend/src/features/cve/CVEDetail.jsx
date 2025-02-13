@@ -477,26 +477,34 @@ const CVEDetail = ({
 
   const handleStatusChange = async (newStatus) => {
     try {
-      setLoading(true);
-      const response = await cveService.updateCVE(cveId, {
-        status: newStatus
-      });
+        setLoading(true);
+        const response = await cveService.updateCVE(cveId, {
+            status: newStatus
+        });
 
-      if (response) {
-        await sendCustomMessage(
-          WS_EVENT_TYPE.CVE_UPDATED,  // POC_ADDED 대신 CVE_UPDATED 사용
-          {
-            cveId,
-            cve: response.data
-          }
-        );
-        enqueueSnackbar('상태가 업데이트되었습니다.', { variant: 'success' });
-      }
+        if (response) {
+            // 1. Redux store 업데이트
+            await dispatch(updateCVEDetail(response.data));
+            
+            // 2. 최신 데이터 다시 가져오기
+            await dispatch(fetchCVEDetail(cveId));
+
+            // 3. WebSocket 메시지 전송
+            await sendCustomMessage(
+                WS_EVENT_TYPE.CVE_UPDATED,
+                {
+                    cveId,
+                    cve: response.data
+                }
+            );
+            
+            enqueueSnackbar('상태가 업데이트되었습니다.', { variant: 'success' });
+        }
     } catch (error) {
-      console.error('Failed to update status:', error);
-      enqueueSnackbar(error.message || '상태 업데이트 중 오류가 발생했습니다.', { variant: 'error' });
+        console.error('Failed to update status:', error);
+        enqueueSnackbar(error.message || '상태 업데이트 중 오류가 발생했습니다.', { variant: 'error' });
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
   };
 
@@ -582,32 +590,11 @@ const CVEDetail = ({
     if (lastMessage?.data?.cveId === cveId) {
       const { type, data } = lastMessage;
       switch (type) {
-        case WS_EVENT_TYPE.POC_ADDED:
-        case WS_EVENT_TYPE.POC_DELETED:
-        case WS_EVENT_TYPE.POC_UPDATED:
+        case WS_EVENT_TYPE.CVE_UPDATED:
           setTabCounts(prev => ({ ...prev, poc: data.count }));
-          console.log(`Tab poc count updated to:`, data.count);
-          break;
-        case WS_EVENT_TYPE.SNORT_RULE_ADDED:
-        case WS_EVENT_TYPE.SNORT_RULE_DELETED:
-        case WS_EVENT_TYPE.SNORT_RULE_UPDATED:
           setTabCounts(prev => ({ ...prev, snortRules: data.count }));
-          console.log(`Tab snortRules count updated to:`, data.count);
-          break;
-        case WS_EVENT_TYPE.REFERENCE_ADDED:
-        case WS_EVENT_TYPE.REFERENCE_DELETED:
-        case WS_EVENT_TYPE.REFERENCE_UPDATED:
           setTabCounts(prev => ({ ...prev, references: data.count }));
-          console.log(`Tab references count updated to:`, data.count);
-          break;
-        case WS_EVENT_TYPE.COMMENT_ADDED:
-        case WS_EVENT_TYPE.COMMENT_DELETED:
-        case WS_EVENT_TYPE.COMMENT_UPDATED:
           setTabCounts(prev => ({ ...prev, comments: data.count }));
-          console.log(`Tab comments count updated to:`, data.count);
-          break;
-        default:
-          break;
       }
     }
   }, [lastMessage, cveId]);
@@ -685,6 +672,18 @@ const CVEDetail = ({
         throw error;
     }
   };
+
+  // 디버깅을 위한 useEffect 수정
+  useEffect(() => {
+    if (cve) {
+        console.log('=== CVE Detail Debug ===');
+        console.log('CVE Detail (Status):', {
+            cveId: cve.cveId,
+            currentStatus: cve.status,
+            timestamp: new Date().toISOString()
+        });
+    }
+  }, [cve?.status]); // status 변경에만 반응하도록 의존성 수정
 
   // 로딩 중이거나 에러 상태일 때 처리
   if (loading) {
@@ -817,8 +816,8 @@ const CVEDetail = ({
                     <Box sx={{ 
                       display: 'grid',
                       gridTemplateColumns: 'repeat(2, 1fr)',
-                      gap: 1.5,  // 간격 약간 증가
-                      maxHeight: '180px'  // 높이 약간 증가
+                      gap: 1.5,
+                      maxHeight: '180px'
                     }}>
                       {Object.entries(STATUS_OPTIONS).map(([value, { label, description }]) => (
                         <Paper

@@ -15,14 +15,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 class WSMessageType(str, Enum):
+    # 시스템 관련
     CONNECTED = "connected"
     CONNECT_ACK = "connect_ack"
     PING = "ping"
     PONG = "pong"
     ERROR = "error"
+
+    # 알림 관련
     NOTIFICATION = "notification"
-    NOTIFICATION_READ = 'notification_read'
-    ALL_NOTIFICATIONS_READ = 'all_notifications_read'
+    NOTIFICATION_READ = "notification_read"
+    ALL_NOTIFICATIONS_READ = "all_notifications_read"
+
+    # CVE 관련
     CVE_CREATED = "cve_created"
     CVE_UPDATED = "cve_updated"
     CVE_DELETED = "cve_deleted"

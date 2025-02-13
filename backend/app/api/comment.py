@@ -18,7 +18,8 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from ..api.notification import create_notification
 from ..models.notification import Notification
-
+from ..services.notification import NotificationService
+from ..core.dependencies import get_notification_service
 # 로거 설정
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,8 @@ async def send_comment_update(cve_id: str):
 async def create_comment(
     cve_id: str,
     comment_data: CommentCreate,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    notification_service: NotificationService = Depends(get_notification_service)
 ):
     """댓글 생성 API"""
     logger.info("=== 댓글 생성 요청 ===")
@@ -239,41 +241,21 @@ async def create_comment(
         cve.comments.append(new_comment)
         await cve.save()
 
-        # 멘션 처리 로직 개선
+        # 멘션된 사용자들에게 알림 생성
         if comment_data.mentions:
-            mentioned_users = []
             for username in comment_data.mentions:
-                # 자기 자신을 멘션한 경우 제외
-                if username == current_user.username:
-                    continue
-
-                mentioned_user = await User.find_one({"username": username})
-                if mentioned_user:
-                    mentioned_users.append(mentioned_user)
-                    # 알림 생성
-                    notification = await Notification(
-                        recipient_id=mentioned_user.id,
-                        sender_id=current_user.id,
-                        sender_username=current_user.username,
-                        cve_id=cve_id,
-                        comment_id=new_comment.id,
-                        comment_content=new_comment.content,
-                        content=f"{current_user.username}님이 댓글에서 회원님을 언급했습니다.",
-                        type="mention"
-                    ).create()
-
-                    # WebSocket을 통한 실시간 알림
-                    if notification:
-                        notification_data = {
-                            "type": "notification",
-                            "data": {
-                                "notification": notification.dict(),
-                                "unreadCount": await Notification.count_unread(str(mentioned_user.id))
-                            }
-                        }
-                        await manager.send_personal_message(
-                            notification_data,
-                            str(mentioned_user.id)
+                if username != current_user.username:
+                    mentioned_user = await User.find_one({"username": username})
+                    if mentioned_user:
+                        await notification_service.create_notification(
+                            recipient_id=mentioned_user.id,
+                            sender_id=current_user.id,
+                            sender_username=current_user.username,
+                            notification_type="mention",
+                            cve_id=cve_id,
+                            comment_id=new_comment.id,
+                            comment_content=comment_data.content,
+                            content=f"{current_user.username}님이 댓글에서 회원님을 언급했습니다."
                         )
 
         # WebSocket을 통해 댓글 업데이트 알림
