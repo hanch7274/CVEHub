@@ -32,6 +32,7 @@ from pydantic import ValidationError
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
+from .core.scheduler import setup_scheduler
 
 # 설정 초기화
 settings = get_settings()
@@ -161,6 +162,10 @@ async def startup_event():
         # CVE 컬렉션 데이터 수 확인
         cve_count = await CVEModel.find().count()
         logger.info(f"Total CVEs in database: {cve_count}")
+        
+        # 스케줄러 시작
+        #scheduler = setup_scheduler()
+        #scheduler.start()
         
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")

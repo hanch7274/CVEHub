@@ -50,21 +50,18 @@ export const WS_CONNECTION_STATE = {
 export class WebSocketService {
     constructor() {
         this.ws = null;
-        this._isConnected = false;  // private 상태
+        this._isConnected = false;
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
         this.messageHandlers = new Set();
         this.connectionHandlers = new Set();
-        this.pingInterval = null;
         this.reconnectTimer = null;
     }
 
-    // 연결 상태 확인 (단일 메서드)
     isConnected() {
         return this.ws?.readyState === WebSocket.OPEN;
     }
 
-    // 메시지 전송 통합
     async sendMessage(message) {
         if (!this.isConnected()) {
             console.warn('[WebSocket] Not connected. Message not sent:', message);
@@ -85,7 +82,7 @@ export class WebSocketService {
         if (this.ws?.readyState === WebSocket.OPEN) {
             const message = {
                 type,
-                data  // data 객체를 직접 전달
+                data
             };
             
             try {
@@ -100,7 +97,6 @@ export class WebSocketService {
         }
     };
 
-    // 구독 전용 메서드도 type, data 분리 방식으로 수정
     async subscribeToCVE(cveId) {
         return this.send('subscribe_cve', { cveId });
     }
@@ -109,59 +105,7 @@ export class WebSocketService {
         return this.send('unsubscribe_cve', { cveId });
     }
 
-    startPingInterval() {
-        if (this.pingInterval) {
-            clearInterval(this.pingInterval);
-        }
-
-        this.pingInterval = setInterval(async () => {
-            if (this.isConnected()) {
-                //console.log('[WebSocket] Sending ping');
-                await this.send('ping', {});
-            }
-        }, 30000);
-    }
-
-    stopPingInterval() {
-        if (this.pingInterval) {
-            clearInterval(this.pingInterval);
-            this.pingInterval = null;
-        }
-    }
-
-    scheduleReconnect() {
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-        }
-
-        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-        this.reconnectTimer = setTimeout(() => {
-            this.reconnectAttempts++;
-            this.connect();
-        }, delay);
-    }
-
-    onMessage(event) {
-        const message = JSON.parse(event.data);
-        // ping/pong이 아닌 경우에만 디버깅
-        if (!['ping', 'pong'].includes(message.type)) {
-            this.messageHandlers.forEach(handler => handler(message));
-        }
-    }
-
-    // 메시지 핸들러 관리 - 통합된 메서드만 유지
-    addHandler(type, handler) {
-        const handlers = type === 'message' ? this.messageHandlers : this.connectionHandlers;
-        handlers.add(handler);
-    }
-
-    removeHandler(type, handler) {
-        const handlers = type === 'message' ? this.messageHandlers : this.connectionHandlers;
-        handlers.delete(handler);
-    }
-
-    // 중복 제거: onmessage 핸들러와 handleMessage 메서드 통합
-    async connect() {
+    connect = async () => {
         if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
             console.log('[WebSocket] Already connected or connecting, readyState:', this.ws.readyState);
             this.updateConnectionState(this.ws.readyState === WebSocket.OPEN);
@@ -171,7 +115,6 @@ export class WebSocketService {
         try {
             let token = getAccessToken();
             
-            // 토큰이 없거나 만료된 경우 갱신 시도
             if (!token) {
                 console.log('[WebSocket] No token found, attempting to refresh');
                 token = await refreshAccessToken();
@@ -197,14 +140,12 @@ export class WebSocketService {
             this.ws.onclose = (event) => {
                 console.log('[WebSocket] Connection closed:', event);
                 this._isConnected = false;
-                this.stopPingInterval();  // 연결 종료 시 ping 중지
                 this.attemptReconnect();
             };
 
             this.ws.onerror = async (error) => {
                 console.error('[WebSocket] Connection error:', error);
                 
-                // 403 에러(토큰 만료)인 경우 토큰 갱신 시도
                 if (error.target?.readyState === WebSocket.CLOSED) {
                     console.log('[WebSocket] Attempting to refresh token and reconnect');
                     try {
@@ -225,18 +166,11 @@ export class WebSocketService {
             console.error('[WebSocket] Connection setup error:', error);
             this.updateConnectionState(false, error);
         }
-    }
+    };
 
-    // 연결 상태 변경 시 일관된 처리
     updateConnectionState(connected, error = null) {
         this._isConnected = connected;
         this.notifyConnectionState(connected, error);
-        
-        if (connected) {
-            this.startPingInterval();
-        } else {
-            this.stopPingInterval();
-        }
     }
 
     notifyConnectionState(connected, error = null) {
@@ -249,7 +183,6 @@ export class WebSocketService {
     }
 
     disconnect() {
-        this.stopPingInterval();
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
@@ -271,6 +204,33 @@ export class WebSocketService {
         if (!this._isConnected && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.scheduleReconnect();
         }
+    }
+
+    scheduleReconnect() {
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+        }
+
+        const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectAttempts++;
+            this.connect();
+        }, delay);
+    }
+
+    onMessage(event) {
+        const message = JSON.parse(event.data);
+        this.messageHandlers.forEach(handler => handler(message));
+    }
+
+    addHandler(type, handler) {
+        const handlers = type === 'message' ? this.messageHandlers : this.connectionHandlers;
+        handlers.add(handler);
+    }
+
+    removeHandler(type, handler) {
+        const handlers = type === 'message' ? this.messageHandlers : this.connectionHandlers;
+        handlers.delete(handler);
     }
 }
 

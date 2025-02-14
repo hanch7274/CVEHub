@@ -50,9 +50,9 @@ class ConnectionManager:
         self.ping_timers: Dict[str, Dict[WebSocket, asyncio.Task]] = {}
         
         # 타임아웃 설정
-        self.KEEP_ALIVE_TIMEOUT = 60
-        self.PING_INTERVAL = 30
-        self.PONG_TIMEOUT = 10
+        self.KEEP_ALIVE_TIMEOUT = 120  # 2분으로 증가
+        self.PING_INTERVAL = 45  # 45초로 증가
+        self.PONG_TIMEOUT = 15  # 15초로 증가
         self.cleanup_lock = asyncio.Lock()
 
         # 구독자 관리 - cve_id: Set[user_id]
@@ -148,20 +148,21 @@ class ConnectionManager:
             current_time = datetime.now(ZoneInfo("Asia/Seoul"))
             self.last_activity[user_id][websocket] = current_time
             
-            # 메시지 파싱
+            # ping/pong 메시지 처리 개선
             message_type = message.get("type")
-            message_data = message.get("data", {})
-
-            # ping/pong 메시지는 조용히 처리하고 즉시 리턴
-            if message_type == "ping":  # WSMessageType.PING 대신 문자열 직접 비교
-                await websocket.send_json({
-                    "type": "pong",  # WSMessageType.PONG 대신 문자열 사용
+            if message_type == WSMessageType.PING:
+                await self.send_json(websocket, {
+                    "type": WSMessageType.PONG,
                     "timestamp": current_time.strftime('%Y-%m-%d %H:%M:%S')
                 })
+                self.last_activity[user_id][websocket] = current_time
                 return
-            
-            if message_type == "pong":  # WSMessageType.PONG 대신 문자열 직접 비교
+            elif message_type == WSMessageType.PONG:
+                self.last_activity[user_id][websocket] = current_time
                 return
+
+            # 메시지 파싱
+            message_data = message.get("data", {})
 
             # ping/pong이 아닌 메시지만 로깅 및 처리
             if message_type not in ["ping", "pong"]:  # WSMessageType 대신 문자열 리스트 사용
@@ -210,37 +211,42 @@ class ConnectionManager:
             await self.disconnect(user_id, websocket)
 
     async def start_ping_timer(self, user_id: str, websocket: WebSocket):
+        """주기적으로 ping을 보내고 pong 응답을 체크"""
         try:
             while True:
                 await asyncio.sleep(self.PING_INTERVAL)
-                if user_id in self.active_connections:
-                    try:
-                        await websocket.send_json({
-                            "type": WSMessageType.PING,
-                            "timestamp": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S')
-                        })
-                        
-                        # pong 응답 대기
-                        pong_wait_start = datetime.now(ZoneInfo("Asia/Seoul"))
-                        while (datetime.now(ZoneInfo("Asia/Seoul")) - pong_wait_start).total_seconds() < self.PONG_TIMEOUT:
-                            if websocket in self.last_activity[user_id] and \
-                               (datetime.now(ZoneInfo("Asia/Seoul")) - self.last_activity[user_id][websocket]).total_seconds() < self.PONG_TIMEOUT:
+                if user_id not in self.active_connections:
+                    break
+
+                try:
+                    # ping 메시지 전송
+                    ping_time = datetime.now(ZoneInfo("Asia/Seoul"))
+                    await websocket.send_json({
+                        "type": WSMessageType.PING,
+                        "timestamp": ping_time.strftime('%Y-%m-%d %H:%M:%S')
+                    })
+                    
+                    # pong 응답 대기
+                    pong_received = False
+                    for _ in range(self.PONG_TIMEOUT):
+                        if websocket in self.last_activity[user_id]:
+                            last_activity = self.last_activity[user_id][websocket]
+                            if last_activity > ping_time:
+                                pong_received = True
                                 break
-                            await asyncio.sleep(1)
-                        
-                        if websocket in self.last_activity[user_id] and \
-                           (datetime.now(ZoneInfo("Asia/Seoul")) - self.last_activity[user_id][websocket]).total_seconds() >= self.PONG_TIMEOUT:
-                            logger.warning(f"No pong response from user {user_id}")
-                            await self.handle_connection_error(user_id, websocket)
-                            break
-                            
-                    except Exception as e:
-                        logger.error(f"Error in ping timer for user {user_id}: {str(e)}")
+                        await asyncio.sleep(1)
+                    
+                    if not pong_received:
+                        logger.warning(f"No pong response from user {user_id} - Closing connection")
                         await self.handle_connection_error(user_id, websocket)
                         break
-                else:
+
+                except Exception as e:
+                    if "close message has been sent" not in str(e):
+                        logger.error(f"Error in ping timer for user {user_id}: {str(e)}")
+                    await self.handle_connection_error(user_id, websocket)
                     break
-                    
+
         except Exception as e:
             logger.error(f"Error in ping timer for user {user_id}: {str(e)}")
 

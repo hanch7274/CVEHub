@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { TextField, Typography, Box } from '@mui/material';
 import { Edit as EditIcon } from '@mui/icons-material';
 
-const InlineEditText = ({ value, onSave, placeholder, multiline = false, disabled = false }) => {
+const InlineEditText = ({ value, onSave, placeholder, multiline = false, disabled = false, maxHeight, fontSize = 'inherit' }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editedValue, setEditedValue] = useState(value || '');
 
@@ -52,6 +52,7 @@ const InlineEditText = ({ value, onSave, placeholder, multiline = false, disable
         position: 'relative',
         cursor: disabled ? 'default' : 'pointer',
         width: '100%',
+        height: '100%',
         '&:hover': !disabled && {
           '& .edit-icon': {
             opacity: 1
@@ -73,7 +74,7 @@ const InlineEditText = ({ value, onSave, placeholder, multiline = false, disable
           variant="standard"
           InputProps={{
             sx: {
-              fontSize: 'inherit',
+              fontSize: fontSize,
               '&:before, &:after': {
                 display: 'none'
               }
@@ -84,7 +85,9 @@ const InlineEditText = ({ value, onSave, placeholder, multiline = false, disable
               padding: '4px 8px',
               bgcolor: 'background.paper',
               borderRadius: 1,
-              width: '100%'
+              width: '100%',
+              height: '100%',
+              overflow: 'auto'
             }
           }}
         />
@@ -95,14 +98,14 @@ const InlineEditText = ({ value, onSave, placeholder, multiline = false, disable
             alignItems: 'flex-start', 
             gap: 1,
             p: '4px 8px',
-            minHeight: '32px',
-            width: '100%'
+            height: '100%',
+            overflow: 'auto'
           }}
         >
           <Typography
             sx={{
               flex: 1,
-              minHeight: multiline ? '3em' : 'auto',
+              fontSize: fontSize,
               whiteSpace: multiline ? 'pre-wrap' : 'normal',
               wordBreak: 'break-word'
             }}
@@ -117,7 +120,8 @@ const InlineEditText = ({ value, onSave, placeholder, multiline = false, disable
                 opacity: 0,
                 transition: 'opacity 0.2s',
                 color: 'text.secondary',
-                mt: 0.5
+                mt: 0.5,
+                flexShrink: 0
               }}
             />
           )}

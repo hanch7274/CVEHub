@@ -164,13 +164,24 @@ const MentionInput = React.memo(({ value, onChange, onSubmit, placeholder, loadi
           multiline
           fullWidth
           placeholder={placeholder}
+          minRows={2}
+          sx={{ 
+            '& .MuiInputBase-root': { 
+              minHeight: '80px'
+            } 
+          }}
         />
-        <Button 
+        <Button
           variant="contained"
           onClick={onSubmit}
           disabled={!value.trim() || loading}
+          sx={{ 
+            minHeight: '80px',
+            alignSelf: 'stretch',
+            width: '80px'
+          }}
         >
-          댓글 작성
+          {loading ? <CircularProgress size={24} /> : '작성'}
         </Button>
       </Box>
       <Popper
@@ -185,7 +196,7 @@ const MentionInput = React.memo(({ value, onChange, onSubmit, placeholder, loadi
           {
             name: 'offset',
             options: {
-              offset: [50, 10],  // [x축, y축] - x축 값을 50px로 증가
+              offset: [200, 10],  // [x축, y축] - x축 값을 50px로 증가
             },
           },
           {

@@ -179,26 +179,18 @@ const statusCardStyle = {
 };
 
 const CVEDetail = ({ 
-  open = false,  // 기본값을 매개변수에 직접 지정
-  onClose = () => {},  // 기본값을 매개변수에 직접 지정
-  cveId = null  // 기본값을 매개변수에 직접 지정
+  open = false,
+  onClose = () => {},
+  cveId = null
 }) => {
   const dispatch = useDispatch();
   const cve = useSelector(selectCVEDetail);
   const currentUser = useSelector(state => state.auth.user);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [tabValue, setTabValue] = useState(0);
   const { enqueueSnackbar } = useSnackbar();
   const { isConnected, lastMessage } = useWebSocketContext();
   const [activeCommentCount, setActiveCommentCount] = useState(0);
-  const [titleEditMode, setTitleEditMode] = useState(false);
-  const [descriptionEditMode, setDescriptionEditMode] = useState(false);
-  const [editedTitle, setEditedTitle] = useState('');
-  const [editedDescription, setEditedDescription] = useState('');
-  const [isEditing, setIsEditing] = useState(false);
-  const [isLocked, setIsLocked] = useState(false);
-  const [lockedBy, setLockedBy] = useState(null);
+  const [tabValue, setTabValue] = useState(0);
 
   // 초기 로드 상태 추적을 위한 ref 추가
   const initialLoadRef = useRef(false);
@@ -380,7 +372,6 @@ const CVEDetail = ({
       
       try {
         setLoading(true);
-        setError(null);
         const result = await dispatch(fetchCVEDetail(cveId)).unwrap();
         
         if (isMounted) {
@@ -395,7 +386,7 @@ const CVEDetail = ({
       } catch (error) {
         if (isMounted) {
           console.error('Error fetching CVE details:', error);
-          setError('CVE 상세 정보를 불러오는데 실패했습니다.');
+          enqueueSnackbar('CVE 상세 정보를 불러오는데 실패했습니다.', { variant: 'error' });
         }
       } finally {
         if (isMounted) {
@@ -409,69 +400,73 @@ const CVEDetail = ({
     return () => {
       isMounted = false;
     };
-  }, [dispatch, cveId, open]);
+  }, [dispatch, cveId, open, enqueueSnackbar]);
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
   };
 
-  const handleTitleChange = (value) => {
-    setEditedTitle(value);
-  };
-
-  const handleDescriptionChange = (value) => {
-    setEditedDescription(value);
-  };
-
-  const handleTitleUpdate = async () => {
+  const handleTitleUpdate = async (newTitle) => {
     try {
-        setIsEditing(true);
-        const response = await cveService.updateCVE(cveId, {
-            title: editedTitle
-        });
+      const response = await cveService.updateCVE(cveId, {
+        title: newTitle
+      });
 
-        if (response) {
-            await sendCustomMessage(
-                WS_EVENT_TYPE.CVE_UPDATED,
-                {
-                    cveId,
-                    cve: response.data
-                }
-            );
-            enqueueSnackbar('제목이 업데이트되었습니다.', { variant: 'success' });
-        }
+      if (response) {
+        // response.data가 아닌 response 자체를 사용
+        dispatch(updateCVEDetail({
+          cveId: cveId,
+          data: response  // response.data 대신 response 사용
+        }));
+
+        // 상세 정보 다시 불러오기
+        await dispatch(fetchCVEDetail(cveId));
+
+        // WebSocket 메시지 전송
+        await sendCustomMessage(
+          WS_EVENT_TYPE.CVE_UPDATED,
+          {
+            cveId,
+            cve: response
+          }
+        );
+        enqueueSnackbar('제목이 업데이트되었습니다.', { variant: 'success' });
+      }
     } catch (error) {
-        console.error('Failed to update title:', error);
-        enqueueSnackbar(error.message || '제목 업데이트 중 오류가 발생했습니다.', { variant: 'error' });
-    } finally {
-        setIsEditing(false);
-        setTitleEditMode(false);
+      console.error('Failed to update title:', error);
+      enqueueSnackbar(error.message || '제목 업데이트 중 오류가 발생했습니다.', { variant: 'error' });
     }
   };
 
-  const handleDescriptionUpdate = async () => {
+  const handleDescriptionUpdate = async (newDescription) => {
     try {
-        setIsEditing(true);
-        const response = await cveService.updateCVE(cveId, {
-            description: editedDescription
-        });
+      const response = await cveService.updateCVE(cveId, {
+        description: newDescription
+      });
 
-        if (response) {
-            await sendCustomMessage(
-                WS_EVENT_TYPE.CVE_UPDATED,
-                {
-                    cveId,
-                    cve: response.data
-                }
-            );
-            enqueueSnackbar('설명이 업데이트되었습니다.', { variant: 'success' });
-        }
+      if (response) {
+        // response.data가 아닌 response 자체를 사용
+        dispatch(updateCVEDetail({
+          cveId: cveId,
+          data: response  // response.data 대신 response 사용
+        }));
+
+        // 상세 정보 다시 불러오기
+        await dispatch(fetchCVEDetail(cveId));
+
+        // WebSocket 메시지 전송
+        await sendCustomMessage(
+          WS_EVENT_TYPE.CVE_UPDATED,
+          {
+            cveId,
+            cve: response
+          }
+        );
+        enqueueSnackbar('설명이 업데이트되었습니다.', { variant: 'success' });
+      }
     } catch (error) {
-        console.error('Failed to update description:', error);
-        enqueueSnackbar(error.message || '설명 업데이트 중 오류가 발생했습니다.', { variant: 'error' });
-    } finally {
-        setIsEditing(false);
-        setDescriptionEditMode(false);
+      console.error('Failed to update description:', error);
+      enqueueSnackbar(error.message || '설명 업데이트 중 오류가 발생했습니다.', { variant: 'error' });
     }
   };
 
@@ -507,65 +502,6 @@ const CVEDetail = ({
         setLoading(false);
     }
   };
-
-  const handleEditClick = async () => {
-    try {
-      await cveService.acquireLock(cveId);
-      setIsEditing(true);
-    } catch (error) {
-      if (error.response?.status === 423) {
-        enqueueSnackbar(error.response.data.detail, { variant: 'error' });
-      } else {
-        enqueueSnackbar('편집 모드 진입에 실패했습니다.', { variant: 'error' });
-      }
-    }
-  };
-
-  const handleSave = async () => {
-    try {
-      const response = await cveService.updateCVE(cveId, {
-        title: editedTitle,
-        description: editedDescription
-      });
-
-      if (response) {
-        await sendCustomMessage(
-          WS_EVENT_TYPE.CVE_UPDATED,
-          {
-            cveId,
-            cve: response.data
-          }
-        );
-        enqueueSnackbar('변경사항이 저장되었습니다.', { variant: 'success' });
-      }
-      
-      await cveService.releaseLock(cveId);
-      setIsEditing(false);
-    } catch (error) {
-      enqueueSnackbar(error.message || '저장에 실패했습니다.', { variant: 'error' });
-    }
-  };
-
-  const handleCancel = async () => {
-    try {
-      await cveService.releaseLock(cveId);
-      setIsEditing(false);
-      setEditedTitle(cve.title);
-      setEditedDescription(cve.description);
-    } catch (error) {
-      enqueueSnackbar('편집 취소에 실패했습니다.', { variant: 'error' });
-    }
-  };
-
-  // 컴포넌트 마운트 시 Lock 상태 확인
-  useEffect(() => {
-    if (!cve) return;
-    
-    if (cve.is_locked && cve.locked_by !== currentUser?.username) {
-      setIsLocked(true);
-      setLockedBy(cve.locked_by);
-    }
-  }, [cve]);
 
   // CVE 데이터가 로드될 때 초기 카운트 설정
   useEffect(() => {
@@ -620,58 +556,7 @@ const CVEDetail = ({
     console.log('=== CVE Detail Debug ===');
     console.log('CVE Detail:', cve);
     console.log('Loading:', loading);
-    console.log('Error:', error);
-  }, [cve, loading, error]);  // 의존성 배열에서 불필요한 항목 제거
-
-  const handlePoCUpdate = async (newPocs) => {
-    try {
-      setLoading(true);
-      setError(null);
-
-      // API 요청 데이터에 현재 사용자 정보는 필요 없음 (백엔드에서 토큰으로 처리)
-      const response = await api.patch(`/cves/${cveId}`, {
-        pocs: newPocs
-      });
-
-      if (response.data) {
-        // 업데이트 성공
-        console.log('PoC update successful:', response.data);
-      }
-    } catch (err) {
-      console.error('Error updating PoCs:', err);
-      setError(err.response?.data?.detail || err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleUpdate = async (updatedData) => {
-    try {
-        // API 호출
-        const response = await cveService.updateCVE(cveId, updatedData);
-        
-        // WebSocket을 통해 업데이트 알림
-        await sendCustomMessage(
-            WS_EVENT_TYPE.CVE_UPDATED,  // 단순화된 이벤트 타입 사용
-            {
-                cveId,
-                cve: response.data  // 전체 CVE 데이터 전송
-            }
-        );
-
-        enqueueSnackbar('CVE가 성공적으로 업데이트되었습니다.', {
-            variant: 'success'
-        });
-        
-        return response;
-    } catch (error) {
-        console.error('Failed to update CVE:', error);
-        enqueueSnackbar(error.message || 'CVE 업데이트 중 오류가 발생했습니다.', {
-            variant: 'error'
-        });
-        throw error;
-    }
-  };
+  }, [cve, loading]);  // 의존성 배열에서 불필요한 항목 제거
 
   // 디버깅을 위한 useEffect 수정
   useEffect(() => {
@@ -685,13 +570,9 @@ const CVEDetail = ({
     }
   }, [cve?.status]); // status 변경에만 반응하도록 의존성 수정
 
-  // 로딩 중이거나 에러 상태일 때 처리
+  // 로딩 중일 때만 처리 (에러는 스낵바로 표시)
   if (loading) {
     return <CircularProgress />;
-  }
-
-  if (error) {
-    return <Alert severity="error">{error}</Alert>;
   }
 
   if (!cve) {
@@ -796,15 +677,19 @@ const CVEDetail = ({
                           bgcolor: 'background.paper',
                           borderRadius: 2,
                           border: '1px solid',
-                          borderColor: 'divider'
+                          borderColor: 'divider',
+                          height: '150px',
+                          overflow: 'hidden'
                         }}
                       >
                         <InlineEditText
                           value={cve.description}
                           onSave={handleDescriptionUpdate}
+                          placeholder="설명을 입력하세요..."
                           multiline
-                          placeholder="설명을 입력하세요"
                           disabled={!canEdit()}
+                          maxHeight="130px"
+                          fontSize="0.875rem"
                         />
                       </Paper>
                     </Box>
@@ -817,7 +702,7 @@ const CVEDetail = ({
                       display: 'grid',
                       gridTemplateColumns: 'repeat(2, 1fr)',
                       gap: 1.5,
-                      maxHeight: '180px'
+                      height: '150px'  // Description 영역과 동일한 높이로 설정
                     }}>
                       {Object.entries(STATUS_OPTIONS).map(([value, { label, description }]) => (
                         <Paper

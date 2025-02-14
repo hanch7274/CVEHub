@@ -27,6 +27,23 @@ import { WS_EVENT_TYPE } from '../../../services/websocket';
 import { formatToKST } from '../../../utils/dateUtils';
 import { debounce } from 'lodash';
 import { useSnackbar } from 'notistack';
+import {
+  ListHeader,
+  ActionButton,
+  StyledListItem,
+  ActionIconButton,
+  ChipLabel
+} from './CommonStyles';
+import {
+  Comment as CommentIcon,
+  Add as AddIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
+  Reply as ReplyIcon
+} from '@mui/icons-material';
+import { EmptyState } from './CommonStyles';
+import { Tooltip } from '@mui/material';
+import { Chip } from '@mui/material';
 
 // 멘션된 사용자를 추출하는 유틸리티 함수
 const extractMentions = (content) => {
@@ -62,7 +79,6 @@ const formatDate = (dateString) => {
 const CommentsTab = React.memo(({
   cve,
   onUpdate,
-  setError,
   onCommentCountChange,
   currentUser,
   refreshTrigger
@@ -75,15 +91,12 @@ const CommentsTab = React.memo(({
   const [parentCommentId, setParentCommentId] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [deleteDialog, setDeleteDialog] = useState({
-    open: false,
-    comment: null
-  });
   const [mentionInputKey, setMentionInputKey] = useState(0);
   const [users, setUsers] = useState([]);
   const commentsRef = useRef(cve.comments || []);
   const updateTimeoutRef = useRef(null);
   const { enqueueSnackbar } = useSnackbar();
+  const [isEditing, setIsEditing] = useState(false);
 
   // 댓글 입력 상태를 ref로 관리하여 리렌더링에도 유지
   const commentInputRef = useRef('');
@@ -112,26 +125,34 @@ const CommentsTab = React.memo(({
     const commentMap = new Map();
     const rootComments = [];
 
+    // 1. 먼저 모든 댓글을 Map에 저장
     commentsArray.forEach(comment => {
-      commentMap.set(comment.id, { ...comment, children: [] });
+      commentMap.set(comment.id, { ...comment, children: [], depth: 0 });
     });
 
+    // 2. 부모-자식 관계 구성 및 깊이 계산
     commentsArray.forEach(comment => {
       const commentWithChildren = commentMap.get(comment.id);
-      if (comment.parentId) {
+      if (comment.parentId && commentMap.has(comment.parentId)) {
         const parent = commentMap.get(comment.parentId);
-        if (parent) {
-          parent.children.push(commentWithChildren);
-        } else {
-          rootComments.push(commentWithChildren);
-        }
+        // 부모의 깊이 + 1로 현재 댓글의 깊이 설정
+        commentWithChildren.depth = parent.depth + 1;
+        parent.children.push(commentWithChildren);
       } else {
+        // 부모가 없거나 찾을 수 없는 경우 최상위 댓글로 처리
+        commentWithChildren.depth = 0;
         rootComments.push(commentWithChildren);
       }
     });
 
+    // 3. 날짜순 정렬 (최신 댓글이 아래에 표시)
     const sortByDate = (comments) => {
-      comments.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      comments.sort((a, b) => {
+        const dateA = new Date(a.createdAt);
+        const dateB = new Date(b.createdAt);
+        return dateA - dateB;  // 오래된 순으로 정렬
+      });
+      // 자식 댓글들도 정렬
       comments.forEach(comment => {
         if (comment.children.length > 0) {
           sortByDate(comment.children);
@@ -187,36 +208,31 @@ const CommentsTab = React.memo(({
     return newComments;
   }, [cve.comments, debouncedUpdate]);
 
-  // 로컬 댓글 업데이트 함수
-  const updateLocalComments = useCallback((updatedComment, action) => {
-    const currentComments = [...commentsRef.current];
-    
-    switch (action) {
-      case 'add':
-        currentComments.push(updatedComment);
-        break;
-      case 'edit':
-        const editIndex = currentComments.findIndex(c => c.id === updatedComment.id);
-        if (editIndex !== -1) {
-          currentComments[editIndex] = { ...currentComments[editIndex], ...updatedComment };
-        }
-        break;
-      case 'delete':
-        const deleteIndex = currentComments.findIndex(c => c.id === updatedComment.id);
-        if (deleteIndex !== -1) {
-          currentComments[deleteIndex] = { 
-            ...currentComments[deleteIndex], 
-            is_deleted: true,
-            content: '삭제된 댓글입니다.'
-          };
-        }
-        break;
-      default:
-        break;
+  // 댓글 목록 업데이트 함수 - 계층 구조 유지
+  const updateLocalComments = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await api.get(`/cves/${cve.cveId}/comments`);
+      console.log('Fetched comments:', response.data);  // 디버깅용
+      
+      // 응답 데이터 구조 확인 및 정리
+      const organizedComments = organizeComments(response.data);
+      setComments(organizedComments);
+      
+      // 댓글 수 업데이트
+      const activeCount = countActiveComments(organizedComments);
+      setActiveCommentCount(activeCount);
+      onCommentCountChange?.(activeCount);
+      
+      // CVE 상태 업데이트를 위해 dispatch
+      dispatch(fetchCVEDetail(cve.cveId));
+    } catch (error) {
+      console.error('Error updating comments:', error);
+      enqueueSnackbar('댓글을 불러오는데 실패했습니다.', { variant: 'error' });
+    } finally {
+      setLoading(false);
     }
-
-    debouncedUpdate(currentComments);
-  }, [debouncedUpdate]);
+  }, [cve.cveId, onCommentCountChange, organizeComments, countActiveComments, enqueueSnackbar, dispatch]);
 
   // 댓글 입력값 변경 시 ref에도 저장
   const handleCommentChange = useCallback((e) => {
@@ -225,133 +241,196 @@ const CommentsTab = React.memo(({
     commentInputRef.current = value;
   }, []);
 
-  // cve.comments가 변경될 때 댓글 목록만 업데이트
-  useEffect(() => {
-    setComments(cve.comments || []);
-    const activeCount = countActiveComments(cve.comments || []);
-    setActiveCommentCount(activeCount);
-    onCommentCountChange?.(activeCount);
-  }, [cve.comments, countActiveComments, onCommentCountChange]);
+  // 새 댓글 작성 핸들러
+  const handleSubmit = useCallback(async () => {
+    if (!newComment.trim()) return;
 
-  // 댓글 추가 핸들러
-  const handleAddComment = useCallback(async () => {
-    const commentToSubmit = commentInputRef.current;
-    if (!commentToSubmit?.trim()) return;
-
-    const requestData = {
-        content: commentToSubmit,
-        parentId: null,
-        mentions: extractMentions(commentToSubmit),  // 멘션된 사용자 추출
-        isDeleted: false
-    };
-
-    try {
-        setLoading(true);
-        const response = await api.post(`/cves/${cve.cveId}/comments`, requestData);
-
-        if (response.data) {
-            setComments(response.data.comments || []);
-            setNewComment('');
-            commentInputRef.current = '';
-            enqueueSnackbar('댓글이 추가되었습니다.', { variant: 'success' });
-            
-            // 댓글 수 업데이트
-            const activeCount = countActiveComments(response.data.comments || []);
-            setActiveCommentCount(activeCount);
-            onCommentCountChange?.(activeCount);
-
-            // 백엔드에서 멘션된 사용자들에게 알림을 보내므로
-            // 추가적인 WebSocket 메시지는 불필요
-
-            onUpdate?.();
-        }
-    } catch (error) {
-        console.error('댓글 추가 중 오류:', error);
-        enqueueSnackbar('댓글 추가 중 오류가 발생했습니다.', { variant: 'error' });
-    } finally {
-        setLoading(false);
-    }
-}, [cve.cveId, countActiveComments, onCommentCountChange, onUpdate]);
-
-  // WebSocket 메시지 수신 처리 추가
-  useEffect(() => {
-    const handleWebSocketMessage = (message) => {
-      // 알림 메시지를 통해 댓글 업데이트 처리
-      if (message.type === WS_EVENT_TYPE.NOTIFICATION && 
-          message.data.type === 'mention' &&
-          message.data.cveId === cve.cveId) {
-        onUpdate?.();
-      }
-    };
-
-    window.addEventListener('websocket-message', handleWebSocketMessage);
-
-    return () => {
-      window.removeEventListener('websocket-message', handleWebSocketMessage);
-    };
-  }, [cve.cveId, onUpdate]);
-
-  // 댓글 삭제 핸들러 최적화
-  const handleDelete = useCallback(async (commentId, isAdmin) => {
     try {
       setLoading(true);
-      await api.delete(`/cves/${cve.cveId}/comments/${commentId}`, {
-        params: { permanent: isAdmin }
+      const response = await api.post(`/cves/${cve.cveId}/comments`, {
+        content: newComment,
+        mentions: extractMentions(newComment)
       });
       
-      updateLocalComments({ id: commentId }, 'delete');
-      enqueueSnackbar('댓글이 삭제되었습니다.', { variant: 'success' });
+      console.log('New comment response:', response.data);  // 디버깅용
+      
+      setNewComment('');
+      commentInputRef.current = '';
+      
+      // 댓글 목록 즉시 업데이트
+      await updateLocalComments();
+      
+      // 입력 필드 초기화
+      setMentionInputKey(prev => prev + 1);
+      
+      enqueueSnackbar('댓글이 작성되었습니다.', { variant: 'success' });
     } catch (error) {
-      console.error('댓글 삭제 중 오류:', error);
-      enqueueSnackbar('댓글 삭제 중 오류가 발생했습니다.', { variant: 'error' });
+      console.error('Error creating comment:', error);
+      enqueueSnackbar('댓글 작성에 실패했습니다.', { variant: 'error' });
     } finally {
       setLoading(false);
     }
+  }, [cve.cveId, newComment, updateLocalComments, enqueueSnackbar, setMentionInputKey]);
+
+  // WebSocket 메시지 핸들러 - 실시간 업데이트
+  const handleWebSocketMessage = useCallback((message) => {
+    if (message.type === 'comment_added' && message.data.cveId === cve.cveId) {
+      updateLocalComments();
+    }
   }, [cve.cveId, updateLocalComments]);
 
-  // 댓글 수정 핸들러 최적화
+  // WebSocket 구독 설정
+  useEffect(() => {
+    const subscribeToComments = async () => {
+      try {
+        await sendCustomMessage('subscribe_cve', { cveId: cve.cveId });
+      } catch (error) {
+        console.error('Failed to subscribe to comments:', error);
+      }
+    };
+
+    subscribeToComments();
+    
+    return () => {
+      const unsubscribe = async () => {
+        try {
+          await sendCustomMessage('unsubscribe_cve', { cveId: cve.cveId });
+        } catch (error) {
+          console.error('Failed to unsubscribe from comments:', error);
+        }
+      };
+      unsubscribe();
+    };
+  }, [cve.cveId, sendCustomMessage]);
+
+  // 초기 댓글 로딩 및 새로고침 트리거 처리
+  useEffect(() => {
+    updateLocalComments();
+  }, [updateLocalComments, refreshTrigger]);
+
+  // 댓글 삭제 핸들러 - API 호출만 담당
+  const handleDelete = useCallback(async (commentId, permanent = false) => {
+    try {
+      setLoading(true);
+      await api.delete(`/cves/${cve.cveId}/comments/${commentId}`, {
+        params: { permanent }
+      });
+      
+      await updateLocalComments();
+      enqueueSnackbar(
+        permanent ? '댓글이 완전히 삭제되었습니다.' : '댓글이 삭제되었습니다.', 
+        { variant: 'success' }
+      );
+    } catch (error) {
+      console.error('댓글 삭제 중 오류:', error);
+      enqueueSnackbar(error.response?.data?.detail || '댓글 삭제 중 오류가 발생했습니다.', { variant: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  }, [cve.cveId, updateLocalComments, enqueueSnackbar]);
+
+  // 수정 시작 핸들러
+  const handleStartEdit = () => {
+    setIsEditing(true);
+  };
+
+  // 수정 완료 핸들러
+  const handleFinishEdit = () => {
+    setIsEditing(false);
+  };
+
+  // 댓글 수정 핸들러 수정
   const handleEdit = useCallback(async (commentId, content) => {
     try {
       setLoading(true);
-      const response = await api.put(`/cves/${cve.cveId}/comments/${commentId}`, { 
-        content,
+      console.log('Editing comment:', { commentId, content });  // 디버깅 로그 추가
+      const response = await api.patch(`/cves/${cve.cveId}/comments/${commentId}`, {
+        content: content,
         parentId: null
       });
       
       if (response.data) {
-        updateLocalComments(response.data, 'edit');
+        await updateLocalComments();
         enqueueSnackbar('댓글이 수정되었습니다.', { variant: 'success' });
+        handleFinishEdit();
       }
     } catch (error) {
       console.error('댓글 수정 중 오류:', error);
-      enqueueSnackbar('댓글 수정 중 오류가 발생했습니다.', { variant: 'error' });
+      enqueueSnackbar(error.response?.data?.detail || '댓글 수정 중 오류가 발생했습니다.', { variant: 'error' });
     } finally {
       setLoading(false);
     }
-  }, [cve.cveId, updateLocalComments]);
+  }, [cve.cveId, updateLocalComments, enqueueSnackbar]);
+
+  // 답글 핸들러 추가
+  const handleReply = (comment) => {
+    setReplyingTo(comment);
+  };
+
+  const handleReplySubmit = async (parentId, content) => {
+    try {
+      setLoading(true);
+      const response = await api.post(`/cves/${cve.cveId}/comments`, {
+        content,
+        parent_id: parentId,
+        mentions: extractMentions(content)
+      });
+
+      if (response.data) {
+        setComments(response.data.comments || []);
+        setReplyingTo(null);
+        enqueueSnackbar('답글이 작성되었습니다.', { variant: 'success' });
+        
+        // 전체 데이터 새로고침
+        await dispatch(fetchCVEDetail(cve.cveId));
+        onUpdate?.();
+        
+        // 댓글 수 업데이트
+        onCommentCountChange?.(response.data.total_comments);
+      }
+    } catch (error) {
+      console.error('Failed to submit reply:', error);
+      enqueueSnackbar(error.response?.data?.detail || '답글 작성 중 오류가 발생했습니다.', { 
+        variant: 'error' 
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleReplyCancel = () => {
+    setReplyingTo(null);
+  };
 
   // 댓글 컴포넌트 메모이제이션
   const CommentItem = useMemo(() => React.memo(({ comment }) => (
-    <Comment
-      comment={comment}
-      currentUser={currentUser}
-      onDelete={handleDelete}
-      onEdit={handleEdit}
-      canModify={comment.username === currentUser?.username || currentUser?.is_admin}
-    />
-  ), {
-    // 커스텀 비교 함수로 필요한 prop만 비교
-    areEqual: (prevProps, nextProps) => {
-      const prevComment = prevProps.comment;
-      const nextComment = nextProps.comment;
-      return (
-        prevComment.id === nextComment.id &&
-        prevComment.content === nextComment.content &&
-        prevComment.is_deleted === nextComment.is_deleted &&
-        prevComment.updated_at === nextComment.updated_at
-      );
-    }
-  }), [currentUser, handleDelete, handleEdit]);
+    <StyledListItem
+      elevation={1}
+      sx={{
+        ml: comment.depth * 2,
+        bgcolor: replyingTo?.id === comment.id ? 'action.hover' : 'background.paper',
+        border: replyingTo?.id === comment.id ? '1px solid' : '1px solid',
+        borderColor: replyingTo?.id === comment.id ? 'primary.main' : 'divider',
+      }}
+    >
+      <Comment
+        comment={comment}
+        currentUsername={currentUser?.username}
+        isAdmin={currentUser?.isAdmin}
+        onDelete={handleDelete}
+        onEdit={handleEdit}
+        onReply={handleReply}
+        onReplySubmit={handleReplySubmit}
+        onReplyCancel={handleReplyCancel}
+        replyMode={replyingTo?.id === comment.id}
+        depth={comment.depth || 0}
+        cveId={cve.cveId}
+        onStartEdit={handleStartEdit}
+        onFinishEdit={handleFinishEdit}
+        isEditing={isEditing}
+      />
+    </StyledListItem>
+  ), [currentUser, handleDelete, handleEdit, replyingTo, handleReply, handleReplySubmit, handleReplyCancel, isEditing]);
 
   // 댓글 목록 메모이제이션
   const commentsList = useMemo(() => (
@@ -366,12 +445,12 @@ const CommentsTab = React.memo(({
       key={mentionInputKey}
       value={commentInputRef.current || newComment}  // ref 값을 우선 사용
       onChange={handleCommentChange}
-      onSubmit={handleAddComment}
+      onSubmit={handleSubmit}
       placeholder="댓글을 입력하세요..."
       loading={loading}
       users={users}
     />
-  ), [newComment, handleAddComment, loading, users, mentionInputKey, handleCommentChange]);
+  ), [newComment, handleSubmit, loading, users, mentionInputKey, handleCommentChange]);
 
   // 새로운 업데이트가 있을 때 스낵바 표시
   useEffect(() => {
@@ -395,48 +474,45 @@ const CommentsTab = React.memo(({
   }, [refreshTrigger, dispatch, cve?.cveId, enqueueSnackbar]);
 
   return (
-    <Box>
-      <Typography variant="h6" gutterBottom>
-        Comments ({activeCommentCount})
-      </Typography>
-
-      <Box sx={{ mb: 3 }}>
-        {MemoizedMentionInput}
-      </Box>
-
-      <Box sx={{ mt: 2 }}>
-        {commentsList}
-      </Box>
-
-      <Dialog
-        open={deleteDialog.open}
-        onClose={() => setDeleteDialog({ open: false, comment: null })}
-      >
-        <DialogTitle>댓글 삭제 확인</DialogTitle>
-        <DialogContent>
-          <Typography>
-            {currentUser?.isAdmin ? '이 댓글을 완전히 삭제하시겠습니까?' : '이 댓글을 삭제하시겠습니까?'}
-            {currentUser?.isAdmin && <Typography color="error" sx={{ mt: 1 }}>
-              * 완전 삭제된 댓글은 복구할 수 없습니다.
-            </Typography>}
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <ListHeader>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <CommentIcon color="primary" />
+          <Typography variant="h6" color="text.primary">
+            Comments ({activeCommentCount})
           </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteDialog({ open: false, comment: null })}>
-            취소
-          </Button>
-          <Button
-            onClick={() => {
-              handleDelete(deleteDialog.comment?.id, Boolean(currentUser?.isAdmin));
-              setDeleteDialog({ open: false, comment: null });
-            }}
-            color="error"
-            disabled={loading}
-          >
-            {currentUser?.isAdmin ? '완전 삭제' : '삭제'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+        </Box>
+      </ListHeader>
+
+      {!isEditing && (
+        <Box sx={{ mb: 3, px: 2 }}>
+          {MemoizedMentionInput}
+        </Box>
+      )}
+
+      {(!cve.comments || cve.comments.length === 0) ? (
+        <EmptyState>
+          <CommentIcon sx={{ fontSize: 48, color: 'primary.main', opacity: 0.7 }} />
+          <Typography variant="h6" gutterBottom>
+            No Comments Available
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            이 CVE에 대한 첫 번째 댓글을 작성해보세요.
+          </Typography>
+        </EmptyState>
+      ) : (
+        <Box sx={{ 
+          flex: 1,
+          overflowY: 'auto',
+          px: 2,
+          py: 1,
+          '& > *:not(:last-child)': { mb: 2 }
+        }}>
+          {organizedComments.map(comment => (
+            <CommentItem key={comment.id} comment={comment} />
+          ))}
+        </Box>
+      )}
     </Box>
   );
 });

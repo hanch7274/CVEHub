@@ -308,6 +308,34 @@ async def update_cve(
         current_time = datetime.now(ZoneInfo("Asia/Seoul"))
         changes = []
 
+        # Title, Description, Status 변경 이력 추가
+        if "title" in update_dict:
+            changes.append({
+                "field": "title",
+                "field_name": "제목",
+                "action": "edit",
+                "detail_type": "simple",
+                "summary": "제목이 변경됨"
+            })
+
+        if "description" in update_dict:
+            changes.append({
+                "field": "description",
+                "field_name": "설명",
+                "action": "edit",
+                "detail_type": "simple",
+                "summary": "설명이 변경됨"
+            })
+
+        if "status" in update_dict:
+            changes.append({
+                "field": "status",
+                "field_name": "상태",
+                "action": "edit",
+                "detail_type": "simple",
+                "summary": f"상태가 '{update_dict['status']}'(으)로 변경됨"
+            })
+
         # 업데이트 타입에 따른 변경 이력 생성
         if "pocs" in update_dict:
             old_pocs = await cve_service.get_cve(cve_id)
@@ -324,9 +352,31 @@ async def update_cve(
                 "edit": "PoC가 수정됨"
             }
 
-            for poc in update_dict["pocs"]:
-                poc["date_added"] = current_time
-                poc["added_by"] = current_user.username
+            # 기존 PoC의 시간 정보 보존
+            if old_pocs and old_pocs.pocs:
+                old_poc_map = {
+                    (poc.url, poc.source): {
+                        'date_added': poc.date_added,
+                        'added_by': poc.added_by
+                    }
+                    for poc in old_pocs.pocs
+                }
+                
+                for poc in update_dict["pocs"]:
+                    key = (poc.get('url', ''), poc.get('source', ''))
+                    if key in old_poc_map:
+                        # 기존 PoC의 시간 정보 유지
+                        poc['date_added'] = old_poc_map[key]['date_added']
+                        poc['added_by'] = old_poc_map[key]['added_by']
+                    else:
+                        # 새로운 PoC에만 현재 시간 설정
+                        poc['date_added'] = current_time
+                        poc['added_by'] = current_user.username
+            else:
+                # 처음 추가되는 PoC인 경우
+                for poc in update_dict["pocs"]:
+                    poc['date_added'] = current_time
+                    poc['added_by'] = current_user.username
             
             changes.append({
                 "field": "pocs",

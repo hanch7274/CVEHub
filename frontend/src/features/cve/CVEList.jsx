@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Table,
@@ -48,7 +48,6 @@ import {
   selectCVEFiltersData,
   selectCVELoading,
   refreshCVEList,
-  searchCVEs,
   deleteCVE,
   addCVEFromWebSocket,
   updateCVEFromWebSocket,
@@ -82,7 +81,8 @@ const CVEList = () => {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [cveToDelete, setCveToDelete] = useState(null);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
   const initialLoadRef = useRef(false);
   const lastFetchParamsRef = useRef(null);
   const [selectedCVE, setSelectedCVE] = useState(null);
@@ -143,22 +143,29 @@ const CVEList = () => {
   }, [dispatch, page, rowsPerPage, searchQuery, user, isReady, enqueueSnackbar]);
 
   // 검색 디바운스 처리
-  const debouncedSearch = useCallback(
-    debounce((query) => {
+  const debouncedSearch = useMemo(
+    () => debounce((term) => {
       dispatch(updateFilters({ 
-        search: query,
-        page: 0
+        search: term,
+        page: 0  // 검색 시 첫 페이지로 이동
       }));
     }, 300),
     [dispatch]
   );
 
-  // 검색어 변경 핸들러
-  const handleSearch = (e) => {
-    const newSearchQuery = e.target.value;
-    setSearchTerm(newSearchQuery);
-    debouncedSearch(newSearchQuery);
-  };
+  // 입력 핸들러 최적화
+  const handleSearchChange = useCallback((e) => {
+    const value = e.target.value;
+    setSearchInput(value);  // 즉시 입력값 반영
+    debouncedSearch(value); // 디바운스된 검색 실행
+  }, [debouncedSearch]);
+
+  // 컴포넌트 언마운트 시 디바운스 취소
+  useEffect(() => {
+    return () => {
+      debouncedSearch.cancel();
+    };
+  }, [debouncedSearch]);
 
   // 페이지 변경 핸들러
   const handlePageChange = (event, newPage) => {
@@ -337,8 +344,8 @@ const CVEList = () => {
           <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 3 }}>
             <TextField
               placeholder="CVE 검색"
-              value={searchQuery}
-              onChange={handleSearch}
+              value={searchInput}
+              onChange={handleSearchChange}
               size="small"
               sx={{ 
                 width: 300,
@@ -475,7 +482,7 @@ const CVEList = () => {
                   <TableRow>
                     <TableCell colSpan={4} align="center" sx={{ py: 8 }}>
                       <Typography variant="body1" color="text.secondary">
-                        {searchQuery ? '검색 결과가 없습니다' : '데이터가 없습니다'}
+                        {searchInput ? '검색 결과가 없습니다' : '데이터가 없습니다'}
                       </Typography>
                     </TableCell>
                   </TableRow>

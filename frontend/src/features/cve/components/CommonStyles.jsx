@@ -2,10 +2,21 @@ import { styled } from '@mui/material/styles';
 import { Paper, Button, IconButton, Box } from '@mui/material';
 
 export const StyledListItem = styled(Paper)(({ theme }) => ({
-  padding: theme.spacing(2),
-  marginBottom: theme.spacing(2),
-  borderRadius: theme.shape.borderRadius * 2,
+  padding: '12px',
+  marginBottom: '8px',
+  backgroundColor: theme.palette.background.paper,
+  borderRadius: theme.shape.borderRadius,
   border: `1px solid ${theme.palette.divider}`,
+  '& + &': {
+    marginTop: '8px'
+  },
+  '& .MuiTypography-root': {
+    fontSize: '0.875rem',
+    lineHeight: 1.5
+  },
+  '& .MuiTypography-caption': {
+    fontSize: '0.75rem'
+  },
   transition: 'all 0.2s ease-in-out',
   '&:hover': {
     transform: 'translateY(-2px)',

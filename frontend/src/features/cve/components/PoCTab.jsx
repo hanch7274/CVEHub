@@ -40,6 +40,7 @@ import {
 import { useWebSocketMessage } from '../../../contexts/WebSocketContext';
 import { WS_EVENT_TYPE } from '../../../services/websocket';
 import { useSnackbar } from 'notistack';
+import { zonedTimeToUtc, format } from 'date-fns-tz';
 
 const POC_SOURCES = {
   Etc: { label: 'Etc', color: 'default' },
@@ -109,10 +110,14 @@ const PoCTab = ({ cve, currentUser, refreshTrigger }) => {
       setLoading(true);
       setError(null);
 
+      // KST 시간으로 생성
+      const kstTime = new Date();
+      kstTime.setHours(kstTime.getHours() + 9);  // UTC+9 (KST)
+      
       // 새로운 PoC 객체 생성
       const newPocWithMetadata = {
         ...newPoc,
-        dateAdded: new Date().toISOString(),
+        dateAdded: kstTime.toISOString(),  // KST 시간을 ISO 문자열로 변환
         addedBy: currentUser?.username || 'anonymous'
       };
 
@@ -121,17 +126,7 @@ const PoCTab = ({ cve, currentUser, refreshTrigger }) => {
       const response = await dispatch(updateCVEDetail({
         cveId: cve.cveId,
         data: { 
-          pocs: updatedPocs,
-          modification_history: [{
-            username: currentUser?.username || 'anonymous',
-            changes: [{
-              field: 'pocs',
-              field_name: 'PoC',
-              action: 'add',
-              detail_type: 'array',
-              summary: 'PoC가 추가됨'
-            }]
-          }]
+          pocs: updatedPocs
         }
       })).unwrap();
 
@@ -161,41 +156,32 @@ const PoCTab = ({ cve, currentUser, refreshTrigger }) => {
 
   const handleDeletePoc = async (pocIndex) => {
     try {
-        setLoading(true);
-        setError(null);
+      setLoading(true);
+      setError(null);
 
-        const updatedPocs = (cve.pocs || [])
-            .filter((_, index) => index !== pocIndex)
-            .map(poc => ({
-                source: poc.source,
-                url: poc.url,
-                description: poc.description,
-                dateAdded: poc.dateAdded || new Date().toISOString(),
-                addedBy: poc.addedBy || currentUser?.username || 'anonymous'
-            }));
+      // 기존 PoC 배열에서 해당 인덱스만 제외
+      const updatedPocs = cve.pocs.filter((_, index) => index !== pocIndex);
 
-        const response = await dispatch(updateCVEDetail({
+      const response = await dispatch(updateCVEDetail({
+        cveId: cve.cveId,
+        data: { pocs: updatedPocs }
+      })).unwrap();
+
+      if (response) {
+        await sendCustomMessage(
+          WS_EVENT_TYPE.CVE_UPDATED,
+          {
             cveId: cve.cveId,
-            data: { pocs: updatedPocs }
-        })).unwrap();
-
-        if (response) {
-            // WebSocket 메시지 전송
-            await sendCustomMessage(
-                WS_EVENT_TYPE.CVE_UPDATED,
-                {
-                    cveId: cve.cveId,
-                    cve: response.data
-                }
-            );
-
-            enqueueSnackbar('PoC가 삭제되었습니다.', { variant: 'success' });
-        }
+            cve: response.data
+          }
+        );
+        enqueueSnackbar('PoC가 삭제되었습니다.', { variant: 'success' });
+      }
     } catch (error) {
-        console.error('Failed to delete PoC:', error);
-        enqueueSnackbar(error.message || 'PoC 삭제 중 오류가 발생했습니다.', { variant: 'error' });
+      console.error('Failed to delete PoC:', error);
+      enqueueSnackbar(error.message || 'PoC 삭제 중 오류가 발생했습니다.', { variant: 'error' });
     } finally {
-        setLoading(false);
+      setLoading(false);
     }
   };
 
@@ -203,50 +189,49 @@ const PoCTab = ({ cve, currentUser, refreshTrigger }) => {
     if (!selectedPoc) return;
 
     try {
-        // URL 중복 검사 (현재 편집 중인 항목 제외)
-        if (isDuplicateUrl(selectedPoc.url, selectedPoc.id)) {
-            enqueueSnackbar('이미 존재하는 URL입니다.', {
-                variant: 'error',
-                anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-            });
-            return;
-        }
-
-        setLoading(true);
-        setError(null);
-
-        const updatedPocs = (cve.pocs || []).map((poc, index) =>
-            index === selectedPoc.id ? selectedPoc : poc
-        );
-
-        const response = await dispatch(updateCVEDetail({
-            cveId: cve.cveId,
-            data: { pocs: updatedPocs }
-        })).unwrap();
-
-        if (response) {
-            // WebSocket 메시지 전송
-            await sendCustomMessage(
-                WS_EVENT_TYPE.CVE_UPDATED,
-                {
-                    cveId: cve.cveId,
-                    cve: response.data
-                }
-            );
-
-            enqueueSnackbar('PoC가 수정되었습니다.', { variant: 'success' });
-            setOpen(false);
-            setSelectedPoc(null);
-        }
-    } catch (error) {
-        setError('PoC 수정 중 오류가 발생했습니다.');
-        console.error('[PoCTab] Error in handleUpdatePoc:', {
-            error,
-            stack: error.stack,
-            message: error.message
+      if (isDuplicateUrl(selectedPoc.url, selectedPoc.id)) {
+        enqueueSnackbar('이미 존재하는 URL입니다.', {
+          variant: 'error',
+          anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
         });
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+
+      // 기존 PoC 배열을 복사하고 선택된 인덱스의 데이터만 업데이트
+      const updatedPocs = cve.pocs.map((poc, index) =>
+        index === selectedPoc.id ? {
+          ...poc,                    // 기존 메타데이터 유지
+          source: selectedPoc.source,
+          url: selectedPoc.url,
+          description: selectedPoc.description
+        } : poc
+      );
+
+      const response = await dispatch(updateCVEDetail({
+        cveId: cve.cveId,
+        data: { pocs: updatedPocs }
+      })).unwrap();
+
+      if (response) {
+        await sendCustomMessage(
+          WS_EVENT_TYPE.CVE_UPDATED,
+          {
+            cveId: cve.cveId,
+            cve: response.data
+          }
+        );
+        enqueueSnackbar('PoC가 수정되었습니다.', { variant: 'success' });
+        setOpen(false);
+        setSelectedPoc(null);
+      }
+    } catch (error) {
+      setError('PoC 수정 중 오류가 발생했습니다.');
+      console.error('[PoCTab] Error in handleUpdatePoc:', error);
     } finally {
-        setLoading(false);
+      setLoading(false);
     }
   };
 
@@ -312,7 +297,6 @@ const PoCTab = ({ cve, currentUser, refreshTrigger }) => {
               <Box sx={{ 
                 display: 'flex', 
                 flexDirection: 'column',
-                width: '100%',
                 gap: 1
               }}>
                 <Box sx={{ 
@@ -408,7 +392,9 @@ const PoCTab = ({ cve, currentUser, refreshTrigger }) => {
                     •
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {new Date(poc.dateAdded).toLocaleString()}
+                    {new Date(poc.dateAdded).toLocaleString('ko-KR', { 
+                      timeZone: 'Asia/Seoul'
+                    })}
                   </Typography>
                 </Box>
               </Box>

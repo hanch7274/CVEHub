@@ -5,7 +5,11 @@ import {
   IconButton,
   Button,
   Stack,
-  Tooltip
+  Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
 } from '@mui/material';
 import {
   Delete as DeleteIcon,
@@ -20,6 +24,7 @@ import { ko } from 'date-fns/locale';
 import { api } from '../../../utils/auth';
 import MentionInput from './MentionInput';
 import { highlightMentions } from '../../../utils/mentionUtils';
+import { StyledListItem } from './CommonStyles';
 
 const Comment = ({
   comment,
@@ -33,13 +38,15 @@ const Comment = ({
   onReplyCancel,
   cveId,
   children,
-  isAdmin
+  isAdmin,
+  onStartEdit,
+  onFinishEdit,
+  isEditing
 }) => {
-  const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(comment.content);
   const [showOriginal, setShowOriginal] = useState(false);
   const [replyContent, setReplyContent] = useState('');
-
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   // 권한 및 상태 체크
   const isDeleted = comment.isDeleted;
@@ -49,10 +56,10 @@ const Comment = ({
   const handleEdit = () => {
     if (isEditing) {
       onEdit(comment.id, editContent);
-      setIsEditing(false);
+      onFinishEdit();
     } else {
       setEditContent(comment.content);
-      setIsEditing(true);
+      onStartEdit();
     }
   };
 
@@ -63,8 +70,13 @@ const Comment = ({
     }
   };
 
-  const handleDelete = () => {
-    onDelete(comment.id, isAdmin);
+  const handleDeleteClick = () => {
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = (permanent = false) => {
+    onDelete(comment.id, permanent);
+    setDeleteDialogOpen(false);
   };
 
   const formatDate = (dateString) => {
@@ -95,7 +107,7 @@ const Comment = ({
             <Button size="small" onClick={handleEdit} variant="contained">
               저장
             </Button>
-            <Button size="small" onClick={() => setIsEditing(false)}>
+            <Button size="small" onClick={handleCancelEdit}>
               취소
             </Button>
           </Stack>
@@ -146,18 +158,21 @@ const Comment = ({
     }
   };
 
+  const handleCancelEdit = () => {
+    onFinishEdit();
+  };
+
   return (
-    <Box
+    <StyledListItem
+      elevation={1}
       sx={{
-        ml: depth * 4,
-        mb: 2,
-        p: 2,
-        borderRadius: 1,
+        ml: depth * 2,
         bgcolor: replyMode ? 'action.hover' : 'background.paper',
-        border: replyMode ? '1px solid' : 'none',
-        borderColor: 'primary.main',
-        transition: 'all 0.3s ease',
-        position: 'relative',
+        border: replyMode ? '1px solid' : '1px solid',
+        borderColor: replyMode ? 'primary.main' : 'divider',
+        '& .MuiTypography-root': {
+          fontSize: '0.813rem'
+        }
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
@@ -182,7 +197,7 @@ const Comment = ({
                   </IconButton>
                   <IconButton 
                     size="small" 
-                    onClick={handleDelete}
+                    onClick={handleDeleteClick}
                     color="error"
                   >
                     <DeleteIcon fontSize="small" />
@@ -199,10 +214,10 @@ const Comment = ({
               <Tooltip title="영구 삭제">
                 <IconButton 
                   size="small" 
-                  onClick={handleDelete}
+                  onClick={handleDeleteClick}
                   color="error"
                 >
-                  <DeleteForeverIcon fontSize="small" />
+                  <DeleteIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
               <Tooltip title={showOriginal ? "삭제된 댓글 숨기기" : "삭제된 댓글 보기"}>
@@ -243,8 +258,58 @@ const Comment = ({
         </Box>
       )}
 
+      {/* 삭제 다이얼로그 */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+      >
+        <DialogTitle>댓글 삭제</DialogTitle>
+        <DialogContent>
+          <Typography>
+            {isAdmin ? (
+              <>
+                관리자 권한으로 삭제 방식을 선택할 수 있습니다.
+                <Typography color="error" sx={{ mt: 1 }}>
+                  * 영구 삭제된 댓글은 복구할 수 없습니다.
+                </Typography>
+              </>
+            ) : (
+              '이 댓글을 삭제하시겠습니까?'
+            )}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>
+            취소
+          </Button>
+          {isAdmin ? (
+            <>
+              <Button
+                onClick={() => handleDeleteConfirm(false)}
+                color="warning"
+              >
+                일반 삭제
+              </Button>
+              <Button
+                onClick={() => handleDeleteConfirm(true)}
+                color="error"
+              >
+                영구 삭제
+              </Button>
+            </>
+          ) : (
+            <Button
+              onClick={() => handleDeleteConfirm(false)}
+              color="error"
+            >
+              삭제
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+
       {children}
-    </Box>
+    </StyledListItem>
   );
 };
 

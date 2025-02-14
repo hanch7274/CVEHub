@@ -2,6 +2,7 @@ from pydantic_settings import BaseSettings
 from typing import List
 from functools import lru_cache
 from datetime import timedelta
+import os
 
 class Settings(BaseSettings):
     # App settings
@@ -21,11 +22,6 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # Crawler settings
-    CRAWLER_USERNAME: str
-    CRAWLER_PASSWORD: str
-    CRAWLER_INTERVAL: int
-
     # Timezone settings
     TZ: str
     TIMEZONE: str
@@ -36,8 +32,11 @@ class Settings(BaseSettings):
     WS_PING_TIMEOUT: int = 10
     WS_CLOSE_TIMEOUT: int = 5
 
+    # Crawler settings
+    REPO_PATH: str = "/app/nuclei-templates"  # Docker 컨테이너 내부 경로
+
     class Config:
-        env_file = ".env"
+        env_file = os.getenv("ENV_FILE", ".env")
         case_sensitive = True
         extra = "allow"
 

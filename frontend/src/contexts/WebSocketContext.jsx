@@ -113,6 +113,19 @@ export const WebSocketProvider = ({ children }) => {
         const data = message.data;
 
         switch (type) {
+            case 'ping':
+                // ping 메시지를 받으면 즉시 pong으로 응답
+                if (webSocketInstance) {
+                    webSocketInstance.send('pong', {
+                        timestamp: new Date().toISOString()
+                    });
+                }
+                break;
+
+            case 'pong':
+                // pong 메시지 수신 처리 (필요한 경우)
+                break;
+
             case 'subscribe_cve':
                 setSubscribedCVEs(prev => {
                     const newSet = new Set(prev);

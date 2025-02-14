@@ -45,6 +45,14 @@ const REFERENCE_TYPES = {
   OTHER: 'Other'
 };
 
+// 타입별 우선순위 정의
+const TYPE_PRIORITY = {
+  'NVD': 1,
+  'Exploit': 2,
+  'Patch': 3,
+  'Other': 4
+};
+
 const getReferenceTypeLabel = (type) => {
   return REFERENCE_TYPES[type] || type;
 };
@@ -66,6 +74,24 @@ const ReferencesTab = ({ cve, refreshTrigger }) => {
   const [selectedReference, setSelectedReference] = useState(null);
   const [formData, setFormData] = useState(DEFAULT_REFERENCE);
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
+
+  // references 정렬 함수를 컴포넌트 최상단으로 이동
+  const sortedReferences = useMemo(() => {
+    if (!cve?.references) return [];
+    
+    return [...cve.references].sort((a, b) => {
+      // 타입 우선순위로 정렬
+      const priorityA = TYPE_PRIORITY[a.type] || TYPE_PRIORITY['Other'];
+      const priorityB = TYPE_PRIORITY[b.type] || TYPE_PRIORITY['Other'];
+      
+      if (priorityA !== priorityB) {
+        return priorityA - priorityB;
+      }
+      
+      // 같은 타입인 경우 추가된 시간순으로 정렬
+      return new Date(b.dateAdded) - new Date(a.dateAdded);
+    });
+  }, [cve?.references]);
 
   useEffect(() => {
     if (refreshTrigger > 0) {
@@ -254,7 +280,7 @@ const ReferencesTab = ({ cve, refreshTrigger }) => {
           py: 1,
           '& > *:not(:last-child)': { mb: 2 }
         }}>
-          {cve.references.map((reference, index) => (
+          {sortedReferences.map((reference, index) => (
             <StyledListItem key={index} elevation={1}>
               <Box sx={{ 
                 display: 'flex', 

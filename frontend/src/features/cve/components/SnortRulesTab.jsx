@@ -291,7 +291,6 @@ const SnortRulesTab = ({ cve, currentUser, onCountChange, refreshTrigger }) => {
               <Box sx={{ 
                 display: 'flex', 
                 flexDirection: 'column',
-                width: '100%',
                 gap: 1
               }}>
                 <Box sx={{ 
@@ -336,10 +335,9 @@ const SnortRulesTab = ({ cve, currentUser, onCountChange, refreshTrigger }) => {
                 <Typography 
                   variant="body2" 
                   sx={{ 
-                    fontFamily: 'monospace',
-                    pl: 2,
-                    borderLeft: '2px solid',
-                    borderColor: 'divider'
+                    fontSize: '0.813rem',
+                    maxHeight: '80px',  // 최대 높이 제한
+                    overflow: 'auto'
                   }}
                 >
                   {rule.rule}
