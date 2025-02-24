@@ -49,9 +49,16 @@ const NotificationBell = memo(() => {
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
+        console.log('=== NotificationBell: Fetching Initial Data ===');
         await dispatch(fetchUnreadCount()).unwrap();
+        console.log('Initial unread count fetched successfully');
       } catch (error) {
-        console.error('[NotificationBell] 읽지 않은 알림 개수 조회 실패:', error);
+        console.error('=== NotificationBell: Initial Data Fetch Error ===');
+        console.error('Error Details:', {
+          message: error.message,
+          code: error.code,
+          stack: error.stack
+        });
       }
     };
 
@@ -60,15 +67,32 @@ const NotificationBell = memo(() => {
 
   const loadNotifications = useCallback(async (newPage = 0) => {
     try {
+      console.log('=== NotificationBell: Loading Notifications ===');
+      console.log('Page:', newPage);
+      console.log('Items per page:', ITEMS_PER_PAGE);
+      
       const skip = newPage * ITEMS_PER_PAGE;
+      console.log('Skip:', skip);
+      
       const result = await dispatch(fetchNotifications({ 
         skip, 
         limit: ITEMS_PER_PAGE 
       })).unwrap();
       
-      setHasMore(result.length === ITEMS_PER_PAGE);
+      console.log('Notifications loaded successfully:', {
+        resultLength: result.items.length,
+        total: result.total,
+        unreadCount: result.unreadCount
+      });
+      
+      setHasMore(result.items.length === ITEMS_PER_PAGE);
     } catch (error) {
-      console.error('알림을 가져오는 중 오류 발생:', error);
+      console.error('=== NotificationBell: Load Notifications Error ===');
+      console.error('Error Details:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
       setSnackbar({
         open: true,
         message: '알림을 불러오는데 실패했습니다.',
@@ -110,11 +134,17 @@ const NotificationBell = memo(() => {
 
   const handleMarkAllAsRead = async () => {
     try {
+      console.log('=== NotificationBell: Marking All As Read ===');
       await dispatch(markAllAsRead()).unwrap();
-      console.log('모든 알림을 읽음 처리했습니다.');
-      await loadNotifications(); // 알림 목록 새로고침
+      console.log('All notifications marked as read successfully');
+      await loadNotifications();
     } catch (error) {
-      console.error('알림 일괄 읽음 처리 중 오류:', error);
+      console.error('=== NotificationBell: Mark All As Read Error ===');
+      console.error('Error Details:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
       setSnackbar({
         open: true,
         message: '알림을 읽음 처리하는 중 오류가 발생했습니다.',
@@ -174,16 +204,25 @@ const NotificationBell = memo(() => {
 
   const handleNotificationClick = async (notification) => {
     try {
-      // 읽음 처리
-      await dispatch(markAsRead(notification.id)).unwrap();
+      console.log('=== NotificationBell: Handling Notification Click ===');
+      console.log('Notification:', notification);
 
-      // CVE 상세 페이지로 이동 (있는 경우)
+      await dispatch(markAsRead(notification.id)).unwrap();
+      console.log('Notification marked as read successfully');
+
       if (notification.cveId) {
+        console.log('Opening CVE detail:', notification.cveId);
         setSelectedCVE(notification.cveId);
         setDialogOpen(true);
       }
     } catch (error) {
-      console.error('알림 처리 중 오류:', error);
+      console.error('=== NotificationBell: Notification Click Error ===');
+      console.error('Error Details:', {
+        notificationId: notification.id,
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
       setSnackbar({
         open: true,
         message: '알림을 처리하는 중 오류가 발생했습니다.',

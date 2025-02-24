@@ -31,7 +31,6 @@ api.interceptors.request.use(
         '/auth/token',
         '/auth/login',
         '/auth/signup',
-        '/auth/refresh',
         '/auth/verify',
         '/auth/password/reset',
         '/auth/password/reset/verify',

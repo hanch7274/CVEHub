@@ -83,13 +83,28 @@ const Comment = ({
   // 수정 모드 토글
   const handleEditToggle = () => {
     if (isEditing) {
-      // 이미 수정 모드 -> "저장" 버튼
-      onEdit?.(comment.id, editContent);
-      onFinishEdit?.();
+      console.log('=== Comment Edit Debug ===');
+      console.log('Saving edited comment:', {
+        commentId: comment.id,
+        content: editContent,
+        currentUser: currentUsername
+      });
+
+      onEdit?.(comment.id, editContent)
+        .then(response => {
+          console.log('Edit success:', response);
+          onFinishEdit?.();
+        })
+        .catch(error => {
+          console.error('Edit error:', {
+            status: error.response?.status,
+            data: error.response?.data,
+            message: error.message
+          });
+        });
     } else {
-      // 수정 모드 시작
-      setEditContent(comment.content); // 원본 내용 초기화
-      onStartEdit?.(comment.id);       // 특정 댓글만 수정 모드
+      setEditContent(comment.content);
+      onStartEdit?.(comment.id);
     }
   };
 
@@ -99,11 +114,34 @@ const Comment = ({
 
   // 삭제 다이얼로그
   const handleDeleteClick = () => {
+    console.log('=== Comment Delete Debug ===');
+    console.log('Opening delete dialog:', {
+      commentId: comment.id,
+      currentUser: currentUsername,
+      isAdmin
+    });
     setDeleteDialogOpen(true);
   };
+
   const handleDeleteConfirm = (permanent = false) => {
-    onDelete?.(comment.id, permanent);
-    setDeleteDialogOpen(false);
+    console.log('Confirming delete:', {
+      commentId: comment.id,
+      permanent,
+      currentUser: currentUsername
+    });
+
+    onDelete?.(comment.id, permanent)
+      .then(response => {
+        console.log('Delete success:', response);
+        setDeleteDialogOpen(false);
+      })
+      .catch(error => {
+        console.error('Delete error:', {
+          status: error.response?.status,
+          data: error.response?.data,
+          message: error.message
+        });
+      });
   };
 
   // 답글 아이콘 클릭
@@ -121,9 +159,27 @@ const Comment = ({
   // 답글 제출
   const handleReplySubmitLocal = () => {
     if (!replyContent.trim()) return;
-    onReplySubmit?.(comment.id, replyContent);
-    onReplyCancel?.();
-    setReplyContent('');
+    
+    console.log('=== Comment Reply Debug ===');
+    console.log('Submitting reply:', {
+      parentId: comment.id,
+      content: replyContent,
+      currentUser: currentUsername
+    });
+
+    onReplySubmit?.(comment.id, replyContent)
+      .then(response => {
+        console.log('Reply submission success:', response);
+        onReplyCancel?.();
+        setReplyContent('');
+      })
+      .catch(error => {
+        console.error('Reply submission error:', {
+          status: error.response?.status,
+          data: error.response?.data,
+          message: error.message
+        });
+      });
   };
 
   // 댓글 내용 렌더링
@@ -188,11 +244,24 @@ const Comment = ({
 
   return (
     <StyledListItem
-      elevation={depth === 0 ? 1 : 0}
+      elevation={1}
       sx={{
-        ml: depth * 2,
-        border: depth === 0 ? '1px solid' : 'none',
-        borderColor: depth === 0 ? 'divider' : 'transparent',
+        ml: depth * 3,  // 들여쓰기 간격
+        border: '1px solid',
+        borderColor: 'divider',
+        borderLeft: depth > 0 ? `2px solid rgba(25, 118, 210, 0.12)` : '1px solid rgba(0, 0, 0, 0.12)',  // primary 컬러의 연한 버전
+        position: 'relative',
+        '&::before': depth > 0 ? {
+          content: '""',
+          position: 'absolute',
+          left: -16,
+          top: 0,
+          bottom: 0,
+          width: 16,
+          borderLeft: '1px solid',
+          borderColor: 'divider',
+          opacity: 0.5
+        } : {}
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>

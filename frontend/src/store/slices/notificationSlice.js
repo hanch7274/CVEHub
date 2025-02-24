@@ -15,14 +15,42 @@ const initialState = {
 export const fetchNotifications = createAsyncThunk(
   'notifications/fetchNotifications',
   async ({ skip = 0, limit = 10 } = {}) => {
-    const response = await api.get(NOTIFICATION.BASE, {
-      params: { skip, limit }
-    });
-    return {
-      items: response.data,  // 응답 구조 맞춤
-      total: response.headers['x-total-count'] || 0,
-      unreadCount: response.headers['x-unread-count'] || 0
-    };
+    try {
+      console.log('=== Fetching Notifications Debug ===');
+      console.log('Request URL:', NOTIFICATION.BASE);
+      console.log('Request Params:', { skip, limit });
+
+      const response = await api.get(NOTIFICATION.BASE, {
+        params: { skip, limit }
+      });
+
+      console.log('Response Status:', response.status);
+      console.log('Response Headers:', {
+        'X-Total-Count': response.headers['x-total-count'],
+        'X-Unread-Count': response.headers['x-unread-count']
+      });
+      console.log('Response Data:', response.data);
+
+      return {
+        items: response.data,
+        total: response.headers['x-total-count'] || 0,
+        unreadCount: response.headers['x-unread-count'] || 0
+      };
+    } catch (error) {
+      console.error('=== Fetch Notifications Error ===');
+      console.error('Error Details:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data,
+        config: {
+          url: error.config?.url,
+          method: error.config?.method,
+          headers: error.config?.headers,
+          params: error.config?.params
+        }
+      });
+      throw error;
+    }
   }
 );
 
@@ -30,8 +58,27 @@ export const fetchNotifications = createAsyncThunk(
 export const markAsRead = createAsyncThunk(
   'notifications/markAsRead',
   async (notificationId) => {
-    await api.put(`${NOTIFICATION.BASE}/${notificationId}/read`);
-    return notificationId;
+    try {
+      console.log('=== Mark As Read Debug ===');
+      console.log('Request URL:', `${NOTIFICATION.BASE}/${notificationId}/read`);
+      console.log('Notification ID:', notificationId);
+
+      const response = await api.put(`${NOTIFICATION.BASE}/${notificationId}/read`);
+      
+      console.log('Response Status:', response.status);
+      console.log('Response Data:', response.data);
+
+      return notificationId;
+    } catch (error) {
+      console.error('=== Mark As Read Error ===');
+      console.error('Error Details:', {
+        notificationId,
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data
+      });
+      throw error;
+    }
   }
 );
 
@@ -39,8 +86,25 @@ export const markAsRead = createAsyncThunk(
 export const fetchUnreadCount = createAsyncThunk(
   'notifications/fetchUnreadCount',
   async () => {
-    const response = await api.get(NOTIFICATION.UNREAD_COUNT);
-    return response.data.count;
+    try {
+      console.log('=== Fetch Unread Count Debug ===');
+      console.log('Request URL:', NOTIFICATION.UNREAD_COUNT);
+
+      const response = await api.get(NOTIFICATION.UNREAD_COUNT);
+
+      console.log('Response Status:', response.status);
+      console.log('Response Data:', response.data);
+
+      return response.data.count;
+    } catch (error) {
+      console.error('=== Fetch Unread Count Error ===');
+      console.error('Error Details:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data
+      });
+      throw error;
+    }
   }
 );
 
@@ -48,8 +112,25 @@ export const fetchUnreadCount = createAsyncThunk(
 export const markAllAsRead = createAsyncThunk(
   'notifications/markAllAsRead',
   async () => {
-    await api.put(`${NOTIFICATION.BASE}/read-all`);
-    return true;
+    try {
+      console.log('=== Mark All As Read Debug ===');
+      console.log('Request URL:', NOTIFICATION.READ_ALL);
+
+      const response = await api.put(NOTIFICATION.READ_ALL);
+
+      console.log('Response Status:', response.status);
+      console.log('Response Data:', response.data);
+
+      return true;
+    } catch (error) {
+      console.error('=== Mark All As Read Error ===');
+      console.error('Error Details:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data
+      });
+      throw error;
+    }
   }
 );
 

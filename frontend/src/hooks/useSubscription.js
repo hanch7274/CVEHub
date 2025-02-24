@@ -84,9 +84,10 @@ export const useSubscription = ({ cveId, open, currentUser, onSubscribersChange 
   // 구독 생명주기 관리
   useEffect(() => {
     let isMounted = true;
+    let cleanup = false;
 
     const subscribe = async () => {
-      if (!cveId || !open) return;
+      if (!cveId || !open || cleanup) return;
 
       try {
         // 이전 구독 해제는 다른 CVE로 변경될 때만
@@ -109,18 +110,24 @@ export const useSubscription = ({ cveId, open, currentUser, onSubscribersChange 
     // 다이얼로그가 열려있을 때만 구독
     if (open) {
       subscribe();
+    } else if (subscriptionState.subscribed) {
+      // 다이얼로그가 닫힐 때 구독 해제
+      handleSubscription(subscriptionState.currentCveId, false)
+        .catch(error => console.error('[Subscription] Dialog close cleanup error:', error));
     }
 
     // 클린업 함수
     return () => {
+      cleanup = true;
       isMounted = false;
 
-      // 컴포넌트가 완전히 언마운트되거나 다이얼로그가 닫힐 때만 구독 해제
-      if (!open && subscriptionState.subscribed) {
+      // 구독된 상태라면 무조건 구독 해제 실행
+      if (subscriptionState.subscribed && subscriptionState.currentCveId) {
         console.log('[Subscription] Cleaning up subscription:', subscriptionState.currentCveId);
-        handleSubscription(subscriptionState.currentCveId, false).catch(error => {
-          console.error('[Subscription] Cleanup error:', error);
-        });
+        handleSubscription(subscriptionState.currentCveId, false)
+          .catch(error => {
+            console.error('[Subscription] Cleanup error:', error);
+          });
       }
     };
   }, [cveId, open, subscriptionState.subscribed, subscriptionState.currentCveId, handleSubscription]);

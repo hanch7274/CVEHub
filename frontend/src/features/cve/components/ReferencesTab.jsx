@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, memo } from 'react';
 import {
   Typography,
   Box,
@@ -65,7 +65,7 @@ const DEFAULT_REFERENCE = {
   addedBy: 'anonymous'
 };
 
-const ReferencesTab = ({ cve, refreshTrigger }) => {
+const ReferencesTab = memo(({ cve, currentUser, refreshTrigger }) => {
   const dispatch = useDispatch();
   const { sendCustomMessage } = useWebSocketMessage();
   const [loading, setLoading] = useState(false);
@@ -150,7 +150,12 @@ const ReferencesTab = ({ cve, refreshTrigger }) => {
             cve: response.data
           }
         );
-        enqueueSnackbar('Reference가 삭제되었습니다.', { variant: 'success' });
+        
+        // 데이터 갱신을 위한 지연 처리
+        setTimeout(async () => {
+          await dispatch(fetchCVEDetail(cve.cveId));
+          enqueueSnackbar('Reference가 삭제되었습니다.', { variant: 'success' });
+        }, 500);
       }
     } catch (error) {
       console.error('Failed to delete Reference:', error);
@@ -187,13 +192,17 @@ const ReferencesTab = ({ cve, refreshTrigger }) => {
         return;
       }
 
+      // KST 시간으로 생성
+      const kstTime = new Date();
+      kstTime.setHours(kstTime.getHours() + 9);  // UTC+9 (KST)
+
       // Reference 모델에 맞게 데이터 구조화
       const newReference = {
         type: formData.type,
         url: formData.url,
         description: formData.description || '',
-        dateAdded: new Date().toISOString(),
-        addedBy: 'anonymous'
+        dateAdded: kstTime.toISOString(),
+        addedBy: currentUser?.username || 'anonymous'
       };
       
       if (selectedReference) {
@@ -215,10 +224,16 @@ const ReferencesTab = ({ cve, refreshTrigger }) => {
             cve: response.data
           }
         );
-        enqueueSnackbar(`Reference가 ${selectedReference ? '수정' : '추가'}되었습니다.`, { variant: 'success' });
+        
         setOpen(false);
         setSelectedReference(null);
         setFormData(DEFAULT_REFERENCE);
+
+        // 데이터 갱신을 위한 지연 처리
+        setTimeout(async () => {
+          await dispatch(fetchCVEDetail(cve.cveId));
+          enqueueSnackbar(`Reference가 ${selectedReference ? '수정' : '추가'}되었습니다.`, { variant: 'success' });
+        }, 500);
       }
     } catch (error) {
       console.error('Failed to save Reference:', error);
@@ -452,6 +467,12 @@ const ReferencesTab = ({ cve, refreshTrigger }) => {
       </Dialog>
     </Box>
   );
-};
+}, (prevProps, nextProps) => {
+  // 커스텀 비교 함수
+  return prevProps.refreshTrigger === nextProps.refreshTrigger &&
+         prevProps.cve.cveId === nextProps.cve.cveId &&
+         prevProps.currentUser?.id === nextProps.currentUser?.id &&
+         JSON.stringify(prevProps.cve.references) === JSON.stringify(nextProps.cve.references);
+});
 
 export default ReferencesTab;

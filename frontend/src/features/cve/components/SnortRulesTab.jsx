@@ -118,13 +118,16 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
     }
 
     try {
-      setIsAdding(true);
       setLoading(true);
       setError(null);
 
+      // KST 시간으로 생성
+      const kstTime = new Date();
+      kstTime.setHours(kstTime.getHours() + 9);  // UTC+9 (KST)
+
       const ruleToAdd = {
         ...newRule,
-        dateAdded: new Date().toISOString(),
+        dateAdded: kstTime.toISOString(),
         addedBy: currentUser?.username || 'anonymous'
       };
 
@@ -142,16 +145,21 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
             cve: response.data
           }
         );
-        enqueueSnackbar('Snort Rule이 추가되었습니다.', { variant: 'success' });
+        
         setOpen(false);
         setNewRule(DEFAULT_RULE);
+        
+        // 데이터 갱신을 위한 지연 처리
+        setTimeout(async () => {
+          await dispatch(fetchCVEDetail(cve.cveId));
+          enqueueSnackbar('Snort Rule이 추가되었습니다.', { variant: 'success' });
+        }, 500);
       }
     } catch (error) {
       console.error('Failed to add Snort Rule:', error);
       enqueueSnackbar(error.message || 'Snort Rule 추가 중 오류가 발생했습니다.', { variant: 'error' });
     } finally {
       setLoading(false);
-      setIsAdding(false);
     }
   };
 
@@ -183,9 +191,15 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
             cve: response.data
           }
         );
-        enqueueSnackbar('Snort Rule이 수정되었습니다.', { variant: 'success' });
+        
         setOpen(false);
         setSelectedRule(null);
+        
+        // 데이터 갱신을 위한 지연 처리
+        setTimeout(async () => {
+          await dispatch(fetchCVEDetail(cve.cveId));
+          enqueueSnackbar('Snort Rule이 수정되었습니다.', { variant: 'success' });
+        }, 500);
       }
     } catch (error) {
       console.error('Failed to update Snort Rule:', error);
@@ -216,7 +230,12 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
             cve: response.data
           }
         );
-        enqueueSnackbar('Snort Rule이 삭제되었습니다.', { variant: 'success' });
+        
+        // 데이터 갱신을 위한 지연 처리
+        setTimeout(async () => {
+          await dispatch(fetchCVEDetail(cve.cveId));
+          enqueueSnackbar('Snort Rule이 삭제되었습니다.', { variant: 'success' });
+        }, 500);
       }
     } catch (error) {
       console.error('Failed to delete Snort Rule:', error);
@@ -469,9 +488,11 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
     </Box>
   );
 }, (prevProps, nextProps) => {
+  // 커스텀 비교 함수 개선
   return prevProps.refreshTrigger === nextProps.refreshTrigger &&
          prevProps.cve.cveId === nextProps.cve.cveId &&
-         prevProps.currentUser?.id === nextProps.currentUser?.id;
+         prevProps.currentUser?.id === nextProps.currentUser?.id &&
+         JSON.stringify(prevProps.cve.snortRules) === JSON.stringify(nextProps.cve.snortRules);
 });
 
 export default SnortRulesTab;

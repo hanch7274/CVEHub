@@ -140,11 +140,14 @@ const PoCTab = memo(({ cve, currentUser, refreshTrigger }) => {
           }
         );
         
-        enqueueSnackbar('PoC가 추가되었습니다.', { variant: 'success' });
         setOpen(false);
         setNewPoc(DEFAULT_POC);
         
-        await dispatch(fetchCVEDetail(cve.cveId));
+        // 데이터 갱신을 위한 지연 처리
+        setTimeout(async () => {
+          await dispatch(fetchCVEDetail(cve.cveId));
+          enqueueSnackbar('PoC가 추가되었습니다.', { variant: 'success' });
+        }, 500);
       }
     } catch (error) {
       console.error('Failed to add PoC:', error);
@@ -485,10 +488,11 @@ const PoCTab = memo(({ cve, currentUser, refreshTrigger }) => {
     </Box>
   );
 }, (prevProps, nextProps) => {
-  // 커스텀 비교 함수
+  // 커스텀 비교 함수 개선
   return prevProps.refreshTrigger === nextProps.refreshTrigger &&
          prevProps.cve.cveId === nextProps.cve.cveId &&
-         prevProps.currentUser?.id === nextProps.currentUser?.id;
+         prevProps.currentUser?.id === nextProps.currentUser?.id &&
+         JSON.stringify(prevProps.cve.pocs) === JSON.stringify(nextProps.cve.pocs);
 });
 
 export default PoCTab;

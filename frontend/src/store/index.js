@@ -4,6 +4,7 @@ import storage from 'redux-persist/lib/storage';
 import authReducer from './slices/authSlice';
 import notificationReducer from './slices/notificationSlice';
 import cveReducer from './slices/cveSlice';
+import websocketReducer from './slices/websocketSlice';
 import { injectStore } from '../utils/auth';
 import { createTransform } from 'redux-persist';
 
@@ -12,6 +13,7 @@ const appReducer = combineReducers({
   auth: authReducer,
   notifications: notificationReducer,
   cve: cveReducer,
+  websocket: websocketReducer,
 });
 
 // 스토어 초기화를 위한 루트 리듀서 래퍼

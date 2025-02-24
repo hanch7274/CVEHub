@@ -181,14 +181,22 @@ async def create_comment(
 ):
     """댓글 생성 API"""
     try:
+        logger.info("=== Create Comment Debug ===")
+        logger.info(f"Request received for CVE: {cve_id}")
+        logger.info(f"Current user: {current_user.username} (ID: {current_user.id})")
+        logger.info(f"Comment data: {comment_data.dict()}")
+        logger.info(f"Auth headers present: {bool(current_user)}")
+
         cve = await CVEModel.find_one({"cve_id": cve_id})
         if not cve:
+            logger.error(f"CVE not found: {cve_id}")
             raise HTTPException(status_code=404, detail="CVE not found")
 
         # 부모 댓글 ID가 있는 경우 문자열로 변환
         parent_id = str(comment_data.parent_id) if comment_data.parent_id else None
+        logger.info(f"Parent comment ID: {parent_id}")
 
-        # 댓글 깊이 계산 (CommentCreate에는 depth 필드가 없으므로 로컬 변수 사용)
+        # 댓글 깊이 계산
         depth = 0
         if parent_id:
             parent_comment = next(
@@ -196,10 +204,14 @@ async def create_comment(
                 None
             )
             if not parent_comment:
+                logger.error(f"Parent comment not found: {parent_id}")
                 raise HTTPException(status_code=404, detail="Parent comment not found")
 
             depth = parent_comment.depth + 1
+            logger.info(f"Calculated comment depth: {depth}")
+            
             if depth >= MAX_COMMENT_DEPTH:
+                logger.warning(f"Maximum comment depth ({MAX_COMMENT_DEPTH}) exceeded")
                 raise HTTPException(
                     status_code=400,
                     detail=f"Maximum comment depth ({MAX_COMMENT_DEPTH}) exceeded"
@@ -216,28 +228,55 @@ async def create_comment(
             mentions=comment_data.mentions
         )
         
+        logger.info(f"Created comment object: {comment.dict()}")
+        
         # CVE 문서에 댓글 추가
         if not hasattr(cve, 'comments'):
             cve.comments = []
         cve.comments.append(comment)
-        await cve.save()
         
-        logger.info(f"Comment created: {comment.id} for CVE: {cve_id}")
+        try:
+            await cve.save()
+            logger.info(f"Successfully saved comment to database")
+        except Exception as save_error:
+            logger.error(f"Error saving comment to database: {str(save_error)}")
+            raise
 
-        # 멘션된 사용자들에게 알림 전송 (생략 또는 구현)
-        # await process_mentions(
-        #     content=comment_data.content,
-        #     cve_id=cve_id,
-        #     comment_id=comment.id,
-        #     sender=current_user,
-        #     mentioned_usernames=comment_data.mentions
-        # )
+        # 멘션 처리
+        try:
+            await process_mentions(
+                content=comment_data.content,
+                cve_id=cve_id,
+                comment_id=comment.id,
+                sender=current_user,
+                mentioned_usernames=comment_data.mentions
+            )
+            logger.info("Successfully processed mentions")
+        except Exception as mention_error:
+            logger.error(f"Error processing mentions: {str(mention_error)}")
+            # 멘션 처리 실패는 댓글 생성에 영향을 주지 않도록 함
+            pass
 
-        # 업데이트된 CVE 문서 반환
+        # WebSocket 업데이트 전송
+        try:
+            await send_comment_update(cve_id)
+            logger.info("Successfully sent WebSocket update")
+        except Exception as ws_error:
+            logger.error(f"Error sending WebSocket update: {str(ws_error)}")
+            # WebSocket 실패는 댓글 생성에 영향을 주지 않도록 함
+            pass
+
+        logger.info("=== Comment Creation Completed Successfully ===")
         return cve
 
     except Exception as e:
-        logger.error(f"Error creating comment: {str(e)}")
+        logger.error("=== Comment Creation Error ===")
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error message: {str(e)}")
+        logger.error(f"Stack trace: {traceback.format_exc()}")
+        
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"댓글 생성 중 오류가 발생했습니다: {str(e)}"

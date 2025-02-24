@@ -342,7 +342,7 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
     if (cve) {
       const newCounts = {
         poc: cve.pocs?.length || 0,
-        snortRules: cve.snort_rules?.length || 0,
+        snortRules: cve.snortRules?.length || 0,
         references: cve.references?.length || 0,
         comments: countActiveComments(cve.comments)
       };
@@ -626,7 +626,6 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
                   <CommentsTab
                     cve={cve}
                     onUpdate={() => dispatch(fetchCVEDetail(cve.cveId))}
-                    onCommentCountChange={setActiveCommentCount}
                     currentUser={currentUser}
                     refreshTrigger={refreshTriggers.comments}
                   />

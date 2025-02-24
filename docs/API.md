@@ -260,7 +260,7 @@ Authorization: Bearer <access_token>
 ### 알림 (Notification)
 
 #### 알림 목록 조회
-- **GET** `/notification`
+- **GET** `/notifications`
 - Query Parameters:
   - `skip`: number (default: 0)
   - `limit`: number (default: 10)
@@ -282,7 +282,7 @@ Authorization: Bearer <access_token>
 ```
 
 #### 읽지 않은 알림 개수
-- **GET** `/notification/unread-count`
+- **GET** `/notifications/unread-count`
 - Response:
 ```json
 {
@@ -291,11 +291,11 @@ Authorization: Bearer <access_token>
 ```
 
 #### 알림 읽음 처리
-- **PATCH** `/notification/{id}/read`
+- **PATCH** `/notifications/{id}/read`
 - Response: 업데이트된 알림 객체
 
 #### 모든 알림 읽음 처리
-- **PATCH** `/notification/read-all`
+- **PATCH** `/notifications/read-all`
 - Response:
 ```json
 {

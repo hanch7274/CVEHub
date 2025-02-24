@@ -23,10 +23,10 @@ export const CVE = {
 
 // Notification endpoints
 export const NOTIFICATION = {
-  BASE: '/api/notifications',
-  READ: (id) => `/notification/${id}/read`,
-  READ_ALL: '/notification/read-all',
-  UNREAD_COUNT: '/api/notifications/unread/count',
+  BASE: '/notifications',
+  READ: (id) => `/notifications/${id}/read`,
+  READ_ALL: '/notifications/read-all',
+  UNREAD_COUNT: '/notifications/unread/count',
 };
 
 // Crawler endpoints
@@ -45,12 +45,6 @@ export const WEBSOCKET = {
     // 최종 WebSocket URL 구성
     return `${baseUrl}/ws?token=${encodeURIComponent(token)}`;
   }
-};
-
-// User endpoints
-export const USER = {
-  SEARCH: '/user/search',
-  // ... other user endpoints
 };
 
 export const getWebSocketURL = (path) => {

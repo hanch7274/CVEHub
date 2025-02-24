@@ -34,23 +34,27 @@ export const refreshToken = async () => {
     console.log('=== Token Refresh Debug ===');
     console.log('Attempting to refresh token...');
 
-    const formData = new FormData();
-    formData.append('refresh_token', currentRefreshToken);
-
     const response = await axios.post(
       `${API_BASE_URL}${API_ENDPOINTS.AUTH.REFRESH}`, 
-      formData, 
-      { withCredentials: true }
+      {}, // empty body
+      { 
+        headers: {
+          'Authorization': `Bearer ${currentRefreshToken}`,
+          'Content-Type': 'application/json'
+        },
+        withCredentials: true 
+      }
     );
 
     console.log('=== Token Refresh Response Debug ===');
     console.log('Response Status:', response.status);
     console.log('Response Data:', {
       hasAccessToken: !!response.data.accessToken,
-      hasRefreshToken: !!response.data.refreshToken
+      hasRefreshToken: !!response.data.refreshToken,
+      hasUser: !!response.data.user
     });
 
-    const { accessToken, refreshToken } = response.data;
+    const { accessToken, refreshToken, user } = response.data;
     
     // 토큰 유효성 검사
     if (!accessToken) {
@@ -62,6 +66,9 @@ export const refreshToken = async () => {
     setAccessToken(accessToken);
     if (refreshToken) {
       setRefreshToken(refreshToken);
+    }
+    if (user) {
+      setUser(user);
     }
 
     console.log('Token refresh successful');

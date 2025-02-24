@@ -43,7 +43,7 @@ const MentionInput = ({
           return;
         }
 
-        const response = await api.get('/user/search', {
+        const response = await api.get('/users/search', {
           params: { query: cleanQuery }
         });
         console.log('[MentionInput] Search query:', cleanQuery);
