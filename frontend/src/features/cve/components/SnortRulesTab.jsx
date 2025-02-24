@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import {
   Typography,
   Box,
@@ -55,7 +55,7 @@ const DEFAULT_RULE = {
   description: ''
 };
 
-const SnortRulesTab = ({ cve, currentUser, onCountChange, refreshTrigger }) => {
+const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger }) => {
   const dispatch = useDispatch();
   const { sendCustomMessage } = useWebSocketMessage();
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
@@ -468,6 +468,10 @@ const SnortRulesTab = ({ cve, currentUser, onCountChange, refreshTrigger }) => {
       </Dialog>
     </Box>
   );
-};
+}, (prevProps, nextProps) => {
+  return prevProps.refreshTrigger === nextProps.refreshTrigger &&
+         prevProps.cve.cveId === nextProps.cve.cveId &&
+         prevProps.currentUser?.id === nextProps.currentUser?.id;
+});
 
 export default SnortRulesTab;

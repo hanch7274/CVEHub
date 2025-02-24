@@ -1,3 +1,5 @@
+import { WS_BASE_URL } from '../../config';
+
 // Auth endpoints
 export const AUTH = {
   LOGIN: '/auth/token',
@@ -21,10 +23,10 @@ export const CVE = {
 
 // Notification endpoints
 export const NOTIFICATION = {
-  BASE: '/notification',
+  BASE: '/api/notifications',
   READ: (id) => `/notification/${id}/read`,
   READ_ALL: '/notification/read-all',
-  UNREAD_COUNT: '/notification/unread-count',
+  UNREAD_COUNT: '/api/notifications/unread/count',
 };
 
 // Crawler endpoints
@@ -49,4 +51,8 @@ export const WEBSOCKET = {
 export const USER = {
   SEARCH: '/user/search',
   // ... other user endpoints
+};
+
+export const getWebSocketURL = (path) => {
+    return `${WS_BASE_URL}${path}`;
 }; 

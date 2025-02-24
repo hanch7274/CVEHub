@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, memo } from 'react';
 import {
   Typography,
   Chip,
@@ -54,7 +54,7 @@ const DEFAULT_POC = {
   description: ''
 };
 
-const PoCTab = ({ cve, currentUser, refreshTrigger }) => {
+const PoCTab = memo(({ cve, currentUser, refreshTrigger }) => {
   const dispatch = useDispatch();
   const { sendCustomMessage } = useWebSocketMessage();
   const [loading, setLoading] = useState(false);
@@ -484,6 +484,11 @@ const PoCTab = ({ cve, currentUser, refreshTrigger }) => {
       </Dialog>
     </Box>
   );
-};
+}, (prevProps, nextProps) => {
+  // 커스텀 비교 함수
+  return prevProps.refreshTrigger === nextProps.refreshTrigger &&
+         prevProps.cve.cveId === nextProps.cve.cveId &&
+         prevProps.currentUser?.id === nextProps.currentUser?.id;
+});
 
 export default PoCTab;

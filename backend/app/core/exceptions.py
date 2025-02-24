@@ -1,7 +1,7 @@
 from fastapi import HTTPException, status
 
 class CVEHubException(HTTPException):
-    """기본 CVEHub 예외 클래스"""
+    """기본 CVEHub 예외 클래스 - 에러 코드와 상세 메시지를 포함"""
     def __init__(self, status_code: int, detail: str):
         super().__init__(status_code=status_code, detail=detail)
 
@@ -33,4 +33,4 @@ class DatabaseException(CVEHubException):
 class DuplicateException(CVEHubException):
     """중복된 데이터 생성 시도 시 발생하는 예외"""
     def __init__(self, detail: str = "이미 존재하는 데이터입니다."):
-        super().__init__(status_code=status.HTTP_409_CONFLICT, detail=detail) 
+        super().__init__(status_code=status.HTTP_409_CONFLICT, detail=detail)

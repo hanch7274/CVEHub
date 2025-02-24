@@ -60,11 +60,11 @@ const ACTION_TEXT = {
   delete: '삭제'
 };
 
-const HistoryTab = ({ modificationHistory }) => {
+const HistoryTab = ({ modificationHistory = [] }) => {
   // 디버깅을 위한 로그 추가
   console.log('Modification History:', modificationHistory);
 
-  if (!modificationHistory || modificationHistory.length === 0) {
+  if (!Array.isArray(modificationHistory) || modificationHistory.length === 0) {
     return (
       <Box sx={{ p: 3, textAlign: 'center' }}>
         <Typography color="text.secondary">
@@ -119,7 +119,7 @@ const HistoryTab = ({ modificationHistory }) => {
                       }}
                     >
                       <ListItemIcon>
-                        <Tooltip title={change.field_name}>
+                        <Tooltip title={change.fieldName}>
                           {FIELD_ICONS[change.field] || <EditIcon />}
                         </Tooltip>
                       </ListItemIcon>
@@ -138,7 +138,7 @@ const HistoryTab = ({ modificationHistory }) => {
                           </Box>
                         }
                         secondary={
-                          change.detail_type === 'detailed' && (
+                          change.detailType === 'detailed' && (
                             <Box sx={{ mt: 1 }}>
                               {change.before && change.after && (
                                 <>

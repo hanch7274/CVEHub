@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Body, Query
+from fastapi import APIRouter, HTTPException, Depends, status, Body, Query, Response
 from typing import List, Optional
-from ..models.notification import Notification, NotificationCreate
+from ..models.notification import Notification, NotificationCreate, NotificationStatus
 from ..models.user import User
 from ..api.auth import get_current_user
 from datetime import datetime
@@ -11,7 +11,7 @@ from ..core.websocket import manager
 from ..services.notification import NotificationService
 from ..core.dependencies import get_notification_service
 
-router = APIRouter()
+router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 notification_service = NotificationService()
 
 @router.post("/", response_model=Notification)
@@ -59,73 +59,57 @@ async def create_notification(
             detail="알림을 생성하는 중 오류가 발생했습니다."
         )
 
-@router.get("/")
+@router.get("/", response_model=List[Notification])
 async def get_notifications(
+    response: Response,
     skip: int = Query(0, ge=0),
-    limit: int = Query(10, ge=1, le=100),
-    is_read: bool = None,
-    current_user: User = Depends(get_current_user),
-    notification_service: NotificationService = Depends(get_notification_service)
+    limit: int = Query(20, ge=1, le=100),
+    status: Optional[NotificationStatus] = None,
+    current_user: User = Depends(get_current_user)
 ):
     """사용자의 알림 목록을 조회합니다."""
     try:
-        notifications, total = await notification_service.get_user_notifications(
-            current_user.id,
+        notifications = await notification_service.get_notifications(
+            str(current_user.id),
             skip,
             limit,
-            is_read
+            status
         )
-        return {
-            "items": notifications,
-            "total": total,
-            "page": skip // limit + 1,
-            "size": limit,
-            "pages": (total + limit - 1) // limit
-        }
+        
+        # 전체 개수와 읽지 않은 알림 개수를 헤더에 포함
+        total_count = await notification_service.get_total_count(str(current_user.id))
+        unread_count = await notification_service.get_unread_count(str(current_user.id))
+        
+        response.headers["X-Total-Count"] = str(total_count)
+        response.headers["X-Unread-Count"] = str(unread_count)
+        
+        return notifications
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/unread-count")
-async def get_unread_count(
-    current_user: User = Depends(get_current_user),
-    notification_service: NotificationService = Depends(get_notification_service)
-):
-    """현재 로그인한 사용자의 읽지 않은 알림 개수를 조회합니다."""
-    try:
-        count = await notification_service.get_unread_count(current_user.id)
-        return {"count": count}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@router.get("/unread/count")
+async def get_unread_count(current_user: User = Depends(get_current_user)):
+    """읽지 않은 알림 개수를 조회합니다."""
+    count = await notification_service.get_unread_count(str(current_user.id))
+    return {"count": count}
 
-@router.patch("/{notification_id}/read")
+@router.put("/notifications/{notification_id}/read")
 async def mark_as_read(
     notification_id: str,
-    current_user: User = Depends(get_current_user),
-    notification_service: NotificationService = Depends(get_notification_service)
+    current_user: User = Depends(get_current_user)
 ):
-    """알림을 읽음 처리합니다."""
-    try:
-        notification = await notification_service.mark_as_read(
-            PydanticObjectId(notification_id),
-            current_user.id
-        )
-        if not notification:
-            raise HTTPException(status_code=404, detail="알림을 찾을 수 없습니다.")
-        return notification
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    success = await notification_service.mark_as_read(
+        notification_id,
+        str(current_user.id)
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"status": "success"}
 
-@router.patch("/read-all")
-async def mark_all_as_read(
-    current_user: User = Depends(get_current_user),
-    notification_service: NotificationService = Depends(get_notification_service)
-):
-    """모든 알림을 읽음 처리합니다."""
-    try:
-        await notification_service.mark_all_as_read(current_user.id)
-        return {"message": "모든 알림이 읽음 처리되었습니다."}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@router.put("/notifications/read-all")
+async def mark_all_as_read(current_user: User = Depends(get_current_user)):
+    success = await notification_service.mark_all_as_read(str(current_user.id))
+    return {"status": "success" if success else "no notifications to update"}
 
 @router.post("/read-multiple")
 async def mark_multiple_as_read(

@@ -1,8 +1,9 @@
 import api from '../api/config/axios';
 import { setAccessToken, setRefreshToken, getRefreshToken, getAccessToken, clearAuthStorage, setUser } from '../utils/storage/tokenStorage';
 import axios from 'axios';
+import { API_BASE_URL, API_ENDPOINTS } from '../config';
 
-// store를 동적으로 주입하기 위한 변수
+// store를 동적으로 주입하기 위한 변수 (필요 시 사용)
 let store = null;
 
 export const injectStore = (_store) => {
@@ -20,7 +21,7 @@ export const getCurrentUser = async () => {
   }
 };
 
-// 토큰 갱신
+// 토큰 갱신 (자동 갱신 로직 적용)
 export const refreshToken = async () => {
   const currentRefreshToken = getRefreshToken();
   
@@ -33,17 +34,14 @@ export const refreshToken = async () => {
     console.log('=== Token Refresh Debug ===');
     console.log('Attempting to refresh token...');
 
-    // OAuth2 형식으로 데이터 변환
-    const formData = new URLSearchParams();
-    formData.append('grant_type', 'refresh_token');
+    const formData = new FormData();
     formData.append('refresh_token', currentRefreshToken);
 
-    // 직접 axios 인스턴스 생성하여 토큰 갱신 요청
-    const response = await axios.post(`${process.env.REACT_APP_API_URL || 'http://localhost:8000'}/auth/refresh`, formData, {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      }
-    });
+    const response = await axios.post(
+      `${API_BASE_URL}${API_ENDPOINTS.AUTH.REFRESH}`, 
+      formData, 
+      { withCredentials: true }
+    );
 
     console.log('=== Token Refresh Response Debug ===');
     console.log('Response Status:', response.status);
@@ -78,12 +76,11 @@ export const refreshToken = async () => {
       stack: error.stack
     });
 
-    // 401 또는 403 에러인 경우에만 저장소 초기화
+    // 401 또는 403 에러인 경우 저장소 초기화 및 리다이렉트
     if (error.response?.status === 401 || error.response?.status === 403) {
       console.log('Token refresh failed with auth error, clearing storage...');
       clearAuthStorage();
       
-      // 에러 발생 시 현재 페이지 URL 저장
       if (typeof window !== 'undefined') {
         const currentPath = window.location.pathname + window.location.search;
         sessionStorage.setItem('redirectAfterLogin', currentPath);
@@ -125,7 +122,6 @@ export const login = async (credentials) => {
       throw new Error('Invalid response data: Missing access token or user data');
     }
 
-    // 순차적으로 저장 - 에러 발생 가능성이 있는 작업들을 try-catch로 감싸기
     try {
       setAccessToken(accessToken);
       console.log('Access token saved successfully');
@@ -139,7 +135,7 @@ export const login = async (credentials) => {
       console.log('User data saved successfully');
     } catch (storageError) {
       console.error('Error saving authentication data:', storageError);
-      clearAuthStorage(); // 저장 중 에러 발생 시 스토리지 초기화
+      clearAuthStorage();
       throw new Error('Failed to save authentication data');
     }
 
@@ -172,7 +168,6 @@ export const logout = async () => {
     clearAuthStorage();
   } catch (error) {
     console.error('Logout error:', error);
-    // 에러가 발생하더라도 로컬 스토리지는 클리어
     clearAuthStorage();
     throw error;
   }
@@ -213,4 +208,4 @@ export const register = async (userData) => {
     });
     throw error.response?.data?.detail || error.message || '회원가입 중 오류가 발생했습니다.';
   }
-}; 
+};

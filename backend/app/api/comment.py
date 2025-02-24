@@ -14,12 +14,12 @@ from beanie import PydanticObjectId
 from bson import ObjectId
 from ..core.websocket import manager, WSMessageType
 from fastapi.logger import logger
-from fastapi import HTTPException
 from pydantic import ValidationError
 from ..api.notification import create_notification
 from ..models.notification import Notification
 from ..services.notification import NotificationService
 from ..core.dependencies import get_notification_service
+
 # 로거 설정
 logger = logging.getLogger(__name__)
 
@@ -73,25 +73,23 @@ def comment_to_dict(comment: Comment) -> dict:
         comment_dict["updated_at"] = comment.updated_at.isoformat()
     return comment_dict
 
-async def process_mentions(content: str, cve_id: str, comment_id: PydanticObjectId, sender: User, mentioned_usernames: List[str] = None):
+async def process_mentions(content: str, cve_id: str, comment_id: PydanticObjectId,
+                           sender: User, mentioned_usernames: List[str] = None):
     """댓글 내용에서 멘션된 사용자를 찾아 알림을 생성합니다."""
     try:
         logger.info(f"=== Starting process_mentions ===")
         logger.info(f"Parameters: content={content}, cve_id={cve_id}, comment_id={comment_id}, sender={sender.username}")
         
-        # 멘션된 사용자 목록 가져오기
         mentions = mentioned_usernames if mentioned_usernames else re.findall(r'@(\w+)', content)
         logger.info(f"Found mentions: {mentions}")
         
         notifications_created = 0
         for username in mentions:
             try:
-                # 멘션된 사용자 찾기
                 mentioned_user = await User.find_one({"username": username})
-                if mentioned_user and str(mentioned_user.id) != str(sender.id):  # 자기 자신을 멘션한 경우 제외
+                if mentioned_user and str(mentioned_user.id) != str(sender.id):  # 자기 자신 멘션 제외
                     logger.info(f"Processing mention for user: {username} (ID: {mentioned_user.id})")
-                    
-                    # 알림 생성
+
                     notification, unread_count = await Notification.create_notification(
                         recipient_id=mentioned_user.id,
                         sender_id=sender.id,
@@ -101,19 +99,14 @@ async def process_mentions(content: str, cve_id: str, comment_id: PydanticObject
                         comment_content=content,
                         content=f"{sender.username}님이 댓글에서 언급했습니다."
                     )
-                    
                     if notification and notification.id:
                         notifications_created += 1
                         logger.info(f"Created notification: {notification.id} for user {username}")
-                        
-                        # 웹소켓을 통해 실시간 알림 전송
+
                         notification_dict = notification.dict()
                         logger.info(f"Sending WebSocket notification: {notification_dict}")
-                        
-                        await manager.send_notification(
-                            str(mentioned_user.id),
-                            notification_dict
-                        )
+
+                        await manager.send_notification(str(mentioned_user.id), notification_dict)
                         logger.info(f"WebSocket notification sent to user {username} (ID: {mentioned_user.id})")
                     else:
                         logger.error(f"Failed to create notification for user {username}")
@@ -122,11 +115,8 @@ async def process_mentions(content: str, cve_id: str, comment_id: PydanticObject
                         logger.warning(f"Mentioned user not found: {username}")
                     elif str(mentioned_user.id) == str(sender.id):
                         logger.info(f"Skipping self mention for user: {username}")
-                        
             except Exception as e:
                 logger.error(f"Error processing mention for user {username}: {str(e)}")
-                logger.error(f"Error type: {type(e)}")
-                logger.error(f"Full error details: {e.__dict__ if hasattr(e, '__dict__') else 'No details available'}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 continue
                 
@@ -143,18 +133,15 @@ async def count_active_comments(cve_id: str) -> int:
         logger.debug("=== Count Active Comments Debug ===")
         logger.debug(f"Counting active comments for CVE: {cve_id}")
         
-        # CVE 문서를 찾습니다
         cve = await CVEModel.find_one({"cve_id": cve_id})
         if not cve:
             logger.warning(f"CVE not found: {cve_id}")
             return 0
-            
-        # comments 필드가 없는 경우 0을 반환
+
         if not hasattr(cve, 'comments'):
             logger.debug("No comments field found in CVE document")
             return 0
-            
-        # 활성화된 댓글만 필터링하여 카운트
+
         active_comments = [comment for comment in cve.comments if not comment.is_deleted]
         count = len(active_comments)
         logger.debug(f"Found {count} active comments out of {len(cve.comments)} total comments")
@@ -183,7 +170,7 @@ async def send_comment_update(cve_id: str):
         logger.error(f"Error sending comment update for CVE {cve_id}: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
 
-MAX_COMMENT_DEPTH = 10  # 최대 댓글 깊이 설정
+MAX_COMMENT_DEPTH = 10  # 최대 댓글 깊이 설정 (원한다면 3 등으로 조정 가능)
 
 @router.post("/{cve_id}/comments", response_model=CVEModel)
 async def create_comment(
@@ -194,42 +181,29 @@ async def create_comment(
 ):
     """댓글 생성 API"""
     try:
-        cve = await CVEModel.get(CVEModel.cve_id == cve_id)
+        cve = await CVEModel.find_one({"cve_id": cve_id})
         if not cve:
             raise HTTPException(status_code=404, detail="CVE not found")
-
-        # 댓글 깊이 검사
-        if comment_data.parent_id:
-            parent_comment = next(
-                (c for c in cve.comments if c.id == comment_data.parent_id),
-                None
-            )
-            if parent_comment:
-                new_depth = parent_comment.depth + 1
-                if new_depth >= MAX_COMMENT_DEPTH:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Maximum comment depth ({MAX_COMMENT_DEPTH}) exceeded"
-                    )
-                comment_data.depth = new_depth
 
         # 부모 댓글 ID가 있는 경우 문자열로 변환
         parent_id = str(comment_data.parent_id) if comment_data.parent_id else None
 
-        # 댓글 깊이 계산
+        # 댓글 깊이 계산 (CommentCreate에는 depth 필드가 없으므로 로컬 변수 사용)
         depth = 0
         if parent_id:
             parent_comment = next(
                 (comment for comment in cve.comments if str(comment.id) == parent_id),
                 None
             )
-            
             if not parent_comment:
                 raise HTTPException(status_code=404, detail="Parent comment not found")
-            
+
             depth = parent_comment.depth + 1
-            if depth > 2:  # 대댓글은 2단계까지만 허용
-                raise HTTPException(status_code=400, detail="Maximum comment depth exceeded")
+            if depth >= MAX_COMMENT_DEPTH:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Maximum comment depth ({MAX_COMMENT_DEPTH}) exceeded"
+                )
 
         # 댓글 생성
         comment = Comment(
@@ -242,35 +216,25 @@ async def create_comment(
             mentions=comment_data.mentions
         )
         
-        # comments 리스트가 없으면 생성
+        # CVE 문서에 댓글 추가
         if not hasattr(cve, 'comments'):
             cve.comments = []
-        
-        # 댓글을 CVE 문서에 추가
         cve.comments.append(comment)
         await cve.save()
         
         logger.info(f"Comment created: {comment.id} for CVE: {cve_id}")
 
-        # 멘션된 사용자들에게만 알림 전송
-        if comment_data.mentions:
-            for username in comment_data.mentions:
-                if username != current_user.username:
-                    mentioned_user = await User.find_one({"username": username})
-                    if mentioned_user:
-                        await notification_service.create_notification(
-                            recipient_id=mentioned_user.id,
-                            sender_id=current_user.id,
-                            sender_username=current_user.username,
-                            notification_type="mention",
-                            cve_id=cve_id,
-                            comment_id=comment.id,
-                            comment_content=comment_data.content,
-                            content=f"{current_user.username}님이 댓글에서 회원님을 언급했습니다."
-                        )
+        # 멘션된 사용자들에게 알림 전송 (생략 또는 구현)
+        # await process_mentions(
+        #     content=comment_data.content,
+        #     cve_id=cve_id,
+        #     comment_id=comment.id,
+        #     sender=current_user,
+        #     mentioned_usernames=comment_data.mentions
+        # )
 
-        # 전체 댓글 목록 반환
-        return await get_comments(cve_id)
+        # 업데이트된 CVE 문서 반환
+        return cve
 
     except Exception as e:
         logger.error(f"Error creating comment: {str(e)}")
@@ -288,12 +252,10 @@ async def update_comment(
 ):
     """댓글을 수정합니다."""
     try:
-        # CVE 문서 찾기
         cve = await CVEModel.find_one({"cve_id": cve_id})
         if not cve:
             raise HTTPException(status_code=404, detail="CVE를 찾을 수 없습니다.")
 
-        # 댓글 찾기
         comment = None
         for c in cve.comments:
             if str(c.id) == str(comment_id):
@@ -306,7 +268,7 @@ async def update_comment(
         if comment.username != current_user.username and not current_user.is_admin:
             raise HTTPException(status_code=403, detail="댓글을 수정할 권한이 없습니다.")
             
-        # KST 시간대로 현재 시간 생성
+        # KST 시간대
         kst_now = datetime.now(ZoneInfo("Asia/Seoul"))
             
         # 댓글 수정
@@ -323,7 +285,6 @@ async def update_comment(
             for username in mentions:
                 if username == current_user.username:
                     continue
-
                 mentioned_user = await User.find_one({"username": username})
                 if mentioned_user:
                     notification = await Notification(
@@ -350,10 +311,10 @@ async def update_comment(
                             str(mentioned_user.id)
                         )
 
-        # 활성화된 댓글 수 계산
+        # 활성화된 댓글 수
         active_count = await count_active_comments(cve_id)
 
-        # 댓글 목록을 딕셔너리로 변환
+        # 댓글 목록 딕셔너리 변환
         comments = []
         for c in cve.comments:
             comment_dict = {
@@ -386,17 +347,15 @@ async def update_comment(
 async def delete_comment(
     cve_id: str,
     comment_id: str,
-    permanent: bool = False,  # 영구 삭제 여부
+    permanent: bool = False,
     current_user: User = Depends(get_current_user)
 ):
     """댓글을 삭제합니다."""
     try:
-        # CVE 문서 찾기
         cve = await CVEModel.find_one({"cve_id": cve_id})
         if not cve:
             raise HTTPException(status_code=404, detail="CVE를 찾을 수 없습니다.")
 
-        # 댓글 찾기
         comment = None
         comment_index = None
         for i, c in enumerate(cve.comments):
@@ -416,13 +375,10 @@ async def delete_comment(
             # 관리자만 영구 삭제 가능
             if not current_user.is_admin:
                 raise HTTPException(status_code=403, detail="영구 삭제 권한이 없습니다.")
-            # 댓글 완전 삭제
             cve.comments.pop(comment_index)
         else:
-            # 소프트 삭제 (is_deleted 플래그만 변경)
             comment.is_deleted = True
 
-        # 변경사항 저장
         await cve.save()
         
         # 댓글 수 업데이트 이벤트 발송
@@ -441,7 +397,6 @@ async def delete_comment(
 async def get_comments(cve_id: str):
     """CVE의 모든 댓글을 조회합니다."""
     try:
-        # CVE 검색
         cve = await CVEModel.find_one({"cve_id": cve_id})
         if not cve:
             raise HTTPException(
@@ -449,11 +404,9 @@ async def get_comments(cve_id: str):
                 detail=f"CVE를 찾을 수 없습니다: {cve_id}"
             )
 
-        # 댓글 목록이 없는 경우 빈 리스트 반환
         if not hasattr(cve, 'comments'):
             return []
 
-        # 댓글 목록을 딕셔너리로 변환
         comments = []
         for comment in cve.comments:
             comment_dict = {
@@ -467,7 +420,6 @@ async def get_comments(cve_id: str):
                 "depth": comment.depth
             }
             comments.append(comment_dict)
-            
         return comments
         
     except Exception as e:

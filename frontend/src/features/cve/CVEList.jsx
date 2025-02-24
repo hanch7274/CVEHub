@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+// frontend/src/features/cve/CVEList.jsx
+
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Table,
@@ -25,7 +27,11 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  CircularProgress
+  CircularProgress,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -46,20 +52,15 @@ import {
   updateFilters,
   selectCVEListData,
   selectCVEFiltersData,
-  selectCVELoading,
   refreshCVEList,
-  deleteCVE,
-  addCVEFromWebSocket,
-  updateCVEFromWebSocket,
-  deleteCVEFromWebSocket
+  deleteCVE
 } from '../../store/slices/cveSlice';
 import { useSnackbar } from 'notistack';
-import { useWebSocketContext } from '../../contexts/WebSocketContext';
+import { useWebSocketContext, useWebSocketMessage } from '../../contexts/WebSocketContext';
 
-import { useWebSocketMessage } from '../../contexts/WebSocketContext';
-
+const STATUS_OPTIONS = ["전체", "신규등록", "분석중", "분석완료", "대응완료"];
 const STATUS_COLORS = {
-  '미할당': 'default',
+  '신규등록': 'default',
   '분석중': 'info',
   '분석완료': 'warning',
   '대응완료': 'success'
@@ -71,10 +72,8 @@ const CVEList = () => {
   const { isConnected, isReady } = useWebSocketContext();
   
   // Redux selectors
-  const { items: cves, total: totalCount, loading, error, forceRefresh } = 
-    useSelector(selectCVEListData);
-  const { page, rowsPerPage, search: searchQuery } = 
-    useSelector(selectCVEFiltersData);
+  const { items: cves, total: totalCount, loading, error } = useSelector(selectCVEListData);
+  const { page, rowsPerPage, search: searchQuery, status: statusFilter } = useSelector(selectCVEFiltersData);
 
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -82,11 +81,9 @@ const CVEList = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [cveToDelete, setCveToDelete] = useState(null);
   const [searchInput, setSearchInput] = useState('');
-  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
-  const initialLoadRef = useRef(false);
-  const lastFetchParamsRef = useRef(null);
   const [selectedCVE, setSelectedCVE] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [localStatusFilter, setLocalStatusFilter] = useState("전체");
 
   console.log('[CVE] Current state:', {
     cves,
@@ -94,7 +91,8 @@ const CVEList = () => {
     error,
     page,
     rowsPerPage,
-    searchQuery
+    searchQuery,
+    statusFilter
   });
 
   useEffect(() => {
@@ -102,28 +100,29 @@ const CVEList = () => {
       navigate(`/cves/${selectedCVE.id}`);
       setSelectedCVE(null);
     }
-  }, [selectedCVE, navigate, setSelectedCVE]);
+  }, [selectedCVE, navigate]);
 
-  // 로그인 체크
   useEffect(() => {
     if (!user) {
       navigate('/login');
     }
   }, [user, navigate]);
 
-  // 데이터 로딩 로직
+  // 데이터 로딩 로직 (상태 필터 포함)
   useEffect(() => {
     const fetchData = () => {
       console.log('Fetching CVE data with params:', {
         skip: page * rowsPerPage,
         limit: rowsPerPage,
-        search: searchQuery
+        search: searchQuery,
+        status: statusFilter && statusFilter !== "전체" ? statusFilter : undefined
       });
       
       dispatch(fetchCVEList({
         skip: page * rowsPerPage,
         limit: rowsPerPage,
-        search: searchQuery
+        search: searchQuery,
+        status: statusFilter && statusFilter !== "전체" ? statusFilter : undefined
       }))
       .unwrap()
       .then(response => {
@@ -131,48 +130,50 @@ const CVEList = () => {
       })
       .catch(error => {
         console.error('Failed to fetch CVE data:', error);
-        enqueueSnackbar('CVE 목록을 불러오는데 실패했습니다.', { 
-          variant: 'error' 
-        });
+        enqueueSnackbar('CVE 목록을 불러오는데 실패했습니다.', { variant: 'error' });
       });
     };
 
     if (user && isReady) {
       fetchData();
     }
-  }, [dispatch, page, rowsPerPage, searchQuery, user, isReady, enqueueSnackbar]);
+  }, [dispatch, page, rowsPerPage, searchQuery, statusFilter, user, isReady, enqueueSnackbar]);
 
-  // 검색 디바운스 처리
   const debouncedSearch = useMemo(
     () => debounce((term) => {
       dispatch(updateFilters({ 
         search: term,
-        page: 0  // 검색 시 첫 페이지로 이동
+        page: 0
       }));
     }, 300),
     [dispatch]
   );
 
-  // 입력 핸들러 최적화
   const handleSearchChange = useCallback((e) => {
     const value = e.target.value;
-    setSearchInput(value);  // 즉시 입력값 반영
-    debouncedSearch(value); // 디바운스된 검색 실행
+    setSearchInput(value);
+    debouncedSearch(value);
   }, [debouncedSearch]);
 
-  // 컴포넌트 언마운트 시 디바운스 취소
+  const handleStatusFilterChange = useCallback((e) => {
+    const value = e.target.value;
+    setLocalStatusFilter(value);
+    dispatch(updateFilters({
+      status: value,
+      page: 0
+    }));
+  }, [dispatch]);
+
   useEffect(() => {
     return () => {
       debouncedSearch.cancel();
     };
   }, [debouncedSearch]);
 
-  // 페이지 변경 핸들러
   const handlePageChange = (event, newPage) => {
     dispatch(updateFilters({ page: newPage }));
   };
 
-  // 페이지당 행 수 변경 핸들러
   const handleRowsPerPageChange = (event) => {
     const newRowsPerPage = parseInt(event.target.value, 10);
     dispatch(updateFilters({ 
@@ -181,12 +182,10 @@ const CVEList = () => {
     }));
   };
 
-  // 새로고침 핸들러
   const handleRefresh = () => {
     dispatch(refreshCVEList());
   };
 
-  // CVE 클릭 핸들러 수정
   const handleCVEClick = (cve) => {
     console.log('Clicked CVE:', cve);
     setSelectedCVE(cve);
@@ -211,12 +210,8 @@ const CVEList = () => {
     dispatch(refreshCVEList());
   };
 
-  const handleCVEUpdated = (updatedCVE) => {
-    dispatch(refreshCVEList());
-  };
-
   const handleDeleteClick = (e, cve) => {
-    e.stopPropagation();  // 이벤트 전파 중단
+    e.stopPropagation();
     setCveToDelete(cve);
     setDeleteDialogOpen(true);
   };
@@ -228,7 +223,6 @@ const CVEList = () => {
 
   const handleDeleteConfirm = async () => {
     if (!cveToDelete) return;
-
     try {
       await dispatch(deleteCVE(cveToDelete.cveId)).unwrap();
       enqueueSnackbar('CVE가 성공적으로 삭제되었습니다.', {
@@ -246,49 +240,17 @@ const CVEList = () => {
     }
   };
 
-  const openCVEDetail = useCallback(async (cveId) => {
-    try {
-      const response = await api.get(`/cves/${cveId}`);
-      setSelectedCVE(response.data);
-    } catch (error) {
-      console.error('Error fetching CVE details:', error);
-      dispatch(updateFilters({ 
-        error: error.response?.data?.detail || 'CVE 상세 정보를 가져오는 중 오류가 발생했습니다.' 
-      }));
+  useWebSocketMessage((message) => {
+    if (message && message.type === 'cve_update') {
+      dispatch(refreshCVEList());
     }
-  }, [dispatch]);
-
-  const renderSkeletons = () => (
-    Array(rowsPerPage).fill(0).map((_, index) => (
-      <TableRow key={index}>
-        <TableCell><Skeleton animation="wave" /></TableCell>
-        <TableCell><Skeleton animation="wave" /></TableCell>
-        <TableCell><Skeleton animation="wave" width={100} /></TableCell>
-        <TableCell align="right"><Skeleton animation="wave" width={80} /></TableCell>
-      </TableRow>
-    ))
-  );
-
-  // WebSocket 메시지 핸들러
-  useWebSocketMessage('cve_update', () => {
-    // 새로고침 버튼 클릭 시 실행될 콜백
-    dispatch(refreshCVEList());
   });
 
-  // 로딩 상태 표시
   if (!user) {
     return (
-      <Box sx={{ 
-        display: 'flex', 
-        flexDirection: 'column',
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        height: '100vh' 
-      }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
         <CircularProgress />
-        <Typography sx={{ mt: 2 }}>
-          인증 확인 중...
-        </Typography>
+        <Typography sx={{ mt: 2 }}>인증 확인 중...</Typography>
       </Box>
     );
   }
@@ -296,17 +258,9 @@ const CVEList = () => {
   if (!isReady) {
     console.log('Waiting for WebSocket connection...', { isReady });
     return (
-      <Box sx={{ 
-        display: 'flex', 
-        flexDirection: 'column',
-        alignItems: 'center', 
-        justifyContent: 'center', 
-        height: '100vh' 
-      }}>
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
         <CircularProgress />
-        <Typography sx={{ mt: 2 }}>
-          서버와 연결 설정 중...
-        </Typography>
+        <Typography sx={{ mt: 2 }}>서버와 연결 설정 중...</Typography>
       </Box>
     );
   }
@@ -329,12 +283,7 @@ const CVEList = () => {
                 variant="contained"
                 startIcon={<AddIcon />}
                 onClick={handleCreateCVE}
-                sx={{ 
-                  borderRadius: 1,
-                  textTransform: 'none',
-                  bgcolor: 'primary.main',
-                  '&:hover': { bgcolor: 'primary.dark' }
-                }}
+                sx={{ borderRadius: 1, textTransform: 'none', bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' } }}
               >
                 CVE 추가
               </Button>
@@ -347,21 +296,28 @@ const CVEList = () => {
               value={searchInput}
               onChange={handleSearchChange}
               size="small"
-              sx={{ 
-                width: 300,
-                '& .MuiOutlinedInput-root': {
-                  borderRadius: 1,
-                  bgcolor: 'background.default'
-                }
-              }}
+              sx={{ width: 300, '& .MuiOutlinedInput-root': { borderRadius: 1, bgcolor: 'background.default' } }}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
                     <SearchIcon sx={{ color: 'text.secondary' }} />
                   </InputAdornment>
-                ),
+                )
               }}
             />
+            <FormControl size="small" sx={{ width: 150 }}>
+              <InputLabel id="status-filter-label">상태</InputLabel>
+              <Select
+                labelId="status-filter-label"
+                label="상태"
+                value={localStatusFilter}
+                onChange={handleStatusFilterChange}
+              >
+                {STATUS_OPTIONS.map((option) => (
+                  <MenuItem key={option} value={option}>{option}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             <Tooltip title="필터">
               <IconButton size="small" sx={{ bgcolor: 'action.hover' }}>
                 <FilterIcon />
@@ -370,26 +326,12 @@ const CVEList = () => {
           </Box>
 
           {error && (
-            <Alert 
-              severity="error" 
-              sx={{ 
-                mb: 2,
-                borderRadius: 1
-              }}
-            >
+            <Alert severity="error" sx={{ mb: 2, borderRadius: 1 }}>
               {error}
             </Alert>
           )}
 
-          <TableContainer 
-            component={Paper} 
-            elevation={0}
-            sx={{ 
-              borderRadius: 1,
-              border: '1px solid',
-              borderColor: 'divider'
-            }}
-          >
+          <TableContainer component={Paper} elevation={0} sx={{ borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
             <Table sx={{ minWidth: 650 }} aria-label="CVE table">
               <TableHead>
                 <TableRow>
@@ -401,26 +343,26 @@ const CVEList = () => {
               </TableHead>
               <TableBody>
                 {loading ? (
-                  renderSkeletons()
+                  Array(rowsPerPage).fill(0).map((_, index) => (
+                    <TableRow key={index}>
+                      <TableCell><Skeleton animation="wave" /></TableCell>
+                      <TableCell><Skeleton animation="wave" /></TableCell>
+                      <TableCell><Skeleton animation="wave" width={100} /></TableCell>
+                      <TableCell align="right"><Skeleton animation="wave" width={80} /></TableCell>
+                    </TableRow>
+                  ))
                 ) : Array.isArray(cves) && cves.length > 0 ? (
                   cves.map((cve) => (
                     <TableRow
                       key={cve.Id || cve.cveId}
-                      sx={{ 
+                      sx={{
                         '&:last-child td, &:last-child th': { border: 0 },
                         '&:hover': { bgcolor: 'action.hover' },
                         cursor: 'pointer'
                       }}
                       onClick={() => handleCVEClick(cve)}
                     >
-                      <TableCell 
-                        component="th" 
-                        scope="row"
-                        sx={{ 
-                          color: 'primary.main',
-                          fontWeight: 500
-                        }}
-                      >
+                      <TableCell component="th" scope="row" sx={{ color: 'primary.main', fontWeight: 500 }}>
                         {cve.cveId}
                       </TableCell>
                       <TableCell>{cve.title || '제목 없음'}</TableCell>
@@ -429,10 +371,7 @@ const CVEList = () => {
                           label={cve.status || '상태 없음'}
                           color={STATUS_COLORS[cve.status] || 'default'}
                           size="small"
-                          sx={{ 
-                            borderRadius: 1,
-                            fontWeight: 500
-                          }}
+                          sx={{ borderRadius: 1, fontWeight: 500 }}
                         />
                       </TableCell>
                       <TableCell align="right">
@@ -441,17 +380,15 @@ const CVEList = () => {
                             <IconButton
                               size="medium"
                               onClick={(e) => {
-                                e.stopPropagation();  // 이벤트 전파 중단
+                                e.stopPropagation();
                                 handleCVEClick(cve);
                               }}
-                              sx={{ 
+                              sx={{
                                 width: 36,
                                 height: 36,
                                 bgcolor: 'primary.main',
                                 color: 'primary.contrastText',
-                                '&:hover': { 
-                                  bgcolor: 'primary.dark'
-                                }
+                                '&:hover': { bgcolor: 'primary.dark' }
                               }}
                             >
                               <EditIcon fontSize="small" />
@@ -460,15 +397,13 @@ const CVEList = () => {
                           <Tooltip title="삭제">
                             <IconButton
                               size="medium"
-                              onClick={(e) => handleDeleteClick(e, cve)}  // 이벤트 객체 전달
-                              sx={{ 
+                              onClick={(e) => handleDeleteClick(e, cve)}
+                              sx={{
                                 width: 36,
                                 height: 36,
                                 bgcolor: 'error.main',
                                 color: 'error.contrastText',
-                                '&:hover': { 
-                                  bgcolor: 'error.dark'
-                                }
+                                '&:hover': { bgcolor: 'error.dark' }
                               }}
                             >
                               <DeleteIcon fontSize="small" />
@@ -499,10 +434,7 @@ const CVEList = () => {
             page={page}
             onPageChange={handlePageChange}
             onRowsPerPageChange={handleRowsPerPageChange}
-            sx={{
-              borderTop: '1px solid',
-              borderColor: 'divider'
-            }}
+            sx={{ borderTop: '1px solid', borderColor: 'divider' }}
           />
         </CardContent>
       </Card>
@@ -523,10 +455,7 @@ const CVEList = () => {
         />
       )}
 
-      <Dialog
-        open={deleteDialogOpen}
-        onClose={handleDeleteCancel}
-      >
+      <Dialog open={deleteDialogOpen} onClose={handleDeleteCancel}>
         <DialogTitle>CVE 삭제 확인</DialogTitle>
         <DialogContent>
           <Typography>
@@ -535,12 +464,7 @@ const CVEList = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={handleDeleteCancel}>취소</Button>
-          <Button 
-            onClick={handleDeleteConfirm} 
-            color="error" 
-            variant="contained"
-            disabled={!cveToDelete}
-          >
+          <Button onClick={handleDeleteConfirm} color="error" variant="contained" disabled={!cveToDelete}>
             삭제
           </Button>
         </DialogActions>

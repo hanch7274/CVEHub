@@ -224,12 +224,22 @@ Authorization: Bearer <access_token>
 }
 ```
 
+#### 댓글 작성 제한
+- 최대 댓글 깊이: 10
+- 초과 시 응답:
+```json
+{
+  "detail": "Maximum comment depth (10) exceeded"
+}
+```
+
 #### 댓글 작성
 - **POST** `/cves/{cve_id}/comments`
 ```json
 {
   "content": "string",
-  "parent_id": "string",
+  "parent_id": "string",  // 대댓글인 경우
+  "depth": number,        // 자동 계산됨 (0-9)
   "mentions": []
 }
 ```

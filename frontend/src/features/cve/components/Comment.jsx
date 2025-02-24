@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Typography,
@@ -16,211 +16,229 @@ import {
   Edit as EditIcon,
   Reply as ReplyIcon,
   Visibility as VisibilityIcon,
-  VisibilityOff as VisibilityOffIcon,
-  DeleteForever as DeleteForeverIcon
+  VisibilityOff as VisibilityOffIcon
 } from '@mui/icons-material';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { ko } from 'date-fns/locale';
-import { api } from '../../../utils/auth';
-import MentionInput from './MentionInput';
 import { highlightMentions } from '../../../utils/mentionUtils';
 import { StyledListItem } from './CommonStyles';
+import MentionInput from './MentionInput';
 
+/**
+ * @param {object} props
+ *   - comment: { id, content, username, createdAt, isDeleted, parentId, depth }
+ *   - depth: 댓글 깊이 (대댓글이면 1,2…)
+ *   - currentUsername: 현재 로그인 유저명
+ *   - isAdmin: 관리자 여부
+ *   - isEditing: 현재 이 댓글이 "수정 중"인지 여부 (부모에서 관리)
+ *   - onEdit, onDelete: 수정/삭제 시 상위에 알리는 콜백
+ *   - onReplySubmit: (parentCommentId, content) => {} 형태의 답글 등록 콜백
+ *   - onReply: 답글 모드 시작 요청 (예, onReply(comment))
+ *   - onReplyCancel: 답글 모드 종료 요청
+ *   - replyMode: 부모에서 전달받은 현재 이 댓글이 답글 모드인지 여부
+ *   - children: 대댓글 렌더링 시 사용
+ *   - onStartEdit: (commentId) => {} 수정 모드 시작
+ *   - onFinishEdit: 수정 모드 종료
+ */
 const Comment = ({
   comment,
-  onReply,
+  depth = 0,
+  currentUsername,
+  isAdmin,
+  isEditing,
   onEdit,
   onDelete,
-  currentUsername,
-  depth = 0,
-  replyMode,
   onReplySubmit,
-  onReplyCancel,
-  cveId,
+  onReply,        // 부모에서 관리하는 답글 모드 시작 핸들러
+  onReplyCancel,  // 부모에서 관리하는 답글 모드 종료 핸들러
+  replyMode,      // 부모에서 전달받은 현재 답글 모드 여부
   children,
-  isAdmin,
   onStartEdit,
   onFinishEdit,
-  isEditing
 }) => {
+  // 수정 모드에서의 로컬 입력 상태
   const [editContent, setEditContent] = useState(comment.content);
-  const [showOriginal, setShowOriginal] = useState(false);
+  // 답글 입력 상태
   const [replyContent, setReplyContent] = useState('');
+  // 삭제 확인 다이얼로그 상태
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  // 삭제된 댓글 원본 보기 토글
+  const [showOriginal, setShowOriginal] = useState(false);
 
-  // 권한 및 상태 체크
   const isDeleted = comment.isDeleted;
   const isAuthor = currentUsername === comment.username;
   const canModify = isAdmin || isAuthor;
 
-  const handleEdit = () => {
+  // 날짜 포맷 함수
+  const formatDate = (dateString) => {
+    if (!dateString) return '';
+    try {
+      const date = parseISO(dateString);
+      return formatDistanceToNow(date, { addSuffix: true, locale: ko });
+    } catch {
+      return dateString;
+    }
+  };
+
+  // 수정 모드 토글
+  const handleEditToggle = () => {
     if (isEditing) {
-      onEdit(comment.id, editContent);
-      onFinishEdit();
+      // 이미 수정 모드 -> "저장" 버튼
+      onEdit?.(comment.id, editContent);
+      onFinishEdit?.();
     } else {
-      setEditContent(comment.content);
-      onStartEdit();
+      // 수정 모드 시작
+      setEditContent(comment.content); // 원본 내용 초기화
+      onStartEdit?.(comment.id);       // 특정 댓글만 수정 모드
     }
   };
 
-  const handleReplySubmit = () => {
-    if (replyContent.trim()) {
-      onReplySubmit(comment.id, replyContent);
-      setReplyContent('');
-    }
+  const handleCancelEdit = () => {
+    onFinishEdit?.();
   };
 
+  // 삭제 다이얼로그
   const handleDeleteClick = () => {
     setDeleteDialogOpen(true);
   };
-
   const handleDeleteConfirm = (permanent = false) => {
-    onDelete(comment.id, permanent);
+    onDelete?.(comment.id, permanent);
     setDeleteDialogOpen(false);
   };
 
-  const formatDate = (dateString) => {
-    try {
-      if (!dateString) return '';
-      const date = parseISO(dateString);
-      return formatDistanceToNow(date, { addSuffix: true, locale: ko });
-    } catch (error) {
-      console.error('Invalid date:', dateString);
-      return '';
+  // 답글 아이콘 클릭
+  const handleReplyIconClick = () => {
+    if (replyMode) {
+      // 이미 답글 모드 -> 취소
+      onReplyCancel?.();
+      setReplyContent('');
+    } else {
+      // 답글 모드 시작
+      onReply?.(comment);
     }
   };
 
+  // 답글 제출
+  const handleReplySubmitLocal = () => {
+    if (!replyContent.trim()) return;
+    onReplySubmit?.(comment.id, replyContent);
+    onReplyCancel?.();
+    setReplyContent('');
+  };
+
+  // 댓글 내용 렌더링
   const renderContent = () => {
+    // 수정 모드
     if (isEditing) {
       return (
         <Box sx={{ mt: 1 }}>
           <MentionInput
-            fullWidth
-            multiline
-            rows={2}
             value={editContent}
             onChange={(e) => setEditContent(e.target.value)}
-            variant="outlined"
-            size="small"
+            placeholder="댓글을 수정하세요..."
           />
-          <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-            <Button size="small" onClick={handleEdit} variant="contained">
-              저장
-            </Button>
+          <Stack direction="row" spacing={1} sx={{ mt: 1, justifyContent: 'flex-end' }}>
             <Button size="small" onClick={handleCancelEdit}>
               취소
+            </Button>
+            <Button 
+              size="small" 
+              variant="contained"
+              onClick={handleEditToggle}
+              disabled={!editContent.trim()}
+            >
+              수정 완료
             </Button>
           </Stack>
         </Box>
       );
     }
 
+    // 삭제된 댓글 처리
     if (isDeleted && !showOriginal) {
       return (
-        <Typography
-          variant="body2"
-          color="text.secondary"
-          sx={{ fontStyle: 'italic' }}
-        >
+        <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
           삭제된 댓글입니다.
         </Typography>
       );
     }
 
+    // 일반 댓글
     return (
       <Typography
         variant="body2"
         component="div"
         dangerouslySetInnerHTML={{
-          __html: highlightMentions(comment.content)
+          __html: highlightMentions(comment.content),
         }}
         sx={{
+          wordBreak: 'break-word',
           '& .mention': {
             color: 'primary.main',
             fontWeight: 'medium',
             '&:hover': {
               textDecoration: 'underline',
-              cursor: 'pointer'
-            }
+              cursor: 'pointer',
+            },
           },
-          wordBreak: 'break-word'
         }}
       />
     );
   };
 
-  // 답글 아이콘 클릭 핸들러
-  const handleReplyClick = () => {
-    if (replyMode) {
-      onReplyCancel();
-    } else {
-      onReply(comment);
-    }
-  };
-
-  const handleCancelEdit = () => {
-    onFinishEdit();
-  };
-
   return (
     <StyledListItem
-      elevation={1}
+      elevation={depth === 0 ? 1 : 0}
       sx={{
         ml: depth * 2,
-        bgcolor: replyMode ? 'action.hover' : 'background.paper',
-        border: replyMode ? '1px solid' : '1px solid',
-        borderColor: replyMode ? 'primary.main' : 'divider',
-        '& .MuiTypography-root': {
-          fontSize: '0.813rem'
-        }
+        border: depth === 0 ? '1px solid' : 'none',
+        borderColor: depth === 0 ? 'divider' : 'transparent',
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
         <Box sx={{ flex: 1 }}>
+          {/* 작성자 + 시간 */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-            <Typography variant="subtitle2" component="span">
-              {comment.username}
-            </Typography>
+            <Typography variant="subtitle2">{comment.username}</Typography>
             <Typography variant="caption" color="text.secondary">
               {formatDate(comment.createdAt)}
             </Typography>
           </Box>
+
+          {/* 댓글 본문 */}
           {renderContent()}
         </Box>
+
+        {/* 우측 아이콘들 */}
         <Box>
-          {!comment.isDeleted && (
+          {!isDeleted && (
             <Stack direction="row" spacing={1}>
               {canModify && (
                 <>
-                  <IconButton size="small" onClick={handleEdit}>
+                  {/* 수정 아이콘 */}
+                  <IconButton size="small" onClick={handleEditToggle}>
                     <EditIcon fontSize="small" />
                   </IconButton>
-                  <IconButton 
-                    size="small" 
-                    onClick={handleDeleteClick}
-                    color="error"
-                  >
+                  {/* 삭제 아이콘 */}
+                  <IconButton size="small" onClick={handleDeleteClick} color="error">
                     <DeleteIcon fontSize="small" />
                   </IconButton>
                 </>
               )}
-              <IconButton size="small" onClick={handleReplyClick}>
+              {/* 답글 아이콘 */}
+              <IconButton size="small" onClick={handleReplyIconClick}>
                 <ReplyIcon fontSize="small" />
               </IconButton>
             </Stack>
           )}
-          {comment.isDeleted && isAdmin && (
+          {isDeleted && isAdmin && (
             <Stack direction="row" spacing={1}>
               <Tooltip title="영구 삭제">
-                <IconButton 
-                  size="small" 
-                  onClick={handleDeleteClick}
-                  color="error"
-                >
+                <IconButton size="small" onClick={handleDeleteClick} color="error">
                   <DeleteIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
-              <Tooltip title={showOriginal ? "삭제된 댓글 숨기기" : "삭제된 댓글 보기"}>
+              <Tooltip title={showOriginal ? '삭제된 댓글 숨기기' : '삭제된 댓글 보기'}>
                 <IconButton size="small" onClick={() => setShowOriginal(!showOriginal)}>
                   {showOriginal ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
                 </IconButton>
@@ -230,84 +248,71 @@ const Comment = ({
         </Box>
       </Box>
 
-      {replyMode && (
+      {/* 답글 작성 영역 */}
+      {replyMode && !isDeleted && (
         <Box sx={{ mt: 2 }}>
           <MentionInput
-            fullWidth
-            multiline
-            rows={2}
             value={replyContent}
             onChange={(e) => setReplyContent(e.target.value)}
-            variant="outlined"
-            size="small"
             placeholder="답글을 입력하세요..."
           />
-          <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-            <Button 
-              size="small" 
-              onClick={handleReplySubmit} 
+          <Stack direction="row" spacing={1} sx={{ mt: 1, justifyContent: 'flex-end' }}>
+            <Button
+              size="small"
+              onClick={() => {
+                onReplyCancel?.();
+                setReplyContent('');
+              }}
+            >
+              취소
+            </Button>
+            <Button
+              size="small"
               variant="contained"
+              onClick={handleReplySubmitLocal}
               disabled={!replyContent.trim()}
             >
               답글 달기
-            </Button>
-            <Button size="small" onClick={onReplyCancel}>
-              취소
             </Button>
           </Stack>
         </Box>
       )}
 
       {/* 삭제 다이얼로그 */}
-      <Dialog
-        open={deleteDialogOpen}
-        onClose={() => setDeleteDialogOpen(false)}
-      >
+      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
         <DialogTitle>댓글 삭제</DialogTitle>
         <DialogContent>
-          <Typography>
-            {isAdmin ? (
-              <>
-                관리자 권한으로 삭제 방식을 선택할 수 있습니다.
-                <Typography color="error" sx={{ mt: 1 }}>
-                  * 영구 삭제된 댓글은 복구할 수 없습니다.
-                </Typography>
-              </>
-            ) : (
-              '이 댓글을 삭제하시겠습니까?'
-            )}
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteDialogOpen(false)}>
-            취소
-          </Button>
           {isAdmin ? (
             <>
-              <Button
-                onClick={() => handleDeleteConfirm(false)}
-                color="warning"
-              >
+              <Typography>관리자 권한으로 삭제 방식을 선택할 수 있습니다.</Typography>
+              <Typography color="error" sx={{ mt: 1 }}>
+                * 영구 삭제된 댓글은 복구할 수 없습니다.
+              </Typography>
+            </>
+          ) : (
+            <Typography>이 댓글을 삭제하시겠습니까?</Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>취소</Button>
+          {isAdmin ? (
+            <>
+              <Button onClick={() => handleDeleteConfirm(false)} color="warning">
                 일반 삭제
               </Button>
-              <Button
-                onClick={() => handleDeleteConfirm(true)}
-                color="error"
-              >
+              <Button onClick={() => handleDeleteConfirm(true)} color="error">
                 영구 삭제
               </Button>
             </>
           ) : (
-            <Button
-              onClick={() => handleDeleteConfirm(false)}
-              color="error"
-            >
+            <Button onClick={() => handleDeleteConfirm(false)} color="error">
               삭제
             </Button>
           )}
         </DialogActions>
       </Dialog>
 
+      {/* 자식(대댓글) */}
       {children}
     </StyledListItem>
   );

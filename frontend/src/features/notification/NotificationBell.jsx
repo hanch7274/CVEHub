@@ -123,27 +123,65 @@ const NotificationBell = memo(() => {
     }
   };
 
-  const handleNotificationClick = async (notification) => {
-    const notificationId = getNotificationId(notification);
-    if (!notificationId) {
-      console.error('알림 ID를 찾을 수 없음:', notification);
-      return;
-    }
-
-    try {
-      // 알림을 읽음 상태로 변경
-      if (!notification.is_read) {
-        await dispatch(markAsRead(notificationId)).unwrap();
-        console.log('[NotificationBell] 알림 읽음 처리 완료:', {
-          notificationId,
-          timestamp: new Date().toISOString()
-        });
-      }
+  const formatNotificationContent = useCallback((notification) => {
+    const { type, content, metadata } = notification;
+    
+    switch (type) {
+      case 'mention':
+        return (
+          <Box>
+            <Typography variant="body1" gutterBottom>
+              {content}
+            </Typography>
+            {metadata.comment_content && (
+              <Typography
+                variant="body2"
+                sx={{
+                  bgcolor: 'background.paper',
+                  p: 1,
+                  borderRadius: 1,
+                  my: 1
+                }}
+              >
+                {metadata.comment_content}
+              </Typography>
+            )}
+          </Box>
+        );
       
-      // CVE 상세 정보 다이얼로그 표시
-      setSelectedCVE(notification.cveId);
-      setDialogOpen(true);
-      handleClose();
+      case 'cve_update':
+        return (
+          <Typography variant="body1">
+            {content}
+          </Typography>
+        );
+      
+      case 'system':
+        return (
+          <Typography variant="body1">
+            {content}
+          </Typography>
+        );
+      
+      default:
+        return (
+          <Typography variant="body1">
+            {content}
+          </Typography>
+        );
+    }
+  }, []);
+
+  const handleNotificationClick = async (notification) => {
+    try {
+      // 읽음 처리
+      await dispatch(markAsRead(notification.id)).unwrap();
+
+      // CVE 상세 페이지로 이동 (있는 경우)
+      if (notification.cveId) {
+        setSelectedCVE(notification.cveId);
+        setDialogOpen(true);
+      }
     } catch (error) {
       console.error('알림 처리 중 오류:', error);
       setSnackbar({
@@ -241,33 +279,14 @@ const NotificationBell = memo(() => {
                 <MenuItem
                   onClick={() => handleNotificationClick(notification)}
                   sx={{
-                    backgroundColor: notification.is_read ? 'inherit' : 'action.hover',
-                    '&:hover': {
-                      backgroundColor: 'action.selected'
-                    }
+                    bgcolor: notification.status === 'unread' ? 'action.hover' : 'inherit',
+                    py: 1.5
                   }}
                 >
-                  <Box sx={{ width: '100%' }}>
-                    <Typography variant="body1" gutterBottom>
-                      {notification.content}
-                    </Typography>
-                    {notification.commentContent && (
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          backgroundColor: '#f5f5f5',
-                          padding: 1,
-                          borderRadius: 1,
-                          marginY: 1
-                        }}
-                      >
-                        {notification.commentContent}
-                      </Typography>
-                    )}
-                    <Typography variant="caption" color="textSecondary">
-                      {formatDate(notification.createdAt)}
-                    </Typography>
-                  </Box>
+                  {formatNotificationContent(notification)}
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                    {formatDate(notification.createdAt)}
+                  </Typography>
                 </MenuItem>
                 {index < notifications.length - 1 && <Divider />}
               </React.Fragment>

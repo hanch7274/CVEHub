@@ -11,20 +11,26 @@ const initialState = {
   total: 0
 };
 
+// 알림 목록 조회
 export const fetchNotifications = createAsyncThunk(
   'notifications/fetchNotifications',
   async ({ skip = 0, limit = 10 } = {}) => {
     const response = await api.get(NOTIFICATION.BASE, {
       params: { skip, limit }
     });
-    return response.data;
+    return {
+      items: response.data,  // 응답 구조 맞춤
+      total: response.headers['x-total-count'] || 0,
+      unreadCount: response.headers['x-unread-count'] || 0
+    };
   }
 );
 
+// 알림 읽음 처리
 export const markAsRead = createAsyncThunk(
   'notifications/markAsRead',
   async (notificationId) => {
-    await api.put(NOTIFICATION.READ(notificationId));
+    await api.put(`${NOTIFICATION.BASE}/${notificationId}/read`);
     return notificationId;
   }
 );
@@ -42,7 +48,7 @@ export const fetchUnreadCount = createAsyncThunk(
 export const markAllAsRead = createAsyncThunk(
   'notifications/markAllAsRead',
   async () => {
-    await api.put(NOTIFICATION.READ_ALL);
+    await api.put(`${NOTIFICATION.BASE}/read-all`);
     return true;
   }
 );
@@ -52,11 +58,8 @@ const notificationSlice = createSlice({
   initialState,
   reducers: {
     addNotification: (state, action) => {
-      if (!Array.isArray(state.notifications)) {
-        state.notifications = [];  // 배열이 아니면 초기화
-      }
-      state.notifications.unshift(action.payload);
-      state.unreadCount += 1;
+      state.notifications.unshift(action.payload.notification);
+      state.unreadCount = action.payload.unreadCount;
     },
     updateUnreadCount: (state, action) => {
       state.unreadCount = action.payload;
@@ -70,24 +73,16 @@ const notificationSlice = createSlice({
     builder
       .addCase(fetchNotifications.pending, (state) => {
         state.loading = true;
-        state.error = null;
       })
       .addCase(fetchNotifications.fulfilled, (state, action) => {
         state.loading = false;
-        // 응답 데이터 구조 확인 및 처리
-        if (action.payload && Array.isArray(action.payload.items)) {
-          state.notifications = action.payload.items;
-          state.total = action.payload.total || 0;
-          state.unreadCount = action.payload.unreadCount || 0;
-        } else {
-          console.error('Invalid notifications data structure:', action.payload);
-          state.notifications = [];
-        }
+        state.notifications = action.payload.items;
+        state.total = action.payload.total;
+        state.unreadCount = action.payload.unreadCount;
       })
       .addCase(fetchNotifications.rejected, (state, action) => {
         state.loading = false;
         state.error = action.error.message;
-        state.notifications = [];  // 에러 시 빈 배열로 초기화
       })
       // fetchUnreadCount 처리
       .addCase(fetchUnreadCount.fulfilled, (state, action) => {
@@ -96,15 +91,17 @@ const notificationSlice = createSlice({
       // markAllAsRead 처리
       .addCase(markAllAsRead.fulfilled, (state) => {
         state.notifications.forEach(notification => {
-          notification.is_read = true;
+          notification.status = 'read';
+          notification.readAt = new Date().toISOString();
         });
         state.unreadCount = 0;
       })
       // markAsRead
       .addCase(markAsRead.fulfilled, (state, action) => {
-        const notification = state.notifications.find(item => item.id === action.payload);
+        const notification = state.notifications.find(n => n.id === action.payload);
         if (notification) {
-          notification.is_read = true;
+          notification.status = 'read';
+          notification.readAt = new Date().toISOString();
           state.unreadCount = Math.max(0, state.unreadCount - 1);
         }
       });
@@ -112,7 +109,7 @@ const notificationSlice = createSlice({
 });
 
 // 선택자 추가
-export const selectNotifications = state => state.notifications.notifications || [];
+export const selectNotifications = state => state.notifications.notifications;
 export const selectUnreadCount = state => state.notifications.unreadCount;
 export const selectNotificationLoading = state => state.notifications.loading;
 export const selectNotificationError = state => state.notifications.error;

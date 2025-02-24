@@ -14,7 +14,6 @@ async def websocket_endpoint(
 ):
     user_id = None
     try:
-        # 토큰 검증
         logger.info(f"WebSocket connection attempt with token: {token[:10]}...")
         user = await verify_token(token)
         if not user:
@@ -25,15 +24,12 @@ async def websocket_endpoint(
         user_id = str(user.id)
         logger.info(f"Token verified for user: {user.email}")
 
-        # WebSocket 연결 수락
         await websocket.accept()
         
-        # ConnectionManager에 연결 등록
         if not await manager.connect(websocket, user_id):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
-        # 메시지 수신 루프
         while True:
             message = await websocket.receive_json()
             await manager.handle_message(websocket, user_id, message)

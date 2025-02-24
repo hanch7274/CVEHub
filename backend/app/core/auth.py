@@ -1,22 +1,19 @@
 """인증 관련 핵심 기능"""
-from fastapi import Depends, HTTPException, status
-from typing import Optional, Tuple
-from ..models.user import User, TokenData, RefreshToken, UserResponse
 from datetime import datetime, timedelta
+from typing import Optional, Tuple
+from fastapi import Depends, HTTPException, status
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi.security import OAuth2PasswordBearer
 from .config import get_settings
 import logging
 import secrets
+from app.models.user import User, RefreshToken, TokenData
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# 비밀번호 해싱을 위한 context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# OAuth2 토큰 검증을 위한 객체
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -27,14 +24,26 @@ def get_password_hash(password: str) -> str:
     """비밀번호 해싱"""
     return pwd_context.hash(password)
 
+async def authenticate_user(email: str, password: str) -> Optional['User']:
+    """사용자 인증 (이메일 기반)"""
+    user = await User.find_one({"email": email})
+    if not user:
+        return None
+    if not verify_password(password, user.hashed_password):
+        return None
+    return user
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """액세스 토큰을 생성합니다."""
+    """액세스 토큰 생성"""
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire, "type": "access"})
+    to_encode.update({
+        "exp": expire,
+        "type": "access"
+    })
     encoded_jwt = jwt.encode(
         to_encode,
         settings.SECRET_KEY,
@@ -43,7 +52,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 async def create_refresh_token(user_id: str) -> Tuple[str, datetime]:
-    """리프레시 토큰을 생성하고 저장합니다."""
+    """리프레시 토큰 생성 및 저장"""
     logger.debug("=== Create Refresh Token Debug ===")
     logger.debug(f"Creating refresh token for user_id: {user_id}")
     
@@ -60,8 +69,8 @@ async def create_refresh_token(user_id: str) -> Tuple[str, datetime]:
     logger.debug(f"Created refresh token: {token[:10]}... (expires at {expires_at})")
     return token, expires_at
 
-async def verify_refresh_token(token: str) -> Optional[User]:
-    """리프레시 토큰을 검증하고 사용자를 반환합니다."""
+async def verify_refresh_token(token: str) -> Optional['User']:
+    """리프레시 토큰 검증 및 사용자 반환"""
     logger.debug("=== Verify Refresh Token Debug ===")
     logger.debug(f"Verifying refresh token: {token[:10]}...")
     
@@ -86,7 +95,7 @@ async def verify_refresh_token(token: str) -> Optional[User]:
     return user
 
 async def revoke_refresh_token(token: str):
-    """리프레시 토큰을 무효화합니다."""
+    """리프레시 토큰 무효화"""
     logger.debug("=== Revoke Refresh Token Debug ===")
     logger.debug(f"Attempting to revoke token: {token[:10]}...")
     
@@ -98,8 +107,8 @@ async def revoke_refresh_token(token: str):
     else:
         logger.warning("Token not found for revocation")
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
-    """현재 인증된 사용자를 반환합니다."""
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> 'User':
+    """현재 인증된 사용자 조회"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -112,12 +121,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
             algorithms=[settings.ALGORITHM]
         )
         email: str = payload.get("email")
-        token_type: str = payload.get("type")
-        
-        if email is None or token_type != "access":
+        if email is None:
             raise credentials_exception
-            
-        token_data = TokenData(email=email, token_type=token_type)
+        token_data = TokenData(email=email)
     except JWTError:
         raise credentials_exception
     
@@ -126,8 +132,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         raise credentials_exception
     return user
 
-async def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
-    """현재 인증된 사용자가 관리자인지 확인합니다."""
+async def get_current_admin_user(current_user: 'User' = Depends(get_current_user)) -> 'User':
+    """현재 인증된 사용자가 관리자인지 확인"""
     if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -135,8 +141,8 @@ async def get_current_admin_user(current_user: User = Depends(get_current_user))
         )
     return current_user
 
-async def verify_token(token: str) -> Optional[User]:
-    """토큰을 검증하고 사용자 정보를 반환합니다."""
+async def verify_token(token: str) -> Optional['User']:
+    """토큰 검증 및 사용자 정보 반환"""
     try:
         payload = jwt.decode(
             token,
@@ -147,12 +153,10 @@ async def verify_token(token: str) -> Optional[User]:
         if email is None:
             logger.error("토큰에 email 필드가 없습니다.")
             return None
-            
         user = await User.find_one({"email": email})
         if not user:
             logger.error(f"사용자를 찾을 수 없습니다: {email}")
             return None
-            
         return user
     except JWTError as e:
         logger.error(f"토큰 검증 중 오류: {str(e)}")
