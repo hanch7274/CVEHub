@@ -39,7 +39,7 @@ export const CRAWLER = {
 export const WEBSOCKET = {
   CONNECT: (token) => {
     // 기본 WebSocket URL 설정
-    const wsUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:8000';
+    const wsUrl = process.env.REACT_APP_WS_URL || 'ws://10.0.7.200:8000';
     // URL 끝에 슬래시가 있는지 확인하고 적절히 처리
     const baseUrl = wsUrl.endsWith('/') ? wsUrl.slice(0, -1) : wsUrl;
     // 최종 WebSocket URL 구성

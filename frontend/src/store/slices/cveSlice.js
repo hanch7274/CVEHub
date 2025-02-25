@@ -29,6 +29,8 @@ const initialState = {
   lastUpdated: null,
   byId: {},
   currentCVE: null,
+  cveCache: {},
+  cacheTTL: 5 * 60 * 1000, // 캐시 유효 시간 (5분)
 };
 
 export const fetchCVEList = createAsyncThunk(
@@ -85,8 +87,11 @@ export const deleteCVE = createAsyncThunk(
 
 export const updateCVEFromWebSocketThunk = createAsyncThunk(
   'cve/updateFromWebSocket',
-  async (cveData) => {
-    console.log('[Redux] Updating CVE from WebSocket:', cveData);
+  async (cveData, { dispatch }) => {
+    // 웹소켓 업데이트 시 해당 CVE 캐시 무효화
+    if (cveData.cveId) {
+      dispatch(invalidateCache(cveData.cveId));
+    }
     return cveData;
   }
 );
@@ -114,6 +119,60 @@ export const addCommentToStore = createAsyncThunk(
   'cve/addComment',
   async ({ cveId, comment }) => {
     return { cveId, comment };
+  }
+);
+
+export const prefetchCVE = createAsyncThunk(
+  'cve/prefetchCVE',
+  async (id, { dispatch }) => {
+    const response = await api.get(`/cves/${id}`);
+    return response.data;
+  }
+);
+
+export const checkCacheStatus = (state, cveId) => {
+  const cached = state.cveCache[cveId];
+  if (!cached) return { exists: false };
+  
+  const now = Date.now();
+  const isFresh = cached._cachedAt && (now - cached._cachedAt < state.cacheTTL);
+  
+  return {
+    exists: true,
+    isFresh,
+    data: cached
+  };
+};
+
+export const fetchCachedCVEDetail = createAsyncThunk(
+  'cve/fetchCachedCVEDetail',
+  async (cveId, { getState, dispatch }) => {
+    try {
+      // 지능형 캐싱 로직을 활용한 데이터 가져오기
+      const cveData = await cveService.getCVEById(cveId, { 
+        checkModified: true // 항상 수정 여부 확인
+      });
+      
+      // 데이터에 캐시 메타데이터 추가
+      const enhancedData = {
+        ...cveData,
+        _fromCache: true,
+        _cachedAt: Date.now(),
+        _lastCheckedWithServer: Date.now()
+      };
+      
+      return enhancedData;
+    } catch (error) {
+      console.error('Error fetching cached CVE:', error);
+      return dispatch(fetchCVEDetail(cveId)).unwrap();
+    }
+  }
+);
+
+export const invalidateCache = createAsyncThunk(
+  'cve/invalidateCache',
+  async (cveId, { dispatch }) => {
+    return cveId;
   }
 );
 
@@ -162,6 +221,15 @@ export const cveSlice = createSlice({
     },
     setCVEDetail: (state, action) => {
       state.currentCVE = action.payload;
+      
+      // 캐시도 함께 업데이트
+      if (action.payload && action.payload.cveId) {
+        state.cveCache[action.payload.cveId] = {
+          ...action.payload,
+          _cachedAt: Date.now(),
+          _lastCheckedWithServer: Date.now()
+        };
+      }
     },
   },
   extraReducers: (builder) => {
@@ -223,6 +291,10 @@ export const cveSlice = createSlice({
         state.currentCVE = action.payload;
         if (action.payload?.cveId) {
           state.byId[action.payload.cveId] = action.payload;
+          state.cveCache[action.payload.cveId] = {
+            ...action.payload,
+            _cachedAt: Date.now() // 캐시 생성 시간 저장
+          };
         }
       })
       .addCase(fetchCVEDetail.rejected, (state, action) => {
@@ -271,6 +343,15 @@ export const cveSlice = createSlice({
         const { cveId, comment } = action.payload;
         if (state.detail && state.detail.cveId === cveId) {
           state.detail.comments = [...(state.detail.comments || []), comment];
+        }
+      })
+      .addCase(prefetchCVE.fulfilled, (state, action) => {
+        state.cveCache[action.payload.cveId] = action.payload;
+      })
+      .addCase(invalidateCache.fulfilled, (state, action) => {
+        const cveId = action.payload;
+        if (cveId && state.cveCache[cveId]) {
+          delete state.cveCache[cveId]; // 캐시 무효화
         }
       });
   },

@@ -14,6 +14,9 @@ const api = axios.create({
   },
 });
 
+// 응답 캐싱
+const cache = new Map();
+
 // Request Interceptor
 api.interceptors.request.use(
   async (config) => {
@@ -145,6 +148,21 @@ api.interceptors.request.use(
       console.log('Params:', config.params);
       console.log('Timestamp:', formatToKST(new Date(), DATE_FORMATS.DISPLAY.DEFAULT));
 
+      // GET 요청 캐싱
+      if (config.method === 'get') {
+        const url = config.url;
+        if (cache.has(url)) {
+          const cachedData = cache.get(url);
+          // 캐시가 신선한지 확인 (예: 5분)
+          if (Date.now() - cachedData.timestamp < 5 * 60 * 1000) {
+            return Promise.resolve({
+              ...config,
+              cachedData: cachedData.data
+            });
+          }
+        }
+      }
+
       return config;
     } catch (error) {
       console.error('=== Request Interceptor Critical Error ===');
@@ -171,6 +189,14 @@ api.interceptors.response.use(
 
     if (response.data) {
       response.data = snakeToCamel(response.data);
+    }
+
+    // 캐시 저장
+    if (response.config.method === 'get') {
+      cache.set(response.config.url, {
+        data: response.data,
+        timestamp: Date.now()
+      });
     }
 
     return response;

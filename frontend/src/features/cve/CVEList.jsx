@@ -187,9 +187,18 @@ const CVEList = () => {
   };
 
   const handleCVEClick = (cve) => {
-    console.log('Clicked CVE:', cve);
+    console.log('CVEList: Clicked on CVE', cve);
+    
+    // 선택된 CVE 상태 업데이트
     setSelectedCVE(cve);
-    setDetailOpen(true);
+    
+    // 상세 모달 열기 전에 약간의 지연 추가 (선택 사항)
+    setTimeout(() => {
+      setDetailOpen(true);
+    }, 50);
+    
+    // 디버깅용 로그
+    console.log('CVEList: Detail modal should open now');
   };
 
   const handleDetailClose = () => {
@@ -354,7 +363,7 @@ const CVEList = () => {
                 ) : Array.isArray(cves) && cves.length > 0 ? (
                   cves.map((cve) => (
                     <TableRow
-                      key={cve.Id || cve.cveId}
+                      key={cve.id || cve.cveId}
                       sx={{
                         '&:last-child td, &:last-child th': { border: 0 },
                         '&:hover': { bgcolor: 'action.hover' },
@@ -442,7 +451,10 @@ const CVEList = () => {
       {detailOpen && selectedCVE && (
         <CVEDetail
           open={detailOpen}
-          onClose={handleDetailClose}
+          onClose={() => {
+            console.log('CVEList: Closing detail modal');
+            setDetailOpen(false);
+          }}
           cveId={selectedCVE.cveId}
         />
       )}

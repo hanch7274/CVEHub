@@ -3,6 +3,9 @@
 import { getAccessToken, refreshAccessToken } from '../utils/storage/tokenStorage';
 import { WEBSOCKET } from '../api/config/endpoints';
 import { refreshTokenFn } from '../utils/auth';
+import { cveService } from '../api/services/cveService';
+import { store } from '../store'; // default export가 아닌 named export로 가져오기
+import { invalidateCache } from '../store/slices/cveSlice';
 
 // WebSocket 상태 상수
 export const WS_STATUS = {
@@ -47,6 +50,7 @@ export class WebSocketService {
     this.messageHandlers = new Set();
     this.connectionHandlers = new Set();
     this.reconnectTimer = null;
+    this.cacheInvalidationEnabled = true;
   }
 
   isConnected() {
@@ -120,31 +124,7 @@ export class WebSocketService {
         this.updateConnectionState(true);
       };
 
-      this.ws.onmessage = async (event) => {
-        try {
-          const message = JSON.parse(event.data);
-          // 자동 Pong 응답: 서버에서 ping을 보내면 즉시 pong 응답 전송
-          if (message.type === WS_EVENT_TYPE.PING) {
-            const pongMessage = {
-              type: WS_EVENT_TYPE.PONG,
-              data: { timestamp: new Date().toISOString() }
-            };
-            this.ws.send(JSON.stringify(pongMessage));
-            return;
-          }
-          
-          // 메시지 핸들러들을 동기적으로 실행
-          for (const handler of this.messageHandlers) {
-            try {
-              await Promise.resolve(handler(message));
-            } catch (handlerError) {
-              console.error('[WebSocket] Handler error:', handlerError);
-            }
-          }
-        } catch (err) {
-          console.error('[WebSocket] Error parsing message:', err);
-        }
-      };
+      this.setupMessageHandler();
 
       this.ws.onclose = (event) => {
         console.log('[WebSocket] Connection closed:', event);
@@ -227,6 +207,55 @@ export class WebSocketService {
   removeHandler(type, handler) {
     const handlers = type === 'message' ? this.messageHandlers : this.connectionHandlers;
     handlers.delete(handler);
+  }
+
+  async handleMessage(message) {
+    try {
+      if (this.cacheInvalidationEnabled) {
+        if (message.type === WS_EVENT_TYPE.CVE_UPDATED && message.data?.cveId) {
+          cveService.invalidateCache(message.data.cveId);
+          
+          store.dispatch(invalidateCache(message.data.cveId));
+          console.log(`[WebSocket] Invalidated cache for CVE ${message.data.cveId}`);
+        }
+      }
+      
+      for (const handler of this.messageHandlers) {
+        try {
+          await Promise.resolve(handler(message));
+        } catch (handlerError) {
+          console.error('[WebSocket] Handler error:', handlerError);
+        }
+      }
+    } catch (err) {
+      console.error('[WebSocket] Error handling message:', err);
+    }
+  }
+
+  setupMessageHandler() {
+    if (!this.ws) return;
+    
+    this.ws.onmessage = async (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.type === WS_EVENT_TYPE.PING) {
+          const pongMessage = {
+            type: WS_EVENT_TYPE.PONG,
+            data: { timestamp: new Date().toISOString() }
+          };
+          this.ws.send(JSON.stringify(pongMessage));
+          return;
+        }
+        
+        await this.handleMessage(message);
+      } catch (err) {
+        console.error('[WebSocket] Error parsing message:', err);
+      }
+    };
+  }
+
+  setCacheInvalidation(enabled) {
+    this.cacheInvalidationEnabled = enabled;
   }
 }
 

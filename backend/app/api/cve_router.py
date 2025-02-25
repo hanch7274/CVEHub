@@ -123,6 +123,33 @@ async def get_cve(
         )
     return cve
 
+@router.head("/{cve_id}")
+async def head_cve(
+    cve_id: str,
+    cve_service: CVEService = Depends(get_cve_service)
+):
+    """
+    CVE의 메타데이터만 반환하는 HEAD 요청 처리
+    클라이언트 캐싱을 위해 Last-Modified 헤더 제공
+    """
+    cve = await cve_service.get_cve(cve_id)
+    if not cve:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail="CVE not found"
+        )
+    
+    # FastAPI는 자동으로 응답 본문을 제외하고 헤더만 반환
+    # 필요한 헤더 추가
+    headers = {
+        "X-Last-Modified": cve.last_modified_date.isoformat() if cve.last_modified_date else datetime.now().isoformat(),
+        "Content-Type": "application/json"
+    }
+    
+    # 빈 응답 반환 (HEAD 메서드는 본문 없음)
+    from fastapi.responses import Response
+    return Response(headers=headers)
+
 @router.post("/", response_model=CVEModel)
 async def create_cve(
     cve_data: CreateCVERequest,

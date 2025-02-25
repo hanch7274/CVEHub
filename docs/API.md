@@ -1,7 +1,7 @@
 # CVEHub API 문서
 
 ## 기본 정보
-- Base URL: `http://localhost:8000`
+- Base URL: `http://10.0.7.200:8000`
 - API 버전: v1
 - Content-Type: `application/json`
 

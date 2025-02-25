@@ -65,3 +65,26 @@ injectStore(store);
 
 // persistor export
 export const persistor = persistStore(store);
+
+// 상태 정규화 및 정리
+const preloadedState = {
+  cves: {
+    byId: {}, // ID를 키로 사용하는 객체
+    allIds: [], // ID 목록
+    status: 'idle',
+    error: null
+  }
+};
+
+// API 응답을 정규화하는 유틸리티 함수 추가
+const normalizeData = (items) => {
+  const byId = {};
+  const allIds = [];
+  
+  items.forEach(item => {
+    byId[item.cveId] = item;
+    allIds.push(item.cveId);
+  });
+  
+  return { byId, allIds };
+};

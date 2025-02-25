@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Box } from '@mui/material';
 import { useDispatch, useSelector } from 'react-redux';
@@ -12,7 +12,6 @@ import Login from './features/auth/Login';
 import PrivateRoute from './features/auth/PrivateRoute';
 import AuthRoute from './features/auth/AuthRoute';
 import { AuthProvider } from './contexts/AuthContext';
-import CVEDetail from './features/cve/CVEDetail';
 import { addNotificationAsync } from './store/slices/notificationSlice';
 import { store, persistor } from './store';
 import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
@@ -168,6 +167,8 @@ const MainRoutes = () => {
   );
 };
 
+const CVEDetail = lazy(() => import('./features/cve/CVEDetail'));
+
 const App = () => {
   // store 주입
   useEffect(() => {
@@ -215,13 +216,15 @@ const App = () => {
           pauseOnHover
           theme="colored"
         />
-        {selectedCVE && (
-          <CVEDetail 
-            cveId={selectedCVE}
-            open={true}
-            onClose={() => setSelectedCVE(null)}
-          />
-        )}
+        <Suspense fallback={<div>로딩 중...</div>}>
+          {selectedCVE && (
+            <CVEDetail 
+              cveId={selectedCVE}
+              open={true}
+              onClose={() => setSelectedCVE(null)}
+            />
+          )}
+        </Suspense>
       </ThemeProvider>
     </Provider>
   );
