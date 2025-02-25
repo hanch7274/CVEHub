@@ -56,7 +56,8 @@ const CommentsTab = React.memo(({
   onUpdate,
   onCommentCountChange,
   currentUser,
-  refreshTrigger
+  refreshTrigger,
+  open
 }) => {
   const dispatch = useDispatch();
   const { sendCustomMessage } = useWebSocketMessage();
@@ -416,48 +417,8 @@ const CommentsTab = React.memo(({
     return () => clearTimeout(timeoutId);
   }, [cve.cveId, dispatch, currentUser?.username, enqueueSnackbar]);
 
-  // 구독 상태 관리
-  const [isSubscribed, setIsSubscribed] = useState(false);
-
-  // 컴포넌트 마운트 시 한 번만 구독
-  useEffect(() => {
-    let isMounted = true;
-    let cleanup = false;
-
-    const handleSubscription = async () => {
-      if (cleanup) return;
-      
-      try {
-        if (!isSubscribed) {
-          await sendCustomMessage('subscribe_cve', { cveId: cve.cveId });
-          if (isMounted) {
-            setIsSubscribed(true);
-          }
-        }
-      } catch (error) {
-        if (isMounted) {
-          console.error('Failed to subscribe to comments:', error);
-        }
-      }
-    };
-
-    handleSubscription();
-
-    // 컴포넌트 언마운트 시 구독 해제
-    return () => {
-      cleanup = true;
-      isMounted = false;
-      
-      if (isSubscribed) {
-        sendCustomMessage('unsubscribe_cve', { cveId: cve.cveId })
-          .catch(error => {
-            // 연결이 이미 닫혔을 수 있으므로 오류 무시
-            console.debug('Unsubscribe during cleanup:', error);
-          });
-        setIsSubscribed(false);
-      }
-    };
-  }, [cve.cveId, sendCustomMessage, isSubscribed]);
+  // 불필요한 useSubscription 훅 제거
+  const { sendCustomMessage: wsSendCustomMessage } = useWebSocketMessage(handleWebSocketMessage);
 
   // 초기 로딩
   useEffect(() => {

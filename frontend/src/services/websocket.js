@@ -120,7 +120,7 @@ export class WebSocketService {
         this.updateConnectionState(true);
       };
 
-      this.ws.onmessage = (event) => {
+      this.ws.onmessage = async (event) => {
         try {
           const message = JSON.parse(event.data);
           // 자동 Pong 응답: 서버에서 ping을 보내면 즉시 pong 응답 전송
@@ -132,7 +132,15 @@ export class WebSocketService {
             this.ws.send(JSON.stringify(pongMessage));
             return;
           }
-          this.messageHandlers.forEach(handler => handler(message));
+          
+          // 메시지 핸들러들을 동기적으로 실행
+          for (const handler of this.messageHandlers) {
+            try {
+              await Promise.resolve(handler(message));
+            } catch (handlerError) {
+              console.error('[WebSocket] Handler error:', handlerError);
+            }
+          }
         } catch (err) {
           console.error('[WebSocket] Error parsing message:', err);
         }

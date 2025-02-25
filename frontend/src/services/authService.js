@@ -36,13 +36,13 @@ export const refreshToken = async () => {
 
     const response = await axios.post(
       `${API_BASE_URL}${API_ENDPOINTS.AUTH.REFRESH}`, 
-      {}, // empty body
+      {
+        refresh_token: currentRefreshToken  // refresh_token을 body에 포함
+      },
       { 
         headers: {
-          'Authorization': `Bearer ${currentRefreshToken}`,
           'Content-Type': 'application/json'
-        },
-        withCredentials: true 
+        }
       }
     );
 
@@ -56,13 +56,11 @@ export const refreshToken = async () => {
 
     const { accessToken, refreshToken, user } = response.data;
     
-    // 토큰 유효성 검사
     if (!accessToken) {
       console.error('New access token is missing in the response');
       throw new Error('New access token is missing in the response');
     }
 
-    // 토큰 저장
     setAccessToken(accessToken);
     if (refreshToken) {
       setRefreshToken(refreshToken);
@@ -83,7 +81,6 @@ export const refreshToken = async () => {
       stack: error.stack
     });
 
-    // 401 또는 403 에러인 경우 저장소 초기화 및 리다이렉트
     if (error.response?.status === 401 || error.response?.status === 403) {
       console.log('Token refresh failed with auth error, clearing storage...');
       clearAuthStorage();

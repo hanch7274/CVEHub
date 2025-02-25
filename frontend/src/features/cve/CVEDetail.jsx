@@ -238,7 +238,11 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
     cveId,
     open,
     currentUser,
-    onSubscribersChange: setSubscribers
+    onSubscribersChange: useCallback((newSubscribers) => {
+      if (JSON.stringify(subscribers) !== JSON.stringify(newSubscribers)) {
+        setSubscribers(newSubscribers);
+      }
+    }, [subscribers])
   });
 
   const currentUserRef = useRef();
@@ -248,7 +252,7 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
   }, [currentUser]);
 
   const messageHandler = useCallback((message) => {
-    if (!message || !message.type || !message.data) return;
+    if (!message || !message.type || !message.data) return false;
 
     // 구독 관련 메시지 처리
     if (message.type === 'subscribe_cve' || message.type === 'unsubscribe_cve') {
@@ -275,6 +279,7 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
         }
       }
     }
+    return false;
   }, [cveId, enqueueSnackbar]);
 
   const { sendCustomMessage } = useWebSocketMessage(messageHandler);
@@ -628,6 +633,7 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
                     onUpdate={() => dispatch(fetchCVEDetail(cve.cveId))}
                     currentUser={currentUser}
                     refreshTrigger={refreshTriggers.comments}
+                    open={open}
                   />
                 </TabPanel>
                 <TabPanel value={tabValue} index={4}>

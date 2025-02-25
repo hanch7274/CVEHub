@@ -61,8 +61,6 @@ const ACTION_TEXT = {
 };
 
 const HistoryTab = ({ modificationHistory = [] }) => {
-  // 디버깅을 위한 로그 추가
-  console.log('Modification History:', modificationHistory);
 
   if (!Array.isArray(modificationHistory) || modificationHistory.length === 0) {
     return (
@@ -125,10 +123,8 @@ const HistoryTab = ({ modificationHistory = [] }) => {
                       </ListItemIcon>
                       <ListItemText
                         primary={
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Typography variant="body2">
-                              {change.summary}
-                            </Typography>
+                          <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            {change.summary}
                             <Chip
                               label={ACTION_TEXT[change.action]}
                               size="small"
@@ -139,19 +135,19 @@ const HistoryTab = ({ modificationHistory = [] }) => {
                         }
                         secondary={
                           change.detailType === 'detailed' && (
-                            <Box sx={{ mt: 1 }}>
+                            <Box component="span" sx={{ display: 'block', mt: 1 }}>
                               {change.before && change.after && (
-                                <>
-                                  <Typography variant="body2" color="text.secondary">
+                                <Box component="span" sx={{ display: 'block' }}>
+                                  <Typography component="span" variant="body2" color="text.secondary" display="block">
                                     변경 전: {change.before}
                                   </Typography>
-                                  <Typography variant="body2" color="text.secondary">
+                                  <Typography component="span" variant="body2" color="text.secondary" display="block">
                                     변경 후: {change.after}
                                   </Typography>
-                                </>
+                                </Box>
                               )}
                               {change.items && change.items.length > 0 && (
-                                <Box sx={{ mt: 1 }}>
+                                <Box component="span" sx={{ display: 'block', mt: 1 }}>
                                   {change.items.map((item, idx) => (
                                     <Paper
                                       key={idx}
@@ -163,7 +159,7 @@ const HistoryTab = ({ modificationHistory = [] }) => {
                                         borderRadius: 1
                                       }}
                                     >
-                                      <Typography variant="body2" color="text.secondary">
+                                      <Typography component="span" variant="body2" color="text.secondary">
                                         {item.type && `[${item.type}] `}
                                         {item.rule || item.url || JSON.stringify(item)}
                                       </Typography>
