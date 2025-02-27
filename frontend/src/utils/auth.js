@@ -51,7 +51,7 @@ export const refreshTokenFn = async () => {
     console.log('Current refresh token:', refreshToken);
 
     const response = await axios.post(
-      `${process.env.REACT_APP_API_URL || 'http://10.0.7.200:8000'}/auth/refresh`,
+      `${process.env.REACT_APP_API_URL || 'http://localhost:8000'}/auth/refresh`,
       {},  // empty body
       {
         skipAuthRefresh: true,

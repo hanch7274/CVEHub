@@ -57,6 +57,7 @@ import {
 } from '../../store/slices/cveSlice';
 import { useSnackbar } from 'notistack';
 import { useWebSocketContext, useWebSocketMessage } from '../../contexts/WebSocketContext';
+import CrawlerUpdateButton from './components/CrawlerUpdateButton';
 
 const STATUS_OPTIONS = ["전체", "신규등록", "분석중", "분석완료", "대응완료"];
 const STATUS_COLORS = {
@@ -275,30 +276,33 @@ const CVEList = () => {
   }
 
   return (
-    <Box sx={{ width: '100%', mb: 2 }}>
+    <Box sx={{ width: '100%', p: 0 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="h5" component="h1">
+          CVE 관리
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <CrawlerUpdateButton />
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleCreateCVE}
+            startIcon={<AddIcon />}
+          >
+            CVE 추가
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={handleRefresh}
+            startIcon={<RefreshIcon />}
+          >
+            새로고침
+          </Button>
+        </Box>
+      </Box>
+
       <Card elevation={0} sx={{ mb: 3, bgcolor: 'background.paper', borderRadius: 2 }}>
         <CardContent>
-          <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="h5" sx={{ fontWeight: 500, color: 'text.primary' }}>
-              CVE 목록
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              <Tooltip title="새로고침">
-                <IconButton onClick={handleRefresh} size="small" sx={{ bgcolor: 'action.hover' }}>
-                  <RefreshIcon />
-                </IconButton>
-              </Tooltip>
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={handleCreateCVE}
-                sx={{ borderRadius: 1, textTransform: 'none', bgcolor: 'primary.main', '&:hover': { bgcolor: 'primary.dark' } }}
-              >
-                CVE 추가
-              </Button>
-            </Box>
-          </Box>
-
           <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 3 }}>
             <TextField
               placeholder="CVE 검색"

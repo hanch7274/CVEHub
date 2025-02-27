@@ -33,3 +33,5 @@ httpx==0.26.0
 coverage==7.4.1
 
 pytz
+jwt
+redis>=4.5.0

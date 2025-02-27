@@ -11,6 +11,7 @@ import { useSnackbar } from 'notistack';
 import WebSocketService, { WS_EVENT_TYPE } from '../services/websocket';
 import { selectCVEDetail, invalidateCache } from '../store/slices/cveSlice';
 import { cveService } from '../api/services/cveService';
+import { api } from '../services/api';
 
 // 단일 인스턴스 생성 (전역 사용)
 const webSocketInstance = new WebSocketService();
@@ -62,21 +63,20 @@ export const WebSocketProvider = ({ children }) => {
   const currentCVE = useSelector(selectCVEDetail);
   const { enqueueSnackbar } = useSnackbar();
   const dispatch = useDispatch();
+  const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState(null);
+  const [reconnectAttempts, setReconnectAttempts] = useState(0);
 
-  // 캐시 무효화 함수
+  // RTK Query 캐시 무효화 함수
   const invalidateCVECache = useCallback((cveId) => {
-    if (!cveId) return;
-    
-    // 서비스 레이어 캐시 무효화
-    cveService.invalidateCache(cveId);
-    
-    // Redux 캐시 무효화
-    dispatch(invalidateCache(cveId));
-    
-    console.log(`[WebSocketContext] Manually invalidated cache for CVE ${cveId}`);
+    dispatch(
+      api.util.invalidateTags([
+        { type: 'CVE', id: cveId },
+        { type: 'CVEList', id: 'LIST' }
+      ])
+    );
   }, [dispatch]);
 
   // 웹소켓 메시지 처리에서 캐시 무효화 처리
@@ -137,6 +137,31 @@ export const WebSocketProvider = ({ children }) => {
       webSocketInstance.removeHandler('connection', handleConnectionChange);
     };
   }, [handleGlobalSocketMessage, handleConnectionChange]);
+
+  // 웹소켓 연결 상태 모니터링
+  useEffect(() => {
+    const checkConnection = () => {
+      if (socket) {
+        // 연결 상태 콘솔에 표시 (디버깅용)
+        console.log(`WebSocket 상태: ${socket.readyState} (${
+          socket.readyState === 0 ? '연결 중' : 
+          socket.readyState === 1 ? '연결됨' : 
+          socket.readyState === 2 ? '종료 중' : '종료됨'
+        })`);
+        
+        // 연결 상태 업데이트
+        setIsConnected(socket.readyState === 1);
+      }
+    };
+    
+    // 초기 상태 확인
+    checkConnection();
+    
+    // 5초마다 상태 확인
+    const interval = setInterval(checkConnection, 5000);
+    
+    return () => clearInterval(interval);
+  }, [socket]);
 
   // 컨텍스트 값 생성
   const value = useMemo(

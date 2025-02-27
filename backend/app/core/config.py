@@ -23,9 +23,9 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # Timezone settings
-    TZ: str
-    TIMEZONE: str
-    DATETIME_FORMAT: str
+    TZ: str = "Asia/Seoul"
+    TIMEZONE: str = "Asia/Seoul"
+    DATETIME_FORMAT: str = "%Y-%m-%d %H:%M:%S"
 
     # WebSocket settings
     WS_PING_INTERVAL: int = 30
@@ -35,8 +35,15 @@ class Settings(BaseSettings):
     # Crawler settings
     REPO_PATH: str = "/app/nuclei-templates"  # Docker 컨테이너 내부 경로
 
+    # 데이터 디렉토리 설정 추가
+    DATA_DIR: str = "data"
+
+    # Redis settings
+    REDIS_URL: str = "redis://redis:6379/0"
+
     class Config:
-        env_file = os.getenv("ENV_FILE", ".env")
+        env_prefix = ""
+        env_file = ".env"
         case_sensitive = True
         extra = "allow"
 

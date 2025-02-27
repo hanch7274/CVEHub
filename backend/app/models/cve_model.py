@@ -165,6 +165,9 @@ class CVEModel(Document):
     lock_timestamp: Optional[datetime] = None
     lock_expires_at: Optional[datetime] = None  # 30분 후 자동 잠금 해제
 
+    # content_hash를 nuclei_hash로 변경
+    nuclei_hash: Optional[str] = None
+
     class Settings:
         name = "cves"
         indexes = [

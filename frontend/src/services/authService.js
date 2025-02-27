@@ -101,7 +101,7 @@ export const login = async (credentials) => {
     console.log('=== Login Request Debug ===');
     console.log('Request URL:', '/auth/token');
     console.log('Request Data:', credentials);
-    console.log('API Base URL:', process.env.REACT_APP_API_URL || 'http://10.0.7.200:8000');
+    console.log('API Base URL:', process.env.REACT_APP_API_URL || 'http://localhost:8000');
 
     const formData = new URLSearchParams();
     formData.append('username', credentials.email);

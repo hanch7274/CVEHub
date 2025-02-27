@@ -237,25 +237,131 @@ export class WebSocketService {
     
     this.ws.onmessage = async (event) => {
       try {
-        const message = JSON.parse(event.data);
-        if (message.type === WS_EVENT_TYPE.PING) {
-          const pongMessage = {
-            type: WS_EVENT_TYPE.PONG,
-            data: { timestamp: new Date().toISOString() }
-          };
-          this.ws.send(JSON.stringify(pongMessage));
-          return;
+        const rawMessage = event.data;
+        console.log('[WebSocket] 메시지 수신 (raw):', rawMessage);
+        
+        // JSON 파싱
+        const message = JSON.parse(rawMessage);
+        console.log('[WebSocket] 파싱된 메시지:', message);
+        
+        // 타입 별 상세 로그 (디버깅용)
+        if (message.type === 'crawler_update_progress') {
+          console.log(`[WebSocket] 크롤러 업데이트 수신:`, message.data);
+          
+          // 단계별 처리 로깅 추가
+          const stage = message.data.stage || '';
+          console.log(`[WebSocket] 크롤러 단계: ${stage}, 진행률: ${message.data.percent}%`);
         }
         
-        await this.handleMessage(message);
-      } catch (err) {
-        console.error('[WebSocket] Error parsing message:', err);
+        // 핸들러 호출
+        this._callHandlers('message', message);
+        
+        // 특정 타입의 메시지에 대한 핸들러 호출
+        if (message.type) {
+          this._callHandlers(message.type, message);
+        }
+      } catch (error) {
+        console.error('[WebSocket] 메시지 처리 오류:', error);
       }
     };
   }
 
   setCacheInvalidation(enabled) {
     this.cacheInvalidationEnabled = enabled;
+  }
+
+  async connectToCrawler() {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      console.log('[WebSocket] 이미 연결되어 있습니다');
+      return true;
+    }
+    
+    try {
+      const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+      console.log(`[WebSocket] 크롤러 웹소켓에 연결 시도: ${wsUrl}`);
+      
+      this.ws = new WebSocket(wsUrl);
+      this._setupEventHandlers();
+      
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('웹소켓 연결 시간 초과'));
+        }, 5000);
+        
+        this.ws.onopen = () => {
+          clearTimeout(timeout);
+          console.log('[WebSocket] 크롤러 웹소켓에 연결됨');
+          this._isConnected = true;
+          this.notifyConnectionState(true);
+          
+          // 연결 테스트 메시지 전송
+          this.ws.send(JSON.stringify({
+            type: "ping",
+            data: { timestamp: new Date().toISOString() }
+          }));
+          
+          resolve(true);
+        };
+        
+        this.ws.onerror = (error) => {
+          clearTimeout(timeout);
+          console.error('[WebSocket] 연결 오류:', error);
+          reject(error);
+        };
+      });
+    } catch (error) {
+      console.error('[WebSocket] 연결 설정 오류:', error);
+      throw error;
+    }
+  }
+
+  _setupEventHandlers() {
+    if (!this.ws) return;
+    
+    this.ws.onopen = () => {
+      console.log('[WebSocket] 연결됨');
+      this._isConnected = true;
+      this.notifyConnectionState(true);
+    };
+    
+    this.ws.onclose = (event) => {
+      console.log(`[WebSocket] 연결 종료: ${event.code} ${event.reason}`);
+      this._isConnected = false;
+      this.notifyConnectionState(false);
+      
+      // 재연결 로직
+      if (this.reconnectAttempts < this.maxReconnectAttempts) {
+        this.reconnectAttempts++;
+        const delay = Math.min(1000 * this.reconnectAttempts, 5000);
+        console.log(`[WebSocket] ${delay}ms 후 재연결 시도...`);
+        
+        setTimeout(() => {
+          this.connectToCrawler().catch(error => {
+            console.error('[WebSocket] 재연결 실패:', error);
+          });
+        }, delay);
+      }
+    };
+    
+    this.ws.onerror = (error) => {
+      console.error('[WebSocket] 오류:', error);
+    };
+    
+    this.setupMessageHandler();
+  }
+
+  _callHandlers(eventType, data) {
+    const handlers = this.messageHandlers.size > 0 ? this.messageHandlers : this.connectionHandlers;
+    console.log(`[WebSocket] ${eventType} 이벤트 핸들러 호출 (${handlers.size}개)`);
+    
+    // 모든 관련 핸들러 호출
+    for (const handler of handlers) {
+      try {
+        handler(data);
+      } catch (error) {
+        console.error(`[WebSocket] 핸들러 실행 오류 (${eventType}):`, error);
+      }
+    }
   }
 }
 

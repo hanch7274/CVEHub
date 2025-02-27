@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from beanie import PydanticObjectId
@@ -73,40 +73,42 @@ class CVEService:
             logging.error(traceback.format_exc())
             return None
 
-    async def update_cve(self, cve_id: str, update_data: dict, current_user: str) -> Optional[CVEModel]:
+    async def update_cve(self, cve_id: str, update_data: Dict) -> bool:
+        """CVE 업데이트"""
         try:
-            # 기존 CVE 조회
-            existing_cve = await self.get_cve(cve_id)
-            if not existing_cve:
-                return None
-
-            # 기존 modification_history 가져오기
-            existing_history = existing_cve.modification_history or []
+            # 기존 CVE 확인
+            existing = await self.get_cve(cve_id)
+            if not existing:
+                logger.error(f"업데이트할 CVE를 찾을 수 없음: {cve_id}")
+                return False
             
-            # 새로운 history 항목이 있다면 기존 history에 추가
-            if "modification_history" in update_data:
-                new_history = update_data.pop("modification_history")
-                existing_history.extend(new_history)
-
-            # 최종 업데이트할 데이터 준비
-            final_update = {
-                **update_data,
-                "modification_history": existing_history,
-                "last_modified_date": datetime.now(ZoneInfo("Asia/Seoul"))
-            }
-
-            # CVE 업데이트
-            filter_query = {"cve_id": cve_id}
-            updated_cve = await self.repository.update_one(filter_query, final_update)
+            # 수정 이력 추가
+            current_time = datetime.now(ZoneInfo("Asia/Seoul"))
             
-            if updated_cve:
-                return await self.get_cve(cve_id)  # 업데이트된 문서 반환
-            return None
-
+            # 모델에 직접 업데이트 (Document.update 사용)
+            cve_model = await CVEModel.find_one({"cve_id": cve_id})
+            if not cve_model:
+                return False
+            
+            # nuclei_hash 필드 명시적 추가
+            if "nuclei_hash" in update_data:
+                cve_model.nuclei_hash = update_data["nuclei_hash"]
+            
+            # 다른 필드 업데이트
+            for key, value in update_data.items():
+                if key != "nuclei_hash" and hasattr(cve_model, key):
+                    setattr(cve_model, key, value)
+            
+            # 항상 업데이트 시간 설정
+            cve_model.last_modified_date = current_time
+            
+            # 저장
+            await cve_model.save()
+            
+            return True
         except Exception as e:
-            logging.error(f"Error in update_cve: {str(e)}")
-            logging.error(traceback.format_exc())
-            raise
+            logger.error(f"CVE 업데이트 오류: {str(e)}")
+            return False
 
     async def delete_cve(self, cve_id: str) -> bool:
         """CVE를 삭제합니다."""
