@@ -65,7 +65,6 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
   });
   const [editedRule, setEditedRule] = useState('');
   const [selectedRuleIndex, setSelectedRuleIndex] = useState(-1);
-  const [isAdding, setIsAdding] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const pendingUpdateRef = useRef(null);
 

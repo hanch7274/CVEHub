@@ -9,15 +9,13 @@ import Comment from './Comment';
 import MentionInput from './MentionInput';
 import { fetchCVEDetail } from '../../../store/slices/cveSlice';
 import { api } from '../../../utils/auth';
-import { formatDistanceToNow, parseISO, format } from 'date-fns';
+import { formatDistanceToNow } from 'date-fns';
 import { ko } from 'date-fns/locale';
-import { debounce } from 'lodash';
 import { useSnackbar } from 'notistack';
 import { useCVEWebSocketUpdate } from '../../../contexts/WebSocketContext';
 import { WS_EVENT_TYPE } from '../../../services/websocket';
 import {
   ListHeader,
-  StyledListItem,
   EmptyState
 } from './CommonStyles';
 import { Comment as CommentIcon } from '@mui/icons-material';
@@ -26,28 +24,16 @@ import { Comment as CommentIcon } from '@mui/icons-material';
 const extractMentions = (content) =>
   content.match(/@(\w+)/g)?.map(mention => mention.substring(1)) || [];
 
-// KST 시간대로 변환 함수 개선
-const convertToKST = (dateString) => {
-  if (!dateString) return null;
-  try {
-    const kstTime = new Date(dateString);
-    kstTime.setHours(kstTime.getHours() + 9);  // UTC+9 (KST)
-    return kstTime;
-  } catch (error) {
-    console.error('Invalid date:', dateString);
-    return null;
-  }
-};
-
 // 시간 포맷팅
 const formatDate = (dateString) => {
-  const kstDate = convertToKST(dateString);
-  if (!kstDate) return '';
+  if (!dateString) return '';
   try {
-    return formatDistanceToNow(kstDate, { addSuffix: true, locale: ko });
+    // KST 시간대로 변환 (UTC+9)
+    const date = new Date(dateString);
+    return formatDistanceToNow(date, { addSuffix: true, locale: ko });
   } catch (error) {
     console.error('Error formatting date:', error);
-    return format(kstDate, 'yyyy-MM-dd HH:mm:ss', { locale: ko });
+    return dateString;
   }
 };
 
@@ -186,7 +172,7 @@ const CommentsTab = React.memo(({
     } finally {
       setLoading(false);
     }
-  }, [cve.cveId, dispatch, sendCustomMessage, enqueueSnackbar]);
+  }, [cve.cveId, sendCustomMessage, enqueueSnackbar]);
 
   // 댓글 수정 함수
   const handleEdit = useCallback(async (commentId, content) => {
@@ -238,7 +224,7 @@ const CommentsTab = React.memo(({
     } finally {
       setLoading(false);
     }
-  }, [cve.cveId, currentUser, dispatch, sendCustomMessage, enqueueSnackbar, handleFinishEdit]);
+  }, [cve.cveId, currentUser, sendCustomMessage, enqueueSnackbar, handleFinishEdit]);
 
   // 답글 작성 함수
   const handleReplySubmit = useCallback(async (parentId, content) => {
@@ -282,7 +268,7 @@ const CommentsTab = React.memo(({
     } finally {
       setLoading(false);
     }
-  }, [cve.cveId, currentUser, dispatch, sendCustomMessage, enqueueSnackbar]);
+  }, [cve.cveId, currentUser, sendCustomMessage, enqueueSnackbar]);
 
   // 개별 댓글 아이템 (메모이제이션)
   const CommentItem = useCallback(({ comment }) => {
@@ -330,7 +316,7 @@ const CommentsTab = React.memo(({
         {comment.children?.map(child => renderComment(child))}
       </React.Fragment>
     );
-  }, [MemoizedCommentItem]);
+  }, []);
 
   // 댓글 목록 재조회
   const updateLocalComments = useCallback(async () => {
@@ -418,7 +404,7 @@ const CommentsTab = React.memo(({
     } finally {
       setLoading(false);
     }
-  }, [cve.cveId, newComment, currentUser, dispatch, sendCustomMessage, enqueueSnackbar]);
+  }, [cve.cveId, newComment, currentUser, sendCustomMessage, enqueueSnackbar]);
 
   // 초기 로딩
   useEffect(() => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, memo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, memo } from 'react';
 import {
   Typography,
   Box,
@@ -6,7 +6,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  IconButton,
   Tooltip,
   Fade,
   Chip,
@@ -20,7 +19,6 @@ import {
 import {
   Add as AddIcon,
   Delete as DeleteIcon,
-  Launch as LaunchIcon,
   Link as LinkIcon,
   Edit as EditIcon
 } from '@mui/icons-material';
@@ -29,7 +27,6 @@ import {
   ActionButton,
   ActionIconButton,
   ListHeader,
-  ChipLabel,
   EmptyState
 } from './CommonStyles';
 import { useDispatch } from 'react-redux';
@@ -53,9 +50,6 @@ const TYPE_PRIORITY = {
   'Other': 4
 };
 
-const getReferenceTypeLabel = (type) => {
-  return REFERENCE_TYPES[type] || type;
-};
 
 const DEFAULT_REFERENCE = {
   type: 'OTHER',
@@ -69,7 +63,6 @@ const ReferencesTab = memo(({ cve, currentUser, refreshTrigger }) => {
   const dispatch = useDispatch();
   const { sendCustomMessage } = useCVEWebSocketUpdate(cve.cveId);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
   const [open, setOpen] = useState(false);
   const [selectedReference, setSelectedReference] = useState(null);
   const [formData, setFormData] = useState(DEFAULT_REFERENCE);
@@ -111,7 +104,7 @@ const ReferencesTab = memo(({ cve, currentUser, refreshTrigger }) => {
         }
       });
     }
-  }, [refreshTrigger, dispatch, cve?.cveId, enqueueSnackbar, closeSnackbar]);
+  }, [refreshTrigger, dispatch, cve?.cveId, cve?.references, enqueueSnackbar, closeSnackbar]);
 
   if (!cve) {
     return null;
@@ -132,7 +125,6 @@ const ReferencesTab = memo(({ cve, currentUser, refreshTrigger }) => {
   const handleDeleteReference = async (index) => {
     try {
       setLoading(true);
-      setError(null);
 
       const updatedRefs = [...(cve.references || [])];
       updatedRefs.splice(index, 1);
@@ -172,7 +164,6 @@ const ReferencesTab = memo(({ cve, currentUser, refreshTrigger }) => {
   const handleSave = async () => {
     try {
       setLoading(true);
-      setError(null);
 
       const currentRefs = cve?.references || [];
       const updatedRefs = [...currentRefs];

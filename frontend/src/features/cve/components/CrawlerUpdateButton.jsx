@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useDispatch } from 'react-redux';
 import { useSnackbar } from 'notistack';
 import { 
@@ -19,7 +19,6 @@ import {
   Stepper,
   Step,
   StepLabel,
-  StepContent,
   Card,
   Grid,
   Avatar
@@ -135,13 +134,8 @@ const CrawlerUpdateButton = () => {
     { id: 'emerging_threats', name: 'EmergingThreats Rules' }
   ];
 
-  // 초기 상태 로드
-  useEffect(() => {
-    loadCrawlerStatus();
-  }, []);
-
-  // 크롤러 상태 로드
-  const loadCrawlerStatus = async () => {
+  // 크롤러 상태 로드 함수 wrapped in useCallback
+  const loadCrawlerStatus = useCallback(async () => {
     try {
       setLoading(true);
       const status = await crawlerService.getCrawlerStatus();
@@ -152,7 +146,26 @@ const CrawlerUpdateButton = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // 폴링 중지 함수 wrapped in useCallback
+  const stopPolling = useCallback(() => {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      setPollTimer(null);
+    }
+  }, [pollTimer]);
+
+  // 초기 상태 로드
+  useEffect(() => {
+    loadCrawlerStatus();
+  }, [loadCrawlerStatus]);
+
+  // 컴포넌트 마운트/언마운트 시 폴링 관리
+  useEffect(() => {
+    // 컴포넌트 언마운트 시 폴링 중지
+    return () => stopPolling();
+  }, [stopPolling]);
 
   // 웹소켓 메시지 처리
   useWebSocketMessage((message) => {
@@ -188,14 +201,12 @@ const CrawlerUpdateButton = () => {
       
       // 업데이트된 CVE 목록이 있으면 표시
       if (data.updated_cves) {
-        // 배열이나 객체 여부 확인 후 안전하게 처리
         if (Array.isArray(data.updated_cves)) {
           setUpdatedCVEs({
             count: data.updated_cves.length,
             items: data.updated_cves
           });
         } else if (typeof data.updated_cves === 'object') {
-          // 객체 형태일 경우
           setUpdatedCVEs(data.updated_cves);
         } else {
           console.warn('업데이트된 CVE 데이터 형식이 예상과 다릅니다:', data.updated_cves);
@@ -227,10 +238,7 @@ const CrawlerUpdateButton = () => {
   const startPolling = () => {
     if (pollTimer) clearInterval(pollTimer);
     
-    // 웹소켓 연결 상태 확인
     const isWebSocketConnected = !!window.webSocket && window.webSocket.readyState === WebSocket.OPEN;
-    
-    // 웹소켓이 연결되어 있으면 폴링 필요 없음 (선택적)
     if (isWebSocketConnected) {
       console.log('웹소켓이 연결되어 있어 폴링을 시작하지 않습니다.');
       return;
@@ -238,18 +246,14 @@ const CrawlerUpdateButton = () => {
     
     console.log('웹소켓 백업으로 폴링을 시작합니다.');
     
-    // 5초마다 상태 확인
     const timer = setInterval(async () => {
       try {
         const status = await crawlerService.getCrawlerStatus();
-        
-        // 웹소켓을 통해 마지막으로 받은 상태가 있다면, 폴링으로 받은 상태보다 우선함
         if (!lastWebSocketUpdate) {
           setIsRunning(status.isRunning);
           setLastUpdate(status.lastUpdate || {});
         }
         
-        // 웹소켓 상태가 없고, 폴링 결과 실행 중이 아니면 폴링 중지
         if (!lastWebSocketUpdate && !status.isRunning) {
           console.log('크롤러가 실행 중이 아니어서 폴링을 중지합니다.');
           stopPolling();
@@ -261,23 +265,6 @@ const CrawlerUpdateButton = () => {
     
     setPollTimer(timer);
   };
-
-  // 폴링 중지 함수
-  const stopPolling = () => {
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      setPollTimer(null);
-    }
-  };
-
-  // 컴포넌트 마운트/언마운트 시 폴링 관리
-  useEffect(() => {
-    // 컴포넌트 마운트 시 상태 확인
-    loadCrawlerStatus();
-    
-    // 언마운트 시 폴링 중지
-    return () => stopPolling();
-  }, []);
 
   // 메뉴 열기
   const handleClick = (event) => {
@@ -306,17 +293,11 @@ const CrawlerUpdateButton = () => {
       setHasError(false);
       setUpdatedCVEs(null);
       
-      // 크롤러 실행 요청
       await crawlerService.runCrawler(crawler.id);
-      
-      // 폴링 시작 (웹소켓 연결이 끊어질 경우를 대비)
-      startPolling();
-      
+      startPolling();      
     } catch (error) {
       console.error('크롤러 실행 오류:', error);
       setHasError(true);
-      
-      // 서버 오류 메시지 표시 (중복 실행 등의 문제 포함)
       const errorMessage = error.response?.data?.detail || '크롤러 실행 중 오류가 발생했습니다.';
       
       setProgress({
@@ -389,7 +370,6 @@ const CrawlerUpdateButton = () => {
         </Menu>
       </Box>
 
-      {/* 진행 상황 대화상자 */}
       <Dialog 
         open={progressOpen} 
         onClose={() => !isRunning && setProgressOpen(false)}
@@ -404,7 +384,6 @@ const CrawlerUpdateButton = () => {
             <Typography variant="h6">
               {selectedCrawler?.name || '크롤러'} 업데이트 진행 상황
             </Typography>
-            {/* 닫기 버튼 - 실행 중이 아닐 때만 활성화 */}
             {!isRunning && (
               <IconButton
                 onClick={() => setProgressOpen(false)}
@@ -417,7 +396,6 @@ const CrawlerUpdateButton = () => {
           </Box>
         </DialogTitle>
         <DialogContent>
-          {/* 진행 단계 표시 */}
           <Box sx={{ mb: 4 }}>
             <Card elevation={0} sx={{ p: 3, bgcolor: 'background.paper', borderRadius: 2, mb: 3 }}>
               <Stepper activeStep={activeStep} orientation="horizontal">
@@ -447,7 +425,6 @@ const CrawlerUpdateButton = () => {
               </Stepper>
             </Card>
 
-            {/* 진행률 표시 */}
             <Box sx={{ mb: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                 <Typography variant="subtitle1" fontWeight="500">
@@ -474,7 +451,6 @@ const CrawlerUpdateButton = () => {
               </Typography>
             </Box>
 
-            {/* 현재 단계 상세 정보 */}
             <Card 
               elevation={0} 
               sx={{ 
@@ -508,7 +484,6 @@ const CrawlerUpdateButton = () => {
             </Card>
           </Box>
 
-          {/* 업데이트된 CVE 목록 */}
           {updatedCVEs && updatedCVEs.count > 0 && (
             <Box sx={{ mt: 3 }}>
               <Divider sx={{ my: 2 }} />
@@ -576,4 +551,4 @@ const CrawlerUpdateButton = () => {
   );
 };
 
-export default CrawlerUpdateButton; 
+export default CrawlerUpdateButton;

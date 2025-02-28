@@ -4,7 +4,6 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import { createSelector } from 'reselect';
 import { api } from '../../utils/auth';
 import { cveService } from '../../api/services/cveService';
-import { snakeToCamel } from '../../utils/caseConverter';
 
 // 초기 상태
 const initialState = {

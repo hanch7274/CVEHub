@@ -1,7 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import webSocketInstance from '../services/websocket';
-import { enqueueSnackbar } from 'notistack';
 
 /**
  * useSubscription 훅:
@@ -13,7 +12,6 @@ import { enqueueSnackbar } from 'notistack';
  * @returns {object} - 구독 상태 및 관리 함수
  */
 export const useSubscription = (cveId, onUpdateReceived, onSubscribersChange) => {
-  const dispatch = useDispatch();
   const isAuthenticated = useSelector(state => state.auth.isAuthenticated);
   
   // Refs를 사용하여 값의 안정적인 참조 유지
