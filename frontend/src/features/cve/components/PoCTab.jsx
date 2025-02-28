@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, memo } from 'react';
+import React, { useState, useEffect, useRef, memo, useCallback } from 'react';
 import {
   Typography,
   Chip,
@@ -37,7 +37,7 @@ import {
   updateCVEDetail,
   fetchCVEDetail
 } from '../../../store/slices/cveSlice';
-import { useWebSocketMessage } from '../../../contexts/WebSocketContext';
+import { useCVEWebSocketUpdate } from '../../../contexts/WebSocketContext';
 import { WS_EVENT_TYPE } from '../../../services/websocket';
 import { useSnackbar } from 'notistack';
 import { zonedTimeToUtc, format } from 'date-fns-tz';
@@ -56,7 +56,7 @@ const DEFAULT_POC = {
 
 const PoCTab = memo(({ cve, currentUser, refreshTrigger }) => {
   const dispatch = useDispatch();
-  const { sendCustomMessage } = useWebSocketMessage();
+  const { sendCustomMessage } = useCVEWebSocketUpdate(cve.cveId);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(false);
@@ -131,23 +131,21 @@ const PoCTab = memo(({ cve, currentUser, refreshTrigger }) => {
       })).unwrap();
 
       if (response) {
-        // WebSocket 메시지 전송
+        // WebSocket 메시지 전송 - 필드 정보 추가
         await sendCustomMessage(
-          WS_EVENT_TYPE.CVE_UPDATED,  // 모든 변경사항을 CVE_UPDATED로 통일
+          WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,
-            cve: response.data  // 전체 CVE 데이터 전송
+            field: 'poc',
+            cve: response.data
           }
         );
         
         setOpen(false);
         setNewPoc(DEFAULT_POC);
         
-        // 데이터 갱신을 위한 지연 처리
-        setTimeout(async () => {
-          await dispatch(fetchCVEDetail(cve.cveId));
-          enqueueSnackbar('PoC가 추가되었습니다.', { variant: 'success' });
-        }, 500);
+        // 즉시 데이터 갱신 호출 제거
+        enqueueSnackbar('PoC가 추가되었습니다.', { variant: 'success' });
       }
     } catch (error) {
       console.error('Failed to add PoC:', error);
@@ -171,13 +169,17 @@ const PoCTab = memo(({ cve, currentUser, refreshTrigger }) => {
       })).unwrap();
 
       if (response) {
+        // WebSocket 메시지 전송 - 필드 정보 추가
         await sendCustomMessage(
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,
+            field: 'poc',
             cve: response.data
           }
         );
+        
+        // 즉시 데이터 갱신 호출 제거
         enqueueSnackbar('PoC가 삭제되었습니다.', { variant: 'success' });
       }
     } catch (error) {
@@ -219,13 +221,17 @@ const PoCTab = memo(({ cve, currentUser, refreshTrigger }) => {
       })).unwrap();
 
       if (response) {
+        // WebSocket 메시지 전송 - 필드 정보 추가
         await sendCustomMessage(
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,
+            field: 'poc',
             cve: response.data
           }
         );
+        
+        // 즉시 데이터 갱신 호출 제거
         enqueueSnackbar('PoC가 수정되었습니다.', { variant: 'success' });
         setOpen(false);
         setSelectedPoc(null);
@@ -488,11 +494,23 @@ const PoCTab = memo(({ cve, currentUser, refreshTrigger }) => {
     </Box>
   );
 }, (prevProps, nextProps) => {
-  // 커스텀 비교 함수 개선
+  // 디버깅용 로그
+  console.log('PoCTab memo comparison');
+  console.log('prevProps.refreshTrigger:', prevProps.refreshTrigger);
+  console.log('nextProps.refreshTrigger:', nextProps.refreshTrigger);
+  
+  // PoC가 변경된 경우 즉시 리렌더링
+  const pocsChanged = JSON.stringify(prevProps.cve.pocs) !== JSON.stringify(nextProps.cve.pocs);
+  console.log('pocs changed:', pocsChanged);
+  
+  if (pocsChanged) {
+    return false; // 변경되었으므로 리렌더링 필요
+  }
+  
+  // 그 외의 경우 기존 로직 유지
   return prevProps.refreshTrigger === nextProps.refreshTrigger &&
          prevProps.cve.cveId === nextProps.cve.cveId &&
-         prevProps.currentUser?.id === nextProps.currentUser?.id &&
-         JSON.stringify(prevProps.cve.pocs) === JSON.stringify(nextProps.cve.pocs);
+         prevProps.currentUser?.id === nextProps.currentUser?.id;
 });
 
 export default PoCTab;

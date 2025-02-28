@@ -443,7 +443,13 @@ class ConnectionManager:
 
             # 추가 데이터가 있으면 병합
             if data:
-                message_data.update(data)
+                # 데이터가 딕셔너리인지 확인
+                if isinstance(data, dict):
+                    message_data.update(data)
+                else:
+                    # 딕셔너리가 아닌 경우 안전하게 처리
+                    logger.warning(f"[WebSocket] Non-dictionary data provided to broadcast_to_cve: {data}")
+                    message_data["additional_data"] = data
 
             message = {
                 "type": message_type,
@@ -501,9 +507,23 @@ class ConnectionManager:
             for cve_id, subscribers in self.cve_subscribers.copy().items():
                 for user_id in subscribers.copy():
                     # 사용자가 연결되어 있지 않으면 구독 해제
-                    if user_id not in self.active_connections or not self.active_connections:
-                        await self.unsubscribe_cve(user_id, cve_id)
-                        logger.info(f"[WebSocket] Cleaned up inactive subscription: User {user_id} from {cve_id}")
+                    if user_id not in self.active_connections or not self.active_connections[user_id]:
+                        # 마지막 활동 시간 확인 (15분 이상 비활성 상태인 경우에만 정리)
+                        current_time = datetime.now(ZoneInfo("Asia/Seoul"))
+                        last_active = None
+                        
+                        # 사용자의 모든 연결에 대한 마지막 활동 시간 확인
+                        if user_id in self.last_activity:
+                            for ws, last_time in self.last_activity[user_id].items():
+                                if last_active is None or last_time > last_active:
+                                    last_active = last_time
+                        
+                        # 마지막 활동이 없거나 15분 이상 지난 경우에만 구독 해제
+                        if last_active is None or (current_time - last_active).total_seconds() > 900:  # 15분 = 900초
+                            await self.unsubscribe_cve(user_id, cve_id)
+                            logger.info(f"[WebSocket] Cleaned up inactive subscription: User {user_id} from {cve_id}")
+                        else:
+                            logger.info(f"[WebSocket] Keeping subscription for recently active user: {user_id} on {cve_id}")
 
             logger.info("[WebSocket] Completed inactive subscriptions cleanup")
         except Exception as e:

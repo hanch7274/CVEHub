@@ -179,7 +179,16 @@ class CVEModel(Document):
             "created_at",
             "created_by",
             "is_locked",  # 락 상태 인덱스 추가
-            "locked_by"
+            "locked_by",
+            [("cve_id", 1)], # 고유 인덱스
+            [("last_modified_date", -1)], # 내림차순 인덱스
+            [("created_at", -1)], # 내림차순 인덱스
+            [("status", 1), ("last_modified_date", -1)], # 복합 인덱스
+            [
+                ("cve_id", "text"), 
+                ("title", "text"), 
+                ("description", "text")
+            ] # 텍스트 검색 인덱스
         ]
 
     class Config:

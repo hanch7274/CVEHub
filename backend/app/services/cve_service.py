@@ -73,42 +73,25 @@ class CVEService:
             logging.error(traceback.format_exc())
             return None
 
-    async def update_cve(self, cve_id: str, update_data: Dict) -> bool:
-        """CVE 업데이트"""
+    async def update_cve(self, cve_id: str, data: dict, current_user=None) -> Optional[dict]:
+        """CVE 정보 업데이트"""
         try:
-            # 기존 CVE 확인
-            existing = await self.get_cve(cve_id)
-            if not existing:
-                logger.error(f"업데이트할 CVE를 찾을 수 없음: {cve_id}")
-                return False
+            # 업데이트 시간 설정
+            data['updated_at'] = datetime.now()
             
-            # 수정 이력 추가
-            current_time = datetime.now(ZoneInfo("Asia/Seoul"))
+            # 현재 사용자 정보 추가 (옵션)
+            if current_user:
+                data['last_modified_by'] = current_user.username if hasattr(current_user, 'username') else str(current_user)
             
-            # 모델에 직접 업데이트 (Document.update 사용)
-            cve_model = await CVEModel.find_one({"cve_id": cve_id})
-            if not cve_model:
-                return False
+            # 업데이트 실행
+            result = await self.repository.update(cve_id, data)
             
-            # nuclei_hash 필드 명시적 추가
-            if "nuclei_hash" in update_data:
-                cve_model.nuclei_hash = update_data["nuclei_hash"]
-            
-            # 다른 필드 업데이트
-            for key, value in update_data.items():
-                if key != "nuclei_hash" and hasattr(cve_model, key):
-                    setattr(cve_model, key, value)
-            
-            # 항상 업데이트 시간 설정
-            cve_model.last_modified_date = current_time
-            
-            # 저장
-            await cve_model.save()
-            
-            return True
+            if result:
+                return await self.repository.get_by_cve_id(cve_id)
+            return None
         except Exception as e:
-            logger.error(f"CVE 업데이트 오류: {str(e)}")
-            return False
+            logger.error(f"CVE 업데이트 중 오류 발생: {str(e)}")
+            raise
 
     async def delete_cve(self, cve_id: str) -> bool:
         """CVE를 삭제합니다."""
@@ -305,4 +288,25 @@ class CVEService:
         cve.lock_timestamp = None
         cve.lock_expires_at = None
         await self.repository.update(cve)
-        return True 
+        return True
+
+    async def replace_cve(self, cve_id: str, data: dict) -> Optional[dict]:
+        """CVE 정보 전체 교체 (update_cve가 실패할 경우 백업 방법)"""
+        try:
+            # 기존 _id 필드 유지를 위해 먼저 조회
+            existing = await self.repository.get_by_cve_id(cve_id)
+            if existing and '_id' in existing:
+                data['_id'] = existing['_id']
+            
+            # 시간 필드 설정
+            data['updated_at'] = datetime.now()
+            if not data.get('created_at'):
+                data['created_at'] = existing.get('created_at') if existing else datetime.now()
+            
+            # 문서 교체 실행
+            result = await self.repository.replace(cve_id, data)
+            
+            return await self.repository.get_by_cve_id(cve_id)
+        except Exception as e:
+            logger.error(f"CVE 교체 중 오류 발생: {str(e)}")
+            raise 

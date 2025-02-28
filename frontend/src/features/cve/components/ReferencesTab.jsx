@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, memo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, memo, useCallback } from 'react';
 import {
   Typography,
   Box,
@@ -34,7 +34,7 @@ import {
 } from './CommonStyles';
 import { useDispatch } from 'react-redux';
 import { updateCVEDetail, fetchCVEDetail } from '../../../store/slices/cveSlice';
-import { useWebSocketMessage } from '../../../contexts/WebSocketContext';
+import { useCVEWebSocketUpdate } from '../../../contexts/WebSocketContext';
 import { WS_EVENT_TYPE } from '../../../services/websocket';
 import { useSnackbar } from 'notistack';
 
@@ -67,7 +67,7 @@ const DEFAULT_REFERENCE = {
 
 const ReferencesTab = memo(({ cve, currentUser, refreshTrigger }) => {
   const dispatch = useDispatch();
-  const { sendCustomMessage } = useWebSocketMessage();
+  const { sendCustomMessage } = useCVEWebSocketUpdate(cve.cveId);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(false);
@@ -147,15 +147,12 @@ const ReferencesTab = memo(({ cve, currentUser, refreshTrigger }) => {
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,
+            field: 'references',
             cve: response.data
           }
         );
         
-        // 데이터 갱신을 위한 지연 처리
-        setTimeout(async () => {
-          await dispatch(fetchCVEDetail(cve.cveId));
-          enqueueSnackbar('Reference가 삭제되었습니다.', { variant: 'success' });
-        }, 500);
+        enqueueSnackbar('Reference가 삭제되었습니다.', { variant: 'success' });
       }
     } catch (error) {
       console.error('Failed to delete Reference:', error);
@@ -221,6 +218,7 @@ const ReferencesTab = memo(({ cve, currentUser, refreshTrigger }) => {
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,
+            field: 'references',
             cve: response.data
           }
         );
@@ -229,11 +227,7 @@ const ReferencesTab = memo(({ cve, currentUser, refreshTrigger }) => {
         setSelectedReference(null);
         setFormData(DEFAULT_REFERENCE);
 
-        // 데이터 갱신을 위한 지연 처리
-        setTimeout(async () => {
-          await dispatch(fetchCVEDetail(cve.cveId));
-          enqueueSnackbar(`Reference가 ${selectedReference ? '수정' : '추가'}되었습니다.`, { variant: 'success' });
-        }, 500);
+        enqueueSnackbar(`Reference가 ${selectedReference ? '수정' : '추가'}되었습니다.`, { variant: 'success' });
       }
     } catch (error) {
       console.error('Failed to save Reference:', error);
@@ -468,11 +462,22 @@ const ReferencesTab = memo(({ cve, currentUser, refreshTrigger }) => {
     </Box>
   );
 }, (prevProps, nextProps) => {
-  // 커스텀 비교 함수
+  // 디버깅용 로그
+  console.log('ReferencesTab memo comparison');
+  console.log('prevProps.refreshTrigger:', prevProps.refreshTrigger);
+  console.log('nextProps.refreshTrigger:', nextProps.refreshTrigger);
+  
+  // references가 변경된 경우 즉시 리렌더링
+  const referencesChanged = JSON.stringify(prevProps.cve.references) !== JSON.stringify(nextProps.cve.references);
+  console.log('references changed:', referencesChanged);
+  
+  if (referencesChanged) {
+    return false; // 변경되었으므로 리렌더링 필요
+  }
+  
+  // 그 외의 경우 기존 로직 유지
   return prevProps.refreshTrigger === nextProps.refreshTrigger &&
-         prevProps.cve.cveId === nextProps.cve.cveId &&
-         prevProps.currentUser?.id === nextProps.currentUser?.id &&
-         JSON.stringify(prevProps.cve.references) === JSON.stringify(nextProps.cve.references);
+         prevProps.cve.cveId === nextProps.cve.cveId;
 });
 
 export default ReferencesTab;

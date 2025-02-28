@@ -177,6 +177,7 @@ class BaseCrawlerService(ABC, LoggingMixin):
                     "stage": ui_stage,
                     "percent": percent,
                     "message": message,
+                    "raw_count": message.split("(")[-1].split(")")[0] if "(" in message and ")" in message else "",
                     "timestamp": datetime.now().isoformat(),
                     "isRunning": not (ui_stage == "완료" or ui_stage == "오류")
                 }
@@ -185,7 +186,13 @@ class BaseCrawlerService(ABC, LoggingMixin):
             # 완료 단계에서는 업데이트된 CVE 개수만 포함
             if stage.lower() == '완료' and updated_cves is not None:
                 message_data["data"]["updated_count"] = len(updated_cves)
-                self.log_info(f"완료 메시지 전송: stage={ui_stage}, percent={percent}, isRunning=True")
+                message_data["data"]["isRunning"] = False  # 명시적으로 실행 중이 아님을 표시
+                self.log_info(f"완료 메시지 전송: stage={ui_stage}, percent={percent}, isRunning=False")
+            
+            # 오류 상태에서도 명시적으로 실행 중이 아님을 표시
+            if ui_stage == "오류":
+                message_data["data"]["isRunning"] = False
+                self.log_info(f"오류 메시지 전송: stage={ui_stage}, percent={percent}, isRunning=False")
             
             # 요청자 ID가 있으면 해당 사용자에게만 전송, 없으면 전체 브로드캐스트
             if self.requester_id:
@@ -219,12 +226,23 @@ class BaseCrawlerService(ABC, LoggingMixin):
         try:
             from app.core.cache import set_cache
             
-            # 중요도별 통계 계산
+            # updated_cves 타입 검사 및 변환
+            if not isinstance(updated_cves, list):
+                self.log_warning(f"updated_cves 매개변수의 타입이 list가 아님: {type(updated_cves)}")
+                # 딕셔너리인 경우 'items' 키 확인
+                if isinstance(updated_cves, dict) and 'items' in updated_cves:
+                    self.log_info("업데이트 결과 딕셔너리에서 'items' 항목을 사용합니다.")
+                    updated_cves = updated_cves.get('items', [])
+                else:
+                    self.log_warning("추출할 items 목록이 없어 빈 리스트로 계속 진행합니다.")
+                    updated_cves = []
+            
+            # 중요도별 통계 계산 (get 메서드를 안전하게 호출)
             severity_counts = {
-                "critical": sum(1 for cve in updated_cves if cve.get("severity") == "critical"),
-                "high": sum(1 for cve in updated_cves if cve.get("severity") == "high"),
-                "medium": sum(1 for cve in updated_cves if cve.get("severity") == "medium"),
-                "low": sum(1 for cve in updated_cves if cve.get("severity") == "low")
+                "critical": sum(1 for cve in updated_cves if isinstance(cve, dict) and cve.get("severity") == "critical"),
+                "high": sum(1 for cve in updated_cves if isinstance(cve, dict) and cve.get("severity") == "high"),
+                "medium": sum(1 for cve in updated_cves if isinstance(cve, dict) and cve.get("severity") == "medium"),
+                "low": sum(1 for cve in updated_cves if isinstance(cve, dict) and cve.get("severity") == "low")
             }
             
             # 저장할 정보 구성
@@ -242,4 +260,9 @@ class BaseCrawlerService(ABC, LoggingMixin):
             
             self.log_info(f"업데이트 결과 저장 완료: {len(updated_cves)}개 CVE")
         except Exception as e:
-            self.log_error(f"업데이트 결과 저장 실패: {str(e)}") 
+            self.log_error(f"업데이트 결과 저장 실패: {str(e)}")
+            # 상세 오류 정보 로깅
+            error_type = e.__class__.__name__
+            error_msg = str(e)
+            self.log_error(f"업데이트 결과 저장 실패 유형: {error_type}, 메시지: {error_msg}")
+            self.log_error(f"updated_cves 타입: {type(updated_cves)}, 값: {str(updated_cves)[:100]}...") 

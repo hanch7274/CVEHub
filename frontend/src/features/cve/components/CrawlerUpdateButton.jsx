@@ -131,7 +131,8 @@ const CrawlerUpdateButton = () => {
   // 크롤러 옵션
   const CRAWLERS = [
     { id: 'nuclei', name: 'Nuclei Templates' },
-    { id: 'metasploit', name: 'Metasploit' }
+    { id: 'metasploit', name: 'Metasploit' },
+    { id: 'emerging_threats', name: 'EmergingThreats Rules' }
   ];
 
   // 초기 상태 로드
@@ -168,8 +169,13 @@ const CrawlerUpdateButton = () => {
         message: data.message
       });
       
-      // 실행 상태 업데이트 (백엔드에서 보낸 isRunning 사용)
-      setIsRunning(data.isRunning); 
+      // 완료 또는 오류 상태일 때는 항상 isRunning을 false로 설정
+      if (data.stage === '완료' || data.stage === '오류') {
+        setIsRunning(false);
+      } else {
+        // 그 외의 경우에는 백엔드에서 보낸 isRunning 값을 사용
+        setIsRunning(data.isRunning);
+      }
       
       // 현재 단계 업데이트
       const stageIndex = getStageIndex(data.stage);
@@ -182,7 +188,18 @@ const CrawlerUpdateButton = () => {
       
       // 업데이트된 CVE 목록이 있으면 표시
       if (data.updated_cves) {
-        setUpdatedCVEs(data.updated_cves);
+        // 배열이나 객체 여부 확인 후 안전하게 처리
+        if (Array.isArray(data.updated_cves)) {
+          setUpdatedCVEs({
+            count: data.updated_cves.length,
+            items: data.updated_cves
+          });
+        } else if (typeof data.updated_cves === 'object') {
+          // 객체 형태일 경우
+          setUpdatedCVEs(data.updated_cves);
+        } else {
+          console.warn('업데이트된 CVE 데이터 형식이 예상과 다릅니다:', data.updated_cves);
+        }
       }
       
       // 완료 또는 오류 상태이면 폴링 중지
@@ -383,10 +400,20 @@ const CrawlerUpdateButton = () => {
         }}
       >
         <DialogTitle>
-          <Box>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Typography variant="h6">
               {selectedCrawler?.name || '크롤러'} 업데이트 진행 상황
             </Typography>
+            {/* 닫기 버튼 - 실행 중이 아닐 때만 활성화 */}
+            {!isRunning && (
+              <IconButton
+                onClick={() => setProgressOpen(false)}
+                size="small"
+                aria-label="닫기"
+              >
+                <CloseIcon />
+              </IconButton>
+            )}
           </Box>
         </DialogTitle>
         <DialogContent>
@@ -534,6 +561,12 @@ const CrawlerUpdateButton = () => {
             color="primary"
             variant="contained"
             startIcon={<CloseIcon />}
+            sx={{
+              '&.Mui-disabled': {
+                bgcolor: 'rgba(0, 0, 0, 0.12)',
+                color: 'rgba(0, 0, 0, 0.26)'
+              }
+            }}
           >
             닫기
           </Button>

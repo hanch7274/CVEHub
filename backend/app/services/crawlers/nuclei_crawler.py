@@ -42,41 +42,36 @@ class NucleiCrawlerService(BaseCrawlerService):
         self.log_info("==== Nuclei 크롤러 실행 시작 ====")
         
         try:
-            # 1. 진행 상황 보고 - 준비 단계
-            await self.report_progress("준비", 0, "Nuclei 템플릿 저장소 준비 중...")
+            # 1. 준비 단계 (고정 진행률: 0-20%)
+            await self.report_progress("준비", 0, "Nuclei 템플릿 저장소 준비 중...(0%)")
             
             # 2. 저장소 클론 또는 풀
-            await self.report_progress("준비", 10, "GitHub 저장소 클론/풀 작업 중...")
             if not await self._clone_or_pull_repo():
                 raise Exception("저장소 클론/풀 작업 실패")
             
-            # 3. 데이터 수집 단계 시작 시 진행률 명확히 설정
-            await self.report_progress("수집", 20, "데이터 수집 시작...")
-            await self.report_progress("수집", 30, "템플릿 파일 검색 중...")
+            # 준비 단계 완료 메시지 (20%)
+            await self.report_progress("준비", 20, "준비 단계 완료")
+            
+            # 3. 데이터 수집 단계 (고정 진행률: 20-40%)
+            await self.report_progress("데이터 수집", 40, "데이터 수집 중...(40%)")
             templates = await self._find_template_files()
             self.log_info(f"총 {len(templates)}개의 템플릿 파일 발견")
             
-            # 4. 데이터 처리 단계 시작 시 진행률 오버랩
-            await self.report_progress("처리", 45, "데이터 처리 시작...")
-            await self.report_progress("처리", 40, "템플릿 파일 파싱 중...")
+            # 4. 데이터 처리 단계 (고정 진행률: 40-60%)
+            await self.report_progress("데이터 처리", 60, "데이터 처리 중...(60%)")
             processed_data = await self._process_templates(templates)
             self.log_info(f"템플릿 처리 완료: {len(processed_data)}개 처리됨")
             
-            # 5. 데이터베이스 업데이트 단계 시작
-            await self.report_progress("업데이트", 75, "데이터베이스 업데이트 시작...")
-            await self.report_progress("업데이트", 70, "CVE 데이터베이스 업데이트 중...")
+            # 5. 데이터베이스 업데이트 단계 (고정 진행률: 60-80%)
+            await self.report_progress("데이터베이스 업데이트", 80, "데이터베이스 업데이트 중...(80%)")
             update_result = await self._update_database(processed_data)
             
-            # 6. 완료 보고
-            await self.report_progress(
-                "완료", 
-                100, 
-                f"Nuclei 업데이트 완료. {update_result['count']}개의 CVE가 업데이트되었습니다."
-            )
+            # 6. 완료 보고 (고정 진행률: 80-100%)
+            await self.report_progress("완료", 100, f"완료: {update_result['count']}개의 CVE가 업데이트되었습니다.")
             
             # 최종 상태 확실히 전송 (100ms 후)
             await asyncio.sleep(0.1)
-            await self.report_progress("완료", 100, f"Nuclei 업데이트 완료. {update_result['count']}개의 CVE가 업데이트되었습니다.", update_result)
+            await self.report_progress("완료", 100, f"완료: {update_result['count']}개의 CVE가 업데이트되었습니다.", update_result.get('items', []))
             
             # 결과 반환
             return {
@@ -101,35 +96,20 @@ class NucleiCrawlerService(BaseCrawlerService):
                 # 클론 작업 시작
                 self.log_info(f"저장소 클론 시작: {self.repo_url} -> {self.repo_path}")
                 
-                # 25% 지점 메시지
-                await self.report_progress("데이터 수집", 25, "Git 저장소 클론 중... (25%)")
-                
                 # 클론 작업 시작
                 git.Repo.clone_from(self.repo_url, self.repo_path)
-                
-                # 75% 지점 메시지
-                await self.report_progress("데이터 수집", 75, "Git 저장소 클론 중... (75%)")
                 
                 self.log_info("저장소 클론 완료")
             else:
                 # 풀 작업 시작
                 self.log_info(f"저장소 풀 시작: {self.repo_path}")
                 
-                # 25% 지점 메시지
-                await self.report_progress("데이터 수집", 25, "Git 저장소 업데이트 중... (25%)")
-                
                 # 풀 작업 실행
                 repo = git.Repo(self.repo_path)
                 origin = repo.remotes.origin
                 
-                # 50% 지점 메시지
-                await self.report_progress("데이터 수집", 50, "Git 저장소 업데이트 중... (50%)")
-                
                 # 풀 실행
                 origin.pull()
-                
-                # 75% 지점 메시지
-                await self.report_progress("데이터 수집", 75, "Git 저장소 업데이트 중... (75%)")
                 
                 self.log_info("저장소 풀 완료")
             return True
@@ -160,20 +140,24 @@ class NucleiCrawlerService(BaseCrawlerService):
         processed_data = []
         total = len(template_files)
         
-        # 진행 상황 변수
+        # 진행 상황 보고 포인트 정의 (25% 간격으로 보고)
+        progress_points = [
+            0,  # 시작
+            total // 4,  # 25%
+            total // 2,  # 50%
+            (total * 3) // 4,  # 75%
+            total - 1  # 마지막
+        ]
         last_progress_idx = -1
-        progress_points = [0, total // 4, total // 2, (total * 3) // 4, total - 1]
         
         for idx, file_path in enumerate(template_files):
             try:
-                # 진행률 업데이트 전에 스킵 여부 확인
-                # 중복 메시지 방지 로직
-                if idx in progress_points and idx != last_progress_idx:
-                    progress = 40 + int((idx / total) * 30)  # 40% ~ 70% 진행률
+                # 진행 상황 보고 (25% 간격 또는 처음/마지막)
+                if idx in progress_points or idx == 0 or idx == total - 1:
                     await self.report_progress(
-                        "처리", 
-                        progress, 
-                        f"템플릿 처리 중... ({idx}/{total})"
+                        "데이터 처리", 
+                        60,  # 고정된 60% 진행률 유지
+                        f"데이터 처리 중 ({idx+1}/{total})"  # 현재/전체 형식으로 메시지 표시
                     )
                     last_progress_idx = idx
                 
@@ -334,7 +318,22 @@ class NucleiCrawlerService(BaseCrawlerService):
                             await cve_model.save()
                             self.log_info(f"새 CVE 추가됨: {cve_id}")
                         except Exception as e:
-                            self.log_error(f"CVE 저장 오류: {cve_id} - {str(e)}")
+                            # 더 자세한 오류 정보 로깅
+                            error_type = e.__class__.__name__
+                            error_msg = str(e)
+                            self.log_error(f"CVE 저장 오류: {cve_id} - 유형: {error_type}, 메시지: {error_msg}")
+                            
+                            # 유효성 검사 오류인 경우 더 자세한 정보 로깅
+                            if error_type == 'ValidationError':
+                                self.log_error(f"유효성 검사 오류 세부 정보: {repr(e)}")
+                            
+                            # 데이터 덤프
+                            try:
+                                error_data = json.dumps({k: str(v) for k, v in item.items()})
+                                self.log_error(f"문제가 발생한 데이터: {error_data[:500]}...")
+                            except Exception as json_err:
+                                self.log_error(f"데이터 덤프 실패: {str(json_err)}")
+                                
                             self.log_error(f"문제가 발생한 항목: {item}")
                             continue
                     
@@ -406,8 +405,33 @@ class NucleiCrawlerService(BaseCrawlerService):
             
             # 3. 데이터베이스 업데이트 단계
             await self.report_progress("데이터베이스 업데이트", 75, "데이터베이스에 CVE 정보를 업데이트하는 중입니다...")
-            success = await self.process_data(cve_data)
-            if not success:
+            process_result = await self.process_data(cve_data)
+            
+            # 처리 결과에 따른 처리
+            if isinstance(process_result, dict):
+                # 처리 결과가 상세 정보를 포함하는 딕셔너리인 경우
+                status = process_result.get('status', 'error')
+                updated_count = process_result.get('updated_count', 0)
+                failed_count = process_result.get('failed_count', 0)
+                result_message = process_result.get('message', '')
+                
+                if status == 'error':
+                    await self.report_progress("오류", 0, f"데이터베이스 업데이트 오류: {result_message}")
+                    return False
+                elif status == 'partial_success':
+                    # 부분 성공인 경우 - 일부 성공, 일부 실패
+                    await self.report_progress("완료", 100, 
+                                           f"{updated_count}개 항목 업데이트 성공, {failed_count}개 항목 처리 실패")
+                    
+                    # 실패한 항목 목록 전달
+                    if hasattr(self, 'failed_updates'):
+                        # 최대 10개까지 실패 항목 샘플 전달
+                        failed_samples = self.failed_updates[:10] if self.failed_updates else []
+                        await self.report_progress("완료", 100, 
+                                               f"{updated_count}개 항목 업데이트 성공, {failed_count}개 항목 처리 실패", 
+                                               self.updated_cves[:20] if hasattr(self, 'updated_cves') else [])
+                    return True
+            elif not process_result:
                 await self.report_progress("오류", 0, "데이터베이스 업데이트에 실패했습니다.")
                 return False
             
@@ -439,15 +463,6 @@ class NucleiCrawlerService(BaseCrawlerService):
         """데이터 가져오기 (BaseCrawlerService 추상 메소드 구현)"""
         # 진행 상황 25% 단위로 보고
         await self.report_progress("데이터 수집", 10, "Git 저장소 준비 중...")
-        
-        # 25% 지점 메시지
-        await self.report_progress("데이터 수집", 25, "Git 저장소에서 데이터 가져오는 중... (25%)")
-        
-        # 50% 지점 메시지
-        await self.report_progress("데이터 수집", 50, "Git 저장소에서 데이터 가져오는 중... (50%)")
-        
-        # 75% 지점 메시지
-        await self.report_progress("데이터 수집", 75, "Git 저장소에서 데이터 가져오는 중... (75%)")
         
         # 템플릿 파일 검색 실행
         files = await self._find_template_files()
@@ -508,14 +523,38 @@ class NucleiCrawlerService(BaseCrawlerService):
                             self.log_info(f"CVE 변경 감지: {cve_id} (해시 없음, 해시 추가 업데이트)")
                             # 해시만 추가하는 업데이트
                             item['nuclei_hash'] = content_hash
-                            await cve_service.update_cve(cve_id, {'nuclei_hash': content_hash})
-                            
+                            try:
+                                await cve_service.update_cve(cve_id, {'nuclei_hash': content_hash})
+                            except Exception as e:
+                                self.log_error(f"해시 업데이트 실패 ({cve_id}): {str(e)}", e)
+                                # 전체 문서 덮어쓰기 시도
+                                item['nuclei_hash'] = content_hash
+                                await cve_service.replace_cve(cve_id, item)
+                        
                         elif existing_hash != content_hash:
                             self.log_info(f"CVE 변경 감지: {cve_id} (해시 변경됨)")
                             # 전체 정보 업데이트
                             item['nuclei_hash'] = content_hash
-                            await cve_service.update_cve(cve_id, item)
-                            self.updated_cves.append(item)
+                            try:
+                                await cve_service.update_cve(cve_id, item)
+                            except Exception as e:
+                                # 더 자세한 오류 정보 로깅
+                                self.log_error(f"CVE 업데이트 실패 ({cve_id}), 오류 유형: {e.__class__.__name__}, 오류 메시지: {str(e)}", e)
+                                self.log_info(f"문서 교체 시도 중: {cve_id}")
+                                try:
+                                    # update_cve 실패 시 replace_cve 시도 (문서 전체 교체)
+                                    await cve_service.replace_cve(cve_id, item)
+                                    self.log_info(f"문서 교체 성공: {cve_id}")
+                                    self.updated_cves.append(item)
+                                except Exception as replace_err:
+                                    self.log_error(f"문서 교체도 실패 ({cve_id}): {replace_err.__class__.__name__} - {str(replace_err)}", replace_err)
+                                    # 오류 발생한 항목 기록
+                                    if not hasattr(self, 'failed_updates'):
+                                        self.failed_updates = []
+                                    self.failed_updates.append({"cve_id": cve_id, "error": str(replace_err)})
+                            else:
+                                self.log_info(f"CVE 업데이트 성공: {cve_id}")
+                                self.updated_cves.append(item)
                         else:
                             # 해시가 동일하면 변경 없음
                             self.log_debug(f"CVE 변경 없음: {cve_id}")
@@ -524,15 +563,44 @@ class NucleiCrawlerService(BaseCrawlerService):
                         self.log_info(f"새 CVE 추가: {cve_id}")
                         item['nuclei_hash'] = content_hash
                         item['created_by'] = 'nuclei_crawler'  # 생성자 표시
-                        await cve_service.create_cve(item)
-                        self.updated_cves.append(item)
+                        try:
+                            await cve_service.create_cve(item)
+                            self.log_info(f"새 CVE 추가 성공: {cve_id}")
+                            self.updated_cves.append(item)
+                        except Exception as e:
+                            self.log_error(f"새 CVE 추가 실패 ({cve_id}): {e.__class__.__name__} - {str(e)}", e)
+                            # 오류 발생한 항목 기록
+                            if not hasattr(self, 'failed_updates'):
+                                self.failed_updates = []
+                            self.failed_updates.append({"cve_id": cve_id, "error": str(e)})
                         
                 except Exception as e:
-                    self.log_error(f"항목 처리 중 오류: {e.__class__.__name__}", e)
+                    self.log_error(f"항목 처리 중 오류: {e.__class__.__name__} - {str(e)}", e)
+                    # 오류 발생한 항목 기록
+                    if not hasattr(self, 'failed_updates'):
+                        self.failed_updates = []
+                    self.failed_updates.append({"cve_id": cve_id if 'cve_id' in locals() else 'unknown', "error": str(e)})
                     # 개별 항목 오류는 전체 프로세스를 중단하지 않음
                     continue
             
-            return True
+            # 완료 또는 오류 상태 결정
+            if hasattr(self, 'failed_updates') and self.failed_updates:
+                failure_count = len(self.failed_updates)
+                self.log_warning(f"데이터 처리 중 {failure_count}개 항목에서 오류 발생")
+                
+                # 처리 결과를 포함한 상태 보고
+                return {
+                    "status": "partial_success" if self.updated_cves else "error",
+                    "updated_count": len(self.updated_cves),
+                    "failed_count": failure_count,
+                    "message": f"{len(self.updated_cves)}개 항목 업데이트 성공, {failure_count}개 항목 처리 실패"
+                }
+            
+            return {
+                "status": "success",
+                "updated_count": len(self.updated_cves),
+                "message": f"{len(self.updated_cves)}개 항목이 성공적으로 업데이트됨"
+            }
         except Exception as e:
             self.log_error(f"데이터 처리 중 오류: {str(e)}", e)
             return False

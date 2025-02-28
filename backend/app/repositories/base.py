@@ -1,6 +1,7 @@
 from typing import Generic, TypeVar, Optional, List, Type
 from beanie import Document
 from pydantic import BaseModel
+from ..database import get_database
 
 ModelType = TypeVar("ModelType", bound=Document)
 CreateSchemaType = TypeVar("CreateSchemaType", bound=BaseModel)
@@ -9,6 +10,7 @@ UpdateSchemaType = TypeVar("UpdateSchemaType", bound=BaseModel)
 class BaseRepository(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
     def __init__(self, model: Type[ModelType]):
         self.model = model
+        self.db = get_database()
 
     async def get(self, id: str) -> Optional[ModelType]:
         """ID로 단일 문서를 조회합니다."""

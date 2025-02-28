@@ -504,6 +504,15 @@ class CrawlerScheduler(LoggingMixin):
             self.log_error(f"DB 연결 확인 중 오류: {str(e)}", e)
             return False
 
+    async def init_scheduler_state(self):
+        """
+        스케줄러의 내부 상태를 초기화하는 메서드
+        
+        참고: 이 메서드는 실제로 데이터베이스를 초기화하지 않습니다. 
+        데이터베이스가 이미 초기화된 후에 스케줄러의 상태만 설정합니다.
+        """
+        return await self.init_db()
+
 def setup_scheduler():
     """호환성을 위한 함수 - CrawlerScheduler 인스턴스 반환"""
     return CrawlerScheduler() 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, memo } from 'react';
+import React, { useState, useEffect, memo, useRef } from 'react';
 import {
   Typography,
   Box,
@@ -6,7 +6,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  IconButton,
   Tooltip,
   Fade,
   Chip,
@@ -15,10 +14,7 @@ import {
   Select,
   MenuItem,
   TextField,
-  Button,
-  Paper,
-  Grid,
-  CircularProgress
+  Button
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -36,7 +32,7 @@ import {
 } from './CommonStyles';
 import { useDispatch } from 'react-redux';
 import { updateCVEDetail, fetchCVEDetail } from '../../../store/slices/cveSlice';
-import { useWebSocketMessage } from '../../../contexts/WebSocketContext';
+import { useCVEWebSocketUpdate } from '../../../contexts/WebSocketContext';
 import { WS_EVENT_TYPE } from '../../../services/websocket';
 import { useSnackbar } from 'notistack';
 
@@ -45,19 +41,18 @@ const RULE_TYPES = {
   IPS: { label: 'IPS', color: 'primary' },
   ONE: { label: 'ONE', color: 'secondary' },
   UTM: { label: 'UTM', color: 'success' },
-  EMERGING_THREATS: { label: 'Emerging Threats', color: 'warning' },
+  'Emerging-Threats': { label: 'Emerging Threats', color: 'warning' },
   SNORT_OFFICIAL: { label: 'Snort Official', color: 'info' }
 };
 
 const DEFAULT_RULE = {
-  type: 'USER_DEFINED',
+  type: 'Emerging-Threats',
   rule: '',
   description: ''
 };
 
 const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger }) => {
   const dispatch = useDispatch();
-  const { sendCustomMessage } = useWebSocketMessage();
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -65,10 +60,17 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
   const [selectedRule, setSelectedRule] = useState(null);
   const [newRule, setNewRule] = useState({
     rule: '',
-    type: 'USER_DEFINED',
+    type: 'Emerging-Threats',
     description: ''
   });
+  const [editedRule, setEditedRule] = useState('');
+  const [selectedRuleIndex, setSelectedRuleIndex] = useState(-1);
   const [isAdding, setIsAdding] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const pendingUpdateRef = useRef(null);
+
+  // 웹소켓 메시지 처리를 useCVEWebSocketUpdate로 대체
+  const { sendCustomMessage } = useCVEWebSocketUpdate(cve.cveId);
 
   useEffect(() => {
     if (cve?.snortRules) {
@@ -80,6 +82,23 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
   useEffect(() => {
     if (refreshTrigger > 0) {
       const currentRules = JSON.stringify(cve?.snortRules || []);
+      
+      if (isEditing || open) {
+        enqueueSnackbar('Snort Rules에 새로운 업데이트가 있습니다. 편집을 완료한 후 반영됩니다.', {
+          variant: 'info',
+          autoHideDuration: 5000,
+          action: (key) => (
+            <Button color="inherit" size="small" onClick={() => {
+              dispatch(fetchCVEDetail(cve.cveId));
+              closeSnackbar(key);
+            }}>
+              지금 갱신
+            </Button>
+          )
+        });
+        pendingUpdateRef.current = { cveId: cve.cveId };
+        return;
+      }
       
       dispatch(fetchCVEDetail(cve.cveId)).then((action) => {
         const newRules = JSON.stringify(action.payload?.snortRules || []);
@@ -95,115 +114,144 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
         }
       });
     }
-  }, [refreshTrigger, dispatch, cve?.cveId, enqueueSnackbar, closeSnackbar]);
+  }, [refreshTrigger, dispatch, cve?.cveId, cve?.snortRules, enqueueSnackbar, closeSnackbar, isEditing, open]);
+
+  useEffect(() => {
+    if (!isEditing && !open && pendingUpdateRef.current) {
+      const { cveId } = pendingUpdateRef.current;
+      dispatch(fetchCVEDetail(cveId));
+      pendingUpdateRef.current = null;
+    }
+  }, [isEditing, open, dispatch]);
 
   const handleAddClick = () => {
     setSelectedRule(null);
     setNewRule(DEFAULT_RULE);
     setOpen(true);
+    setIsEditing(true);
   };
 
   const handleEditClick = (rule, index) => {
     setSelectedRule({ ...rule, id: index });
+    setSelectedRuleIndex(index);
+    setEditedRule(rule.rule);
     setOpen(true);
+    setIsEditing(true);
   };
 
   const handleAddRule = async () => {
-    if (!newRule.rule || newRule.rule.trim() === '') {
-      enqueueSnackbar('Rule은 필수 입력 항목입니다.', { 
-        variant: 'error',
-        anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-      });
-      return;
-    }
-
     try {
       setLoading(true);
       setError(null);
 
-      // KST 시간으로 생성
+      // 타임스탬프 포맷
       const kstTime = new Date();
       kstTime.setHours(kstTime.getHours() + 9);  // UTC+9 (KST)
-
-      const ruleToAdd = {
-        ...newRule,
-        dateAdded: kstTime.toISOString(),
-        addedBy: currentUser?.username || 'anonymous'
+      
+      // 새 규칙 객체 생성
+      const newRuleWithData = {
+        rule: newRule.rule,
+        type: newRule.type,
+        description: newRule.description,
+        createdAt: kstTime.toISOString(),
+        createdBy: currentUser?.username || 'anonymous',
+        modifiedAt: null,
+        modifiedBy: null
       };
 
-      const updatedRules = [...(cve.snortRules || []), ruleToAdd];
+      // 기존 규칙 배열에 새 규칙 추가
+      const updatedRules = [...(cve.snortRules || []), newRuleWithData];
+      
       const response = await dispatch(updateCVEDetail({
         cveId: cve.cveId,
         data: { snort_rules: updatedRules }
       })).unwrap();
 
       if (response) {
+        // 디버그 로그 추가
+        console.log('[SnortRulesTab] 업데이트 응답:', response);
+        
+        // WebSocket 메시지 전송 - 필드 정보 추가
         await sendCustomMessage(
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,
-            cve: response.data
+            field: 'snort_rules',
+            cve: response
           }
         );
         
+        // 입력값 초기화
         setOpen(false);
         setNewRule(DEFAULT_RULE);
+        setIsEditing(false);
         
-        // 데이터 갱신을 위한 지연 처리
-        setTimeout(async () => {
-          await dispatch(fetchCVEDetail(cve.cveId));
-          enqueueSnackbar('Snort Rule이 추가되었습니다.', { variant: 'success' });
-        }, 500);
+        // 성공 메시지 표시
+        enqueueSnackbar('Snort Rule이 추가되었습니다.', { variant: 'success' });
       }
     } catch (error) {
       console.error('Failed to add Snort Rule:', error);
-      enqueueSnackbar(error.message || 'Snort Rule 추가 중 오류가 발생했습니다.', { variant: 'error' });
+      setError('Snort Rule 추가 중 오류가 발생했습니다.');
+      enqueueSnackbar(error.message || 'Snort Rule 추가에 실패했습니다.', { variant: 'error' });
     } finally {
       setLoading(false);
     }
   };
 
   const handleUpdateRule = async () => {
-    if (!selectedRule) return;
-
     try {
       setLoading(true);
       setError(null);
 
-      const updatedRules = (cve.snortRules || []).map((rule, index) =>
-        index === selectedRule.id ? {
-          ...selectedRule,
-          dateAdded: rule.dateAdded,
-          addedBy: rule.addedBy
-        } : rule
-      );
+      const kstTime = new Date();
+      kstTime.setHours(kstTime.getHours() + 9);  // UTC+9 (KST)
 
+      // 수정된 규칙 객체 생성
+      const updatedRuleWithData = {
+        ...selectedRule,
+        rule: editedRule,
+        modifiedAt: kstTime.toISOString(),
+        modifiedBy: currentUser?.username || 'anonymous'
+      };
+
+      // 기존 규칙 배열에서 수정된 규칙으로 교체
+      const updatedRules = cve.snortRules.map((rule, index) =>
+        index === selectedRuleIndex ? updatedRuleWithData : rule
+      );
+      
       const response = await dispatch(updateCVEDetail({
         cveId: cve.cveId,
         data: { snort_rules: updatedRules }
       })).unwrap();
 
       if (response) {
+        // 디버그 로그 추가
+        console.log('[SnortRulesTab] 업데이트 응답:', response);
+        
+        // WebSocket 메시지 전송 - 필드 정보 추가
         await sendCustomMessage(
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,
-            cve: response.data
+            field: 'snort_rules',
+            cve: response
           }
         );
         
+        // 상태 초기화
         setOpen(false);
         setSelectedRule(null);
+        setSelectedRuleIndex(-1);
+        setEditedRule('');
+        setIsEditing(false);
         
-        // 데이터 갱신을 위한 지연 처리
-        setTimeout(async () => {
-          await dispatch(fetchCVEDetail(cve.cveId));
-          enqueueSnackbar('Snort Rule이 수정되었습니다.', { variant: 'success' });
-        }, 500);
+        // 성공 메시지 표시
+        enqueueSnackbar('Snort Rule이 수정되었습니다.', { variant: 'success' });
       }
     } catch (error) {
       console.error('Failed to update Snort Rule:', error);
-      enqueueSnackbar(error.message || 'Snort Rule 수정 중 오류가 발생했습니다.', { variant: 'error' });
+      setError('Snort Rule 수정 중 오류가 발생했습니다.');
+      enqueueSnackbar(error.message || 'Snort Rule 수정에 실패했습니다.', { variant: 'error' });
     } finally {
       setLoading(false);
     }
@@ -214,32 +262,35 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
       setLoading(true);
       setError(null);
 
-      const updatedRules = (cve.snortRules || [])
-        .filter((_, index) => index !== ruleIndex);
-
+      // 기존 규칙 배열에서 특정 인덱스 제외
+      const updatedRules = cve.snortRules.filter((_, index) => index !== ruleIndex);
+      
       const response = await dispatch(updateCVEDetail({
         cveId: cve.cveId,
         data: { snort_rules: updatedRules }
       })).unwrap();
 
       if (response) {
+        // WebSocket 메시지 전송 - 필드 정보 추가
         await sendCustomMessage(
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,
-            cve: response.data
+            field: 'snort_rules',
+            cve: response
           }
         );
         
-        // 데이터 갱신을 위한 지연 처리
-        setTimeout(async () => {
-          await dispatch(fetchCVEDetail(cve.cveId));
-          enqueueSnackbar('Snort Rule이 삭제되었습니다.', { variant: 'success' });
-        }, 500);
+        // 상태 초기화
+        setIsEditing(false);
+        
+        // 성공 메시지 표시
+        enqueueSnackbar('Snort Rule이 삭제되었습니다.', { variant: 'success' });
       }
     } catch (error) {
       console.error('Failed to delete Snort Rule:', error);
-      enqueueSnackbar(error.message || 'Snort Rule 삭제 중 오류가 발생했습니다.', { variant: 'error' });
+      setError('Snort Rule 삭제 중 오류가 발생했습니다.');
+      enqueueSnackbar(error.message || 'Snort Rule 삭제에 실패했습니다.', { variant: 'error' });
     } finally {
       setLoading(false);
     }
@@ -250,6 +301,22 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
       handleUpdateRule();
     } else {
       handleAddRule();
+    }
+    setIsEditing(false);
+  };
+
+  const handleCloseDialog = () => {
+    setOpen(false);
+    setSelectedRule(null);
+    setNewRule(DEFAULT_RULE);
+    setIsEditing(false);
+    
+    if (pendingUpdateRef.current) {
+      const { cveId } = pendingUpdateRef.current;
+      dispatch(fetchCVEDetail(cveId)).then(() => {
+        enqueueSnackbar('최신 데이터로 업데이트되었습니다.', { variant: 'success' });
+      });
+      pendingUpdateRef.current = null;
     }
   };
 
@@ -398,11 +465,7 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
 
       <Dialog
         open={open}
-        onClose={() => {
-          setOpen(false);
-          setSelectedRule(null);
-          setNewRule(DEFAULT_RULE);
-        }}
+        onClose={handleCloseDialog}
         maxWidth="sm"
         fullWidth
         TransitionComponent={Fade}
@@ -469,11 +532,7 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
           />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => {
-            setOpen(false);
-            setSelectedRule(null);
-            setNewRule(DEFAULT_RULE);
-          }}>
+          <Button onClick={handleCloseDialog}>
             Cancel
           </Button>
           <Button
@@ -488,11 +547,64 @@ const SnortRulesTab = memo(({ cve, currentUser, onCountChange, refreshTrigger })
     </Box>
   );
 }, (prevProps, nextProps) => {
-  // 커스텀 비교 함수 개선
-  return prevProps.refreshTrigger === nextProps.refreshTrigger &&
-         prevProps.cve.cveId === nextProps.cve.cveId &&
-         prevProps.currentUser?.id === nextProps.currentUser?.id &&
-         JSON.stringify(prevProps.cve.snortRules) === JSON.stringify(nextProps.cve.snortRules);
+  // 디버깅용 로그 (더 상세하게 강화)
+  console.log('=== SnortRulesTab memo comparison ===');
+  console.log('prevProps.refreshTrigger:', prevProps.refreshTrigger);
+  console.log('nextProps.refreshTrigger:', nextProps.refreshTrigger);
+  
+  // 규칙 데이터 깊은 비교 (더 자세하게)
+  const prevRules = prevProps.cve?.snortRules || [];
+  const nextRules = nextProps.cve?.snortRules || [];
+  
+  // 규칙 배열의 길이 비교
+  const prevRulesLength = prevRules.length;
+  const nextRulesLength = nextRules.length;
+  
+  console.log('prev rules length:', prevRulesLength);
+  console.log('next rules length:', nextRulesLength);
+  
+  // 길이가 다르면 확실히 변경된 것
+  let rulesChanged = prevRulesLength !== nextRulesLength;
+  
+  // 길이가 같더라도 내용이 달라졌을 수 있음
+  if (!rulesChanged && prevRulesLength > 0) {
+    // 전체 JSON 문자열 비교
+    const prevRulesJSON = JSON.stringify(prevRules);
+    const nextRulesJSON = JSON.stringify(nextRules);
+    rulesChanged = prevRulesJSON !== nextRulesJSON;
+    
+    // 디버깅용 - 좀 더 상세하게 규칙별 비교
+    if (rulesChanged) {
+      console.log('규칙 내용이 변경되었습니다 (길이는 같음)');
+      
+      // 어떤 규칙이 변경되었는지 확인
+      for (let i = 0; i < prevRulesLength; i++) {
+        const prevRuleJSON = JSON.stringify(prevRules[i]);
+        const nextRuleJSON = JSON.stringify(nextRules[i]);
+        
+        if (prevRuleJSON !== nextRuleJSON) {
+          console.log(`규칙 #${i}가 변경되었습니다.`);
+          console.log('변경 전:', prevRules[i]);
+          console.log('변경 후:', nextRules[i]);
+        }
+      }
+    }
+  }
+  
+  console.log('rules changed:', rulesChanged);
+  
+  // 최종 결정과 이유 로그
+  const shouldRerender = 
+    rulesChanged || 
+    prevProps.refreshTrigger !== nextProps.refreshTrigger ||
+    prevProps.cve?.cveId !== nextProps.cve?.cveId ||
+    prevProps.currentUser?.id !== nextProps.currentUser?.id;
+  
+  console.log('결정: ' + (shouldRerender ? '리렌더링 필요' : '리렌더링 불필요'));
+  console.log('=== 비교 종료 ===');
+  
+  // 주의: React.memo는 true면 리렌더링 방지, false면 리렌더링 발생
+  return !shouldRerender; // 주의: memo는 true면 리렌더링 방지, false면 리렌더링 발생
 });
 
 export default SnortRulesTab;

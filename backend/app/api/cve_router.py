@@ -287,9 +287,34 @@ async def update_cve(
                 "delete": "Snort Rule이 삭제됨",
                 "edit": "Snort Rule이 수정됨"
             }
+            
+            # 룰 ID 매핑 (기존 룰의 addedBy, dateAdded 보존)
+            old_rule_map = {}
+            if old_rules and old_rules.snort_rules:
+                for i, rule in enumerate(old_rules.snort_rules):
+                    if hasattr(rule, 'rule') and hasattr(rule, 'type'):
+                        key = (rule.rule, rule.type)
+                        old_rule_map[key] = {
+                            "date_added": rule.date_added if hasattr(rule, 'date_added') else None,
+                            "added_by": rule.added_by if hasattr(rule, 'added_by') else None
+                        }
+            
             for rule in update_dict["snort_rules"]:
-                rule["date_added"] = current_time
-                rule["added_by"] = current_user.username
+                # 기존 룰이면 기존의 added_by와 date_added 보존
+                key = (rule.get("rule", ""), rule.get("type", ""))
+                if key in old_rule_map:
+                    # 기존 값 보존
+                    if old_rule_map[key]["date_added"] and not rule.get("date_added"):
+                        rule["date_added"] = old_rule_map[key]["date_added"]
+                    if old_rule_map[key]["added_by"] and not rule.get("added_by"):
+                        rule["added_by"] = old_rule_map[key]["added_by"]
+                else:
+                    # 새 룰이면 클라이언트에서 제공한 값을 우선으로 하고, 없으면 현재 사용자로 설정
+                    if not rule.get("date_added"):
+                        rule["date_added"] = current_time
+                    if not rule.get("added_by"):
+                        rule["added_by"] = current_user.username
+                        
             changes.append({
                 "field": "snort_rules",
                 "field_name": "Snort Rules",

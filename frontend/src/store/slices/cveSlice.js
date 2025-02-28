@@ -85,6 +85,7 @@ export const deleteCVE = createAsyncThunk(
   }
 );
 
+// WebSocket으로 받은 업데이트를 처리하는 비동기 액션
 export const updateCVEFromWebSocketThunk = createAsyncThunk(
   'cve/updateFromWebSocket',
   async (cveData, { dispatch }) => {
@@ -130,6 +131,7 @@ export const prefetchCVE = createAsyncThunk(
   }
 );
 
+// 캐시 상태 확인 유틸리티 함수
 export const checkCacheStatus = (state, cveId) => {
   const cached = state.cveCache[cveId];
   if (!cached) return { exists: false };
@@ -144,6 +146,7 @@ export const checkCacheStatus = (state, cveId) => {
   };
 };
 
+// 캐시를 활용한 CVE 정보 조회 비동기 액션
 export const fetchCachedCVEDetail = createAsyncThunk(
   'cve/fetchCachedCVEDetail',
   async (cveId, { getState, dispatch }) => {
@@ -169,9 +172,11 @@ export const fetchCachedCVEDetail = createAsyncThunk(
   }
 );
 
+// 캐시 무효화 액션
 export const invalidateCache = createAsyncThunk(
   'cve/invalidateCache',
-  async (cveId, { dispatch }) => {
+  async (cveId) => {
+    console.log(`[CVESlice] 캐시 무효화 요청: ${cveId}`);
     return cveId;
   }
 );
@@ -186,29 +191,7 @@ export const cveSlice = createSlice({
     refreshCVEList: (state) => {
       state.forceRefresh = !state.forceRefresh;
     },
-    deleteCVEFromWebSocket: (state, action) => {
-      state.list.items = state.list.items.filter(
-        (cve) => cve.cveId !== action.payload
-      );
-    },
-    addCVEFromWebSocket: (state, action) => {
-      if (!state.list.items.find((cve) => cve.cveId === action.payload.cveId)) {
-        state.list.items.push(action.payload);
-      }
-    },
-    updateCVEFromWebSocket: (state, action) => {
-      const cveData = snakeToCamel(action.payload);
-      if (state.currentCVE?.cveId === cveData.cveId) {
-        state.currentCVE = cveData;
-      }
-      const index = state.list.items.findIndex(
-        (cve) => cve.cveId === cveData.cveId
-      );
-      if (index !== -1) {
-        state.list.items[index] = cveData;
-      }
-      state.byId[cveData.cveId] = cveData;
-    },
+    // 웹소켓을 통해 CVE 삭제 정보 처리
     deleteCVEFromWebSocket: (state, action) => {
       console.log('[Redux deleteCVEFromWebSocket] Received:', action.payload);
       const deletedCveId = action.payload;
@@ -218,7 +201,93 @@ export const cveSlice = createSlice({
       if (state.list.total > 0) {
         state.list.total -= 1;
       }
+      
+      // byId 및 캐시에서도 제거
+      if (state.byId[deletedCveId]) {
+        delete state.byId[deletedCveId];
+      }
+      
+      if (state.cveCache[deletedCveId]) {
+        delete state.cveCache[deletedCveId];
+      }
     },
+    // 웹소켓을 통해 새 CVE 정보 추가
+    addCVEFromWebSocket: (state, action) => {
+      if (!state.list.items.find((cve) => cve.cveId === action.payload.cveId)) {
+        state.list.items.push(action.payload);
+        // byId에도 추가
+        if (action.payload.cveId) {
+          state.byId[action.payload.cveId] = action.payload;
+        }
+      }
+    },
+    // 웹소켓을 통해 CVE 정보 업데이트
+    updateCVEFromWebSocket: (state, action) => {
+      const cveData = action.payload;
+      if (!cveData || !cveData.cveId) {
+        console.warn('[CVESlice] 웹소켓 업데이트 데이터 오류:', cveData);
+        return;
+      }
+      
+      console.log(`[CVESlice] WebSocket 업데이트 처리: ${cveData.cveId}, 필드:`, cveData.field || 'full');
+      
+      // 현재 보고 있는 CVE 업데이트
+      if (state.currentCVE?.cveId === cveData.cveId) {
+        if (cveData.data) {
+          // 전체 데이터 업데이트
+          state.currentCVE = cveData.data;
+        } else if (cveData.field && cveData.value) {
+          // 특정 필드만 업데이트
+          state.currentCVE = {
+            ...state.currentCVE,
+            [cveData.field]: cveData.value
+          };
+        }
+      }
+      
+      // 상세 정보 업데이트
+      if (state.detail.item?.cveId === cveData.cveId) {
+        if (cveData.data) {
+          state.detail.item = cveData.data;
+        } else if (cveData.field && cveData.value) {
+          state.detail.item = {
+            ...state.detail.item,
+            [cveData.field]: cveData.value
+          };
+        }
+      }
+      
+      // 목록 업데이트
+      const index = state.list.items.findIndex(cve => cve.cveId === cveData.cveId);
+      if (index !== -1) {
+        if (cveData.data) {
+          state.list.items[index] = cveData.data;
+        } else if (cveData.field && cveData.value) {
+          state.list.items[index] = {
+            ...state.list.items[index],
+            [cveData.field]: cveData.value
+          };
+        }
+      }
+      
+      // byId 캐시 업데이트
+      if (cveData.cveId) {
+        if (cveData.data) {
+          state.byId[cveData.cveId] = cveData.data;
+        } else if (cveData.field && cveData.value && state.byId[cveData.cveId]) {
+          state.byId[cveData.cveId] = {
+            ...state.byId[cveData.cveId],
+            [cveData.field]: cveData.value
+          };
+        }
+      }
+      
+      // 캐시 무효화
+      if (state.cveCache[cveData.cveId]) {
+        delete state.cveCache[cveData.cveId];
+      }
+    },
+    // 상세 정보 직접 설정
     setCVEDetail: (state, action) => {
       state.currentCVE = action.payload;
       
@@ -316,11 +385,68 @@ export const cveSlice = createSlice({
         }
       })
       .addCase(updateCVEFromWebSocketThunk.fulfilled, (state, action) => {
-        console.log('[Redux] Processing WebSocket update:', action.payload);
-        const index = state.list.items.findIndex(cve => cve.cveId === action.payload.cveId);
+        // updateCVEFromWebSocket 리듀서와 동일한 로직 사용
+        const { cveId, data, field, value } = action.payload;
+        
+        if (!cveId) {
+          console.warn('[Redux] WebSocket update missing cveId');
+          return;
+        }
+        
+        console.log(`[Redux] WebSocket 업데이트 필드: ${field || 'full'}, CVE ID: ${cveId}`);
+        
+        // 현재 CVE 객체 업데이트
+        if (state.currentCVE?.cveId === cveId) {
+          if (data) {
+            state.currentCVE = data;
+          } else if (field && value) {
+            state.currentCVE = {
+              ...state.currentCVE,
+              [field]: value
+            };
+          }
+        }
+        
+        // 상세 정보 업데이트
+        if (state.detail.item?.cveId === cveId) {
+          if (data) {
+            state.detail.item = data;
+          } else if (field && value) {
+            state.detail.item = {
+              ...state.detail.item,
+              [field]: value
+            };
+          }
+        }
+        
+        // byId 캐시 업데이트
+        if (cveId) {
+          if (data) {
+            state.byId[cveId] = data;
+          } else if (field && value && state.byId[cveId]) {
+            state.byId[cveId] = {
+              ...state.byId[cveId],
+              [field]: value
+            };
+          }
+        }
+        
+        // 목록 업데이트
+        const index = state.list.items.findIndex(cve => cve.cveId === cveId);
         if (index !== -1) {
-          state.list.items[index] = action.payload;
-          console.log('[Redux] CVE updated at index:', index);
+          if (data) {
+            state.list.items[index] = data;
+          } else if (field && value) {
+            state.list.items[index] = {
+              ...state.list.items[index],
+              [field]: value
+            };
+          }
+        }
+        
+        // 캐시 무효화
+        if (state.cveCache[cveId]) {
+          delete state.cveCache[cveId];
         }
       })
       .addCase(createCVE.pending, (state) => {
@@ -352,11 +478,13 @@ export const cveSlice = createSlice({
         const cveId = action.payload;
         if (cveId && state.cveCache[cveId]) {
           delete state.cveCache[cveId]; // 캐시 무효화
+          console.log(`[CVESlice] ${cveId} 캐시 무효화 완료`);
         }
       });
   },
 });
 
+// 선택자 함수들
 const selectCVEState = (state) => state.cve || initialState;
 
 export const selectCVEDetail = createSelector(
@@ -364,7 +492,6 @@ export const selectCVEDetail = createSelector(
   (cveState) => cveState.currentCVE || null
 );
 
-// 목록 데이터를 반환하는 셀렉터 추가
 export const selectCVEListData = createSelector(
   (state) => state.cve?.list?.items,
   (state) => state.cve?.list?.total,
@@ -403,9 +530,8 @@ export const {
   refreshCVEList,
   deleteCVEFromWebSocket,
   addCVEFromWebSocket,
+  updateCVEFromWebSocket,
   setCVEDetail,
 } = cveSlice.actions;
-
-export { updateCVEFromWebSocketThunk as updateCVEFromWebSocket };
 
 export default cveSlice.reducer;

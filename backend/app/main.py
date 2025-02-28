@@ -33,6 +33,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
 from .models.system_config import SystemConfig
+from .database import init_db, get_database
 
 # 설정 초기화
 settings = get_settings()
@@ -136,28 +137,13 @@ os.environ['TZ'] = 'Asia/Seoul'
 async def startup_event():
     """애플리케이션 시작 시 실행되는 이벤트"""
     try:
-        # MongoDB 클라이언트 생성
-        client = AsyncIOMotorClient(
-            settings.MONGODB_URL,
-            maxPoolSize=settings.MAX_CONNECTIONS_COUNT,
-            minPoolSize=settings.MIN_CONNECTIONS_COUNT
-        )
-        # Beanie 모델 초기화
-        await init_beanie(
-            database=client[settings.DATABASE_NAME],
-            document_models=[
-                User,
-                CVEModel,
-                Comment,
-                Notification,
-                RefreshToken,
-                SystemConfig
-            ]
-        )
+        # 데이터베이스 초기화 (database.py의 함수 사용)
+        await init_db()
         logger.info("Database initialized successfully")
         
         # 데이터베이스 연결 테스트
-        await client.admin.command('ping')
+        db = get_database()
+        await db.client.admin.command('ping')
         logger.info("Successfully connected to MongoDB")
         
         # CVE 컬렉션 데이터 수 확인
@@ -167,7 +153,8 @@ async def startup_event():
         # 스케줄러 초기화 및 시작
         from .services.scheduler import CrawlerScheduler
         scheduler = CrawlerScheduler()
-        await scheduler.init_db()
+        # 데이터베이스 초기화가 아닌 스케줄러 상태 초기화만 수행
+        await scheduler.init_scheduler_state()
         scheduler.start()
         
     except Exception as e:

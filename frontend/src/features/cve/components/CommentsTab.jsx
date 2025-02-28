@@ -13,14 +13,14 @@ import { formatDistanceToNow, parseISO, format } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import { debounce } from 'lodash';
 import { useSnackbar } from 'notistack';
-import { useWebSocketMessage } from '../../../contexts/WebSocketContext';
+import { useCVEWebSocketUpdate } from '../../../contexts/WebSocketContext';
+import { WS_EVENT_TYPE } from '../../../services/websocket';
 import {
   ListHeader,
   StyledListItem,
   EmptyState
 } from './CommonStyles';
 import { Comment as CommentIcon } from '@mui/icons-material';
-import { WS_EVENT_TYPE } from '../../../services/websocket';
 
 // 멘션된 사용자를 추출하는 유틸리티 함수
 const extractMentions = (content) =>
@@ -60,8 +60,20 @@ const CommentsTab = React.memo(({
   open
 }) => {
   const dispatch = useDispatch();
-  const { sendCustomMessage } = useWebSocketMessage();
   const { enqueueSnackbar } = useSnackbar();
+  
+  // 웹소켓 메시지를 통해 새로운 댓글 알림을 처리하는 콜백 함수
+  const handleCommentNotification = useCallback((message) => {
+    if (message.type === 'comment_added' && message.data?.author !== currentUser?.username) {
+      enqueueSnackbar('새로운 댓글이 작성되었습니다.', { 
+        variant: 'info',
+        autoHideDuration: 3000
+      });
+    }
+  }, [currentUser?.username, enqueueSnackbar]);
+  
+  // useCVEWebSocketUpdate 훅을 사용하여 웹소켓 메시지 처리 및 알림
+  const { sendCustomMessage } = useCVEWebSocketUpdate(cve.cveId, handleCommentNotification);
 
   // 상위 상태
   const [newComment, setNewComment] = useState('');
@@ -154,17 +166,16 @@ const CommentsTab = React.memo(({
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,
+            field: 'comments',
             cve: response.data
           }
         );
         
-        setTimeout(async () => {
-          await dispatch(fetchCVEDetail(cve.cveId));
-          enqueueSnackbar(
-            permanent ? '댓글이 완전히 삭제되었습니다.' : '댓글이 삭제되었습니다.',
-            { variant: 'success' }
-          );
-        }, 500);
+        // 즉시 데이터 갱신 호출 제거
+        enqueueSnackbar(
+          permanent ? '댓글이 완전히 삭제되었습니다.' : '댓글이 삭제되었습니다.',
+          { variant: 'success' }
+        );
       }
     } catch (error) {
       console.error('댓글 삭제 중 오류:', error);
@@ -204,11 +215,19 @@ const CommentsTab = React.memo(({
           );
         }
         
-        setTimeout(async () => {
-          await dispatch(fetchCVEDetail(cve.cveId));
-          enqueueSnackbar('댓글이 수정되었습니다.', { variant: 'success' });
-          handleFinishEdit();
-        }, 500);
+        // WebSocket 메시지 전송 - 필드 정보 추가
+        await sendCustomMessage(
+          WS_EVENT_TYPE.CVE_UPDATED,
+          {
+            cveId: cve.cveId,
+            field: 'comments',
+            cve: response.data
+          }
+        );
+        
+        // 즉시 데이터 갱신 호출 제거
+        enqueueSnackbar('댓글이 수정되었습니다.', { variant: 'success' });
+        handleFinishEdit();
       }
     } catch (error) {
       console.error('댓글 수정 중 오류:', error);
@@ -251,10 +270,8 @@ const CommentsTab = React.memo(({
         
         setReplyingTo(null);
         
-        setTimeout(async () => {
-          await dispatch(fetchCVEDetail(cve.cveId));
-          enqueueSnackbar('답글이 작성되었습니다.', { variant: 'success' });
-        }, 500);
+        // 즉시 데이터 갱신 호출 제거
+        enqueueSnackbar('답글이 작성되었습니다.', { variant: 'success' });
       }
     } catch (error) {
       console.error('Failed to submit reply:', error);
@@ -343,9 +360,14 @@ const CommentsTab = React.memo(({
     commentInputRef.current = value;
   }, []);
 
+  // 댓글 작성 함수
   const handleSubmit = useCallback(async () => {
-    if (!newComment.trim()) return;
     try {
+      if (!newComment.trim()) {
+        enqueueSnackbar('댓글 내용을 입력해주세요.', { variant: 'warning' });
+        return;
+      }
+
       setLoading(true);
       const mentions = extractMentions(newComment);
       const response = await api.post(`/cves/${cve.cveId}/comments`, {
@@ -354,7 +376,7 @@ const CommentsTab = React.memo(({
       });
 
       if (response) {
-        // 멘션된 사용자가 있는 경우 멘션 알림 전송
+        // 멘션이 있을 경우 알림 전송
         if (mentions.length > 0) {
           await sendCustomMessage(
             WS_EVENT_TYPE.NOTIFICATION,
@@ -371,12 +393,13 @@ const CommentsTab = React.memo(({
           );
         }
 
-        // 구독자들에게 새 댓글 알림 전송
+        // WebSocket 메시지 전송 - 필드 정보 추가
         await sendCustomMessage(
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             type: 'comment_added',
             cveId: cve.cveId,
+            field: 'comments',
             content: '새로운 댓글이 작성되었습니다.',
             data: response.data
           }
@@ -386,11 +409,8 @@ const CommentsTab = React.memo(({
         commentInputRef.current = '';
         setMentionInputKey(prev => prev + 1);
         
-        // 데이터 갱신을 위한 지연 처리
-        setTimeout(async () => {
-          await dispatch(fetchCVEDetail(cve.cveId));
-          enqueueSnackbar('댓글이 작성되었습니다.', { variant: 'success' });
-        }, 500);
+        // 즉시 데이터 갱신 호출 제거
+        enqueueSnackbar('댓글이 작성되었습니다.', { variant: 'success' });
       }
     } catch (error) {
       console.error('Error creating comment:', error);
@@ -399,26 +419,6 @@ const CommentsTab = React.memo(({
       setLoading(false);
     }
   }, [cve.cveId, newComment, currentUser, dispatch, sendCustomMessage, enqueueSnackbar]);
-
-  // WebSocket 메시지 핸들러 수정
-  const handleWebSocketMessage = useCallback((message) => {
-    const timeoutId = setTimeout(() => {
-      if (message.type === 'comment_added' && message.cveId === cve.cveId) {
-        dispatch(fetchCVEDetail(cve.cveId));
-        if (message.data?.author !== currentUser?.username) {
-          enqueueSnackbar('새로운 댓글이 작성되었습니다.', { 
-            variant: 'info',
-            autoHideDuration: 3000
-          });
-        }
-      }
-    }, 0);
-
-    return () => clearTimeout(timeoutId);
-  }, [cve.cveId, dispatch, currentUser?.username, enqueueSnackbar]);
-
-  // 불필요한 useSubscription 훅 제거
-  const { sendCustomMessage: wsSendCustomMessage } = useWebSocketMessage(handleWebSocketMessage);
 
   // 초기 로딩
   useEffect(() => {
@@ -528,6 +528,25 @@ const CommentsTab = React.memo(({
       )}
     </Box>
   );
+}, (prevProps, nextProps) => {
+  // 디버깅용 로그
+  console.log('CommentsTab memo comparison');
+  console.log('prevProps.refreshTrigger:', prevProps.refreshTrigger);
+  console.log('nextProps.refreshTrigger:', nextProps.refreshTrigger);
+  
+  // 댓글이 변경된 경우 즉시 리렌더링
+  const commentsChanged = JSON.stringify(prevProps.cve.comments) !== JSON.stringify(nextProps.cve.comments);
+  console.log('comments changed:', commentsChanged);
+  
+  if (commentsChanged) {
+    return false; // 변경되었으므로 리렌더링 필요
+  }
+  
+  // 그 외의 경우 기존 로직 유지
+  return prevProps.refreshTrigger === nextProps.refreshTrigger &&
+         prevProps.cve.cveId === nextProps.cve.cveId &&
+         prevProps.currentUser?.id === nextProps.currentUser?.id &&
+         prevProps.open === nextProps.open;
 });
 
 export default CommentsTab;

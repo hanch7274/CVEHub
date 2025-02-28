@@ -2,6 +2,8 @@ import logging
 from typing import Dict, List, Optional, Any, Type
 from .crawler_base import BaseCrawlerService
 
+from .crawlers.nuclei_crawler import NucleiCrawlerService
+from .crawlers.emerging_threats_crawler import EmergingThreatsCrawlerService
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +16,7 @@ class CrawlerFactory:
     @staticmethod
     def get_available_crawler_types() -> List[str]:
         """사용 가능한 크롤러 유형 목록 반환"""
-        return ["nuclei"]  # 현재 구현된 크롤러만 반환
+        return ["nuclei", "emerging_threats"]
     
     @classmethod
     def create_crawler(cls, crawler_type: str) -> Optional[BaseCrawlerService]:
@@ -32,10 +34,13 @@ class CrawlerFactory:
         try:
             if crawler_type == "nuclei":
                 # 동적 임포트로 순환 참조 방지
-                from .crawlers.nuclei_crawler import NucleiCrawlerService
-                instance = NucleiCrawlerService()
-                logger.info(f"Successfully created NucleiCrawlerService instance")
-                return instance
+                logger.info("NucleiCrawlerService 인스턴스 생성")
+                return NucleiCrawlerService()
+            
+            # EmergingThreats 크롤러 추가
+            elif crawler_type == "emerging_threats":
+                logger.info("EmergingThreatsCrawlerService 인스턴스 생성")
+                return EmergingThreatsCrawlerService()
             
             # 향후 메타스플로잇 크롤러 추가 시
             # elif crawler_type == "metasploit":
