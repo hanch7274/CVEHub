@@ -7,12 +7,13 @@ import hashlib
 import yaml
 import git
 import glob
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 from datetime import datetime
 from pathlib import Path
 from app.models.cve_model import CVEModel
 from app.services.crawler_base import BaseCrawlerService
 from app.core.config import get_settings
+import re
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -54,30 +55,30 @@ class NucleiCrawlerService(BaseCrawlerService):
             
             # 3. 데이터 수집 단계 (고정 진행률: 20-40%)
             await self.report_progress("데이터 수집", 40, "데이터 수집 중...(40%)")
-            templates = await self._find_template_files()
+            templates = await self.fetch_data()
             self.log_info(f"총 {len(templates)}개의 템플릿 파일 발견")
             
             # 4. 데이터 처리 단계 (고정 진행률: 40-60%)
             await self.report_progress("데이터 처리", 60, "데이터 처리 중...(60%)")
-            processed_data = await self._process_templates(templates)
-            self.log_info(f"템플릿 처리 완료: {len(processed_data)}개 처리됨")
+            processed_data = await self.parse_data(templates)
+            self.log_info(f"템플릿 처리 완료: {len(processed_data['items'])}개 처리됨")
             
             # 5. 데이터베이스 업데이트 단계 (고정 진행률: 60-80%)
             await self.report_progress("데이터베이스 업데이트", 80, "데이터베이스 업데이트 중...(80%)")
-            update_result = await self._update_database(processed_data)
+            update_result = await self._update_database(processed_data['items'])
             
             # 6. 완료 보고 (고정 진행률: 80-100%)
-            await self.report_progress("완료", 100, f"완료: {update_result['count']}개의 CVE가 업데이트되었습니다.")
+            await self.report_progress("완료", 100, f"완료: {update_result['total']}개의 CVE가 업데이트되었습니다.")
             
             # 최종 상태 확실히 전송 (100ms 후)
             await asyncio.sleep(0.1)
-            await self.report_progress("완료", 100, f"완료: {update_result['count']}개의 CVE가 업데이트되었습니다.", update_result.get('items', []))
+            await self.report_progress("완료", 100, f"완료: {update_result['total']}개의 CVE가 업데이트되었습니다.", update_result.get('items', []))
             
             # 결과 반환
             return {
                 "status": "success",
                 "updated_cves": update_result,
-                "message": f"업데이트 완료. {update_result['count']}개의 CVE 업데이트됨."
+                "message": f"업데이트 완료. {update_result['total']}개의 CVE 업데이트됨."
             }
             
         except Exception as e:
@@ -135,11 +136,30 @@ class NucleiCrawlerService(BaseCrawlerService):
         return template_files
     
     async def _process_templates(self, template_files: List[str]) -> List[Dict[str, Any]]:
-        """템플릿 파일 처리"""
-        self.log_info(f"템플릿 처리 시작: {len(template_files)}개")
-        processed_data = []
-        total = len(template_files)
+        """
+        템플릿 파일들을 처리하여 필요한 정보 추출
         
+        Args:
+            template_files: 처리할 템플릿 파일 경로 리스트
+            
+        Returns:
+            추출된 정보가 담긴 항목 리스트
+        """
+        self.log_info(f"템플릿 처리 시작: {len(template_files)}개 파일")
+        results = []
+        
+        # 타입 검사 추가
+        if not isinstance(template_files, list):
+            self.log_error(f"template_files가 리스트가 아닙니다: {type(template_files)}")
+            if isinstance(template_files, str):
+                # 문자열을 리스트로 변환
+                self.log_warning(f"문자열을 리스트로 변환합니다: {template_files}")
+                template_files = [template_files]
+            else:
+                # 처리할 수 없는 타입이면 빈 결과 반환
+                return []
+        
+        total = len(template_files)
         # 진행 상황 보고 포인트 정의 (25% 간격으로 보고)
         progress_points = [
             0,  # 시작
@@ -148,7 +168,6 @@ class NucleiCrawlerService(BaseCrawlerService):
             (total * 3) // 4,  # 75%
             total - 1  # 마지막
         ]
-        last_progress_idx = -1
         
         for idx, file_path in enumerate(template_files):
             try:
@@ -159,207 +178,208 @@ class NucleiCrawlerService(BaseCrawlerService):
                         60,  # 고정된 60% 진행률 유지
                         f"데이터 처리 중 ({idx+1}/{total})"  # 현재/전체 형식으로 메시지 표시
                     )
-                    last_progress_idx = idx
                 
-                # 파일명에서 CVE ID 추출
+                # 파일 경로 유효성 검사
+                if not isinstance(file_path, str):
+                    self.log_warning(f"잘못된 파일 경로 형식: {file_path}, 타입: {type(file_path)}")
+                    continue
+                    
+                if not os.path.exists(file_path):
+                    self.log_warning(f"파일이 존재하지 않습니다: {file_path}")
+                    continue
+                
+                # 파일명에서 CVE ID 추출 시도
                 file_name = os.path.basename(file_path)
-                cve_id = file_name.split(".")[0].upper()
-                if not cve_id.startswith("CVE-"):
-                    cve_id = f"CVE-{cve_id}"
+                cve_id_from_file = file_name.split(".")[0].upper()
+                if cve_id_from_file.startswith("CVE-"):
+                    cve_id = cve_id_from_file
+                else:
+                    # 파일명에 CVE ID가 포함되어 있는지 확인
+                    cve_pattern = r'(CVE-\d{4}-\d{4,})'
+                    match = re.search(cve_pattern, file_name, re.IGNORECASE)
+                    if match:
+                        cve_id = match.group(1).upper()
+                    else:
+                        cve_id = f"NUCLEI-{file_name.split('.')[0]}"
                 
-                # 파일 내용 읽기
+                # 파일 읽기
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                
-                # Nuclei 템플릿의 digest 해시값만 사용
+                    
+                # 콘텐츠 해시 계산
                 content_hash = self._extract_digest_hash(content)
-                if not content_hash:
-                    self.log_warning(f"Digest 해시를 찾을 수 없음: {cve_id}. 이 파일은 표준 Nuclei 템플릿이 아닐 수 있습니다.")
-                    # 빈 해시 대신 고유한 해시 생성
-                    import hashlib
-                    content_hash = hashlib.md5(f"{cve_id}_{datetime.now().isoformat()}".encode('utf-8')).hexdigest()
-                else:
-                    self.log_debug(f"Digest 해시: {content_hash} ({cve_id})")
                 
                 # YAML 파싱
-                template_data = yaml.safe_load(content)
+                data = yaml.safe_load(content)
+                if not data:
+                    self.log_warning(f"YAML 파싱 실패: {file_path}")
+                    continue
                 
-                # 메타데이터 추출
-                info = template_data.get('info', {})
-                name = info.get('name', cve_id)
+                # 필요한 정보 추출
+                info = data.get('info', {})
+                name = info.get('name', '')
+                
+                # YAML 데이터에서 CVE ID 추출 시도
+                if 'CVE-' in name:
+                    cve_pattern = r'(CVE-\d{4}-\d{4,})'
+                    match = re.search(cve_pattern, name)
+                    if match:
+                        cve_id = match.group(1).upper()
+                        
                 description = info.get('description', '')
                 severity = info.get('severity', 'unknown')
+                
+                # 표준화된 심각도로 변환
+                if severity in ['critical', 'high', 'medium', 'low', 'info', 'unknown']:
+                    standardized_severity = severity
+                else:
+                    # 매핑 로직
+                    severity_lower = severity.lower()
+                    if any(term in severity_lower for term in ['critical', 'crit']):
+                        standardized_severity = 'critical'
+                    elif any(term in severity_lower for term in ['high', 'severe']):
+                        standardized_severity = 'high'
+                    elif any(term in severity_lower for term in ['medium', 'moderate', 'med']):
+                        standardized_severity = 'medium'
+                    elif any(term in severity_lower for term in ['low', 'minor']):
+                        standardized_severity = 'low'
+                    elif any(term in severity_lower for term in ['info', 'information']):
+                        standardized_severity = 'info'
+                    else:
+                        standardized_severity = 'unknown'
+                
+                # 참조 URL 추출
                 references = info.get('reference', [])
-                tags = info.get('tags', [])
+                if isinstance(references, str):
+                    references = [references]
                 
                 # 처리된 데이터 생성
                 processed_template = {
                     "cve_id": cve_id,
-                    "title": name,
+                    "title": name or cve_id,
                     "description": description,
-                    "severity": severity,
+                    "severity": standardized_severity,
                     "content": content,
-                    "nuclei_hash": content_hash,
+                    "nuclei_hash": content_hash or "",
                     "source": "nuclei-templates",
                     "reference_urls": references,
-                    "published_date": datetime.now(),
-                    "created_at": datetime.now(),
-                    "updated_at": datetime.now(),
-                    "tags": tags
+                    "file_path": file_path
                 }
                 
-                processed_data.append(processed_template)
+                results.append(processed_template)
                 
             except Exception as e:
                 self.log_error(f"템플릿 파일 처리 중 오류: {file_path}, {str(e)}")
                 continue
         
-        self.log_info(f"템플릿 처리 완료: {len(processed_data)}/{total} 성공")
-        return processed_data
+        self.log_info(f"템플릿 처리 완료: {len(results)}/{len(template_files)} 성공")
+        return results
     
     async def _update_database(self, data: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """데이터베이스 업데이트"""
+        """데이터베이스에 업데이트"""
         self.log_info(f"데이터베이스 업데이트 시작: {len(data)}개 항목")
-        updated = []
-        total = len(data)
         
-        # 데이터 검증
         if not data:
             self.log_warning("업데이트할 데이터가 없습니다.")
-            return {"count": 0, "items": []}
+            return {
+                "total": 0,
+                "created": 0,
+                "updated": 0,
+                "skipped": 0
+            }
         
-        # DB 상태 확인
-        try:
-            # Beanie 문법 사용: find().count()
-            db_count = await CVEModel.find().count()
-            self.log_info(f"현재 DB에 {db_count}개의 CVE 레코드가 있습니다.")
-        except AttributeError:
-            # 다른 방법으로 시도: 컬렉션 직접 접근
-            try:
-                from motor.motor_asyncio import AsyncIOMotorClient
-                from app.core.database import get_database
-                
-                db = await get_database()
-                cve_collection = db.get_collection("cve_model")
-                db_count = await cve_collection.count_documents({})
-                self.log_info(f"현재 DB에 {db_count}개의 CVE 레코드가 있습니다.")
-            except Exception as e:
-                # 카운트 실패 시 0으로 가정
-                self.log_warning(f"DB 레코드 수 조회 실패: {str(e)}")
-                db_count = 0
+        # 결과 카운터 초기화
+        result = {
+            "total": len(data),
+            "created": 0,
+            "updated": 0,
+            "skipped": 0
+        }
         
-        # 업데이트 진행
+        # 진행 상황 보고 포인트 계산
+        total = len(data)
+        progress_points = [
+            0,  # 시작
+            total // 4,  # 25%
+            total // 2,  # 50%
+            (total * 3) // 4,  # 75%
+            total - 1  # 마지막
+        ]
+        
         for idx, item in enumerate(data):
             try:
-                # 진행상황 보고 - 10% 단위에서 25% 단위로 변경
-                if idx == 0 or idx == total // 4 or idx == total // 2 or idx == (total * 3) // 4 or idx == total - 1:
-                    progress = int(70 + (idx / total) * 30)  # 70% ~ 100% 진행률
+                # 진행 상황 보고
+                if idx in progress_points or idx == 0 or idx == total - 1:
                     await self.report_progress(
-                        "업데이트", 
-                        progress, 
-                        f"데이터베이스 업데이트 중... ({idx+1}/{total})"
+                        "데이터베이스 업데이트", 
+                        80,  # 고정된 80% 진행률 유지
+                        f"데이터베이스 업데이트 중 ({idx+1}/{total})"
                     )
                 
                 # CVE ID 확인
                 cve_id = item.get("cve_id")
-                if not cve_id:
-                    self.log_warning(f"CVE ID가 없는 항목 무시: {item}")
+                nuclei_hash = item.get("nuclei_hash")
+                
+                if not cve_id or not nuclei_hash:
+                    self.log_warning(f"필수 필드 누락: cve_id={cve_id}, nuclei_hash={nuclei_hash}")
+                    result["skipped"] += 1
                     continue
                 
-                # 기존 레코드 조회
-                existing = await CVEModel.find_one({"cve_id": cve_id})
+                # 기존 문서 조회
+                existing = await CVEModel.find_one(
+                    {"$or": [
+                        {"cve_id": cve_id}, 
+                        {"nuclei_hash": nuclei_hash}
+                    ]}
+                )
                 
-                # 변경 여부 확인
-                is_new_or_changed = False
+                # 현재 시간
+                now = datetime.now()
+                
+                # 항목 데이터 준비
+                cve_data = {
+                    "cve_id": cve_id,
+                    "title": item.get("title") or cve_id,
+                    "description": item.get("description") or "",
+                    "severity": item.get("severity") or "unknown",
+                    "source": "nuclei-templates",
+                    "reference_urls": item.get("reference_urls") or [],
+                    "updated_at": now
+                }
+                
+                # 콘텐츠 및 해시 추가
+                if "content" in item:
+                    cve_data["nuclei_template"] = item["content"]
+                
+                if nuclei_hash:
+                    cve_data["nuclei_hash"] = nuclei_hash
+                
+                # 기존 문서가 있으면 업데이트, 없으면 생성
                 if existing:
-                    # 기존 해시값과 비교
-                    old_hash = getattr(existing, 'nuclei_hash', '')
-                    new_hash = item.get('nuclei_hash', '')
+                    # 업데이트 내용 준비 (id는 수정 불가)
+                    update_data = cve_data.copy()
                     
-                    if old_hash != new_hash:
-                        is_new_or_changed = True
-                        if old_hash and new_hash:
-                            self.log_info(f"CVE 변경 감지: {cve_id} (digest 해시: {old_hash} -> {new_hash})")
-                        else:
-                            self.log_info(f"CVE 변경 감지: {cve_id} (해시 없음, 강제 업데이트)")
+                    # 기존 문서 업데이트
+                    await existing.update({"$set": update_data})
+                    self.log_debug(f"문서 업데이트됨: {cve_id}")
+                    result["updated"] += 1
                 else:
-                    is_new_or_changed = True
-                    self.log_info(f"새 CVE 발견: {cve_id}")
-                
-                # 새로운 항목이거나 변경된 경우 업데이트
-                if is_new_or_changed:
-                    if existing:
-                        # 기존 항목 업데이트
-                        update_data = {
-                            "title": item.get("title"),
-                            "description": item.get("description"),
-                            "severity": item.get("severity"),
-                            "content": item.get("content"),
-                            "nuclei_hash": item.get("nuclei_hash"),
-                            "reference_urls": item.get("reference_urls"),
-                            "updated_at": datetime.now(),
-                            "tags": item.get("tags")
-                        }
-                        
-                        # None 값 필드 제거
-                        update_data = {k: v for k, v in update_data.items() if v is not None}
-                        
-                        # 업데이트 실행
-                        await CVEModel.update_one({"cve_id": cve_id}, {"$set": update_data})
-                        self.log_info(f"CVE 업데이트됨: {cve_id}")
-                    else:
-                        # 새 항목 추가
-                        try:
-                            # published_date 필드 추가
-                            if "published_date" not in item or item["published_date"] is None:
-                                item["published_date"] = datetime.now()
-                            
-                            cve_model = CVEModel(**item)
-                            await cve_model.save()
-                            self.log_info(f"새 CVE 추가됨: {cve_id}")
-                        except Exception as e:
-                            # 더 자세한 오류 정보 로깅
-                            error_type = e.__class__.__name__
-                            error_msg = str(e)
-                            self.log_error(f"CVE 저장 오류: {cve_id} - 유형: {error_type}, 메시지: {error_msg}")
-                            
-                            # 유효성 검사 오류인 경우 더 자세한 정보 로깅
-                            if error_type == 'ValidationError':
-                                self.log_error(f"유효성 검사 오류 세부 정보: {repr(e)}")
-                            
-                            # 데이터 덤프
-                            try:
-                                error_data = json.dumps({k: str(v) for k, v in item.items()})
-                                self.log_error(f"문제가 발생한 데이터: {error_data[:500]}...")
-                            except Exception as json_err:
-                                self.log_error(f"데이터 덤프 실패: {str(json_err)}")
-                                
-                            self.log_error(f"문제가 발생한 항목: {item}")
-                            continue
+                    # 생성 날짜 추가
+                    cve_data["created_at"] = now
+                    cve_data["published_date"] = now
                     
-                    # 업데이트 목록에 추가
-                    updated.append({
-                        "cve_id": cve_id,
-                        "title": item.get("title", ""),
-                        "severity": item.get("severity", "unknown"),
-                        "updated_at": datetime.now().isoformat()
-                    })
-            
+                    # 신규 문서 생성
+                    await CVEModel(**cve_data).create()
+                    self.log_debug(f"문서 생성됨: {cve_id}")
+                    result["created"] += 1
+                
             except Exception as e:
-                self.log_error(f"항목 처리 중 오류: {str(e)}")
+                self.log_error(f"문서 저장 중 오류: {str(e)}")
+                result["skipped"] += 1
                 continue
         
-        # 업데이트 결과 로깅
-        self.log_info(f"데이터베이스 업데이트 완료: {len(updated)}개 업데이트됨, 총 {total}개 처리됨")
-        
-        if len(updated) == 0:
-            self.log_info("변경된 CVE가 없습니다.")
-        
-        # 업데이트 결과 반환
-        return {
-            "count": len(updated),
-            "items": updated[:20] if updated else []  # 최대 20개 항목 반환
-        }
+        self.log_info(f"데이터베이스 업데이트 완료: 총 {result['total']}개 중 생성 {result['created']}개, 업데이트 {result['updated']}개, 스킵 {result['skipped']}개")
+        return result
 
     async def report_progress(self, stage, percent, message, updated_cves=None):
         """진행 상황 보고"""
@@ -470,12 +490,37 @@ class NucleiCrawlerService(BaseCrawlerService):
         # 완료 메시지
         await self.report_progress("데이터 수집", 95, f"데이터 수집 완료: {len(files)}개 파일")
         
+        # files가 비어있으면 빈 리스트 반환
+        if not files:
+            self.log_warning("템플릿 파일을 찾지 못했습니다.")
+            return []
+            
+        # files가 문자열인 경우 리스트로 변환
+        if isinstance(files, str):
+            self.log_warning(f"템플릿 파일 목록이 문자열로 반환되었습니다: {files}")
+            return [files]
+        
         return files
 
-    async def parse_data(self, raw_data: Any) -> List[Dict[str, Any]]:
+    async def parse_data(self, raw_data: Any) -> Dict[str, Any]:
         """데이터 파싱 (BaseCrawlerService 추상 메소드 구현)"""
+        # raw_data가 문자열인 경우 리스트로 변환
+        if isinstance(raw_data, str):
+            self.log_warning(f"파싱할 데이터가 문자열로 전달되었습니다: {raw_data}")
+            template_files = [raw_data]
+        elif not isinstance(raw_data, list):
+            self.log_error(f"파싱할 데이터가 잘못된 형식입니다: {type(raw_data)}")
+            template_files = []
+        else:
+            template_files = raw_data
+        
         # 기존 _process_templates 메소드 재사용
-        return await self._process_templates(raw_data)
+        processed_data = await self._process_templates(template_files)
+        
+        return {
+            "items": processed_data,
+            "count": len(processed_data)
+        }
 
     async def process_data(self, cve_data: dict) -> bool:
         """파싱된 CVE 데이터를 처리하고 데이터베이스에 저장"""
@@ -605,15 +650,30 @@ class NucleiCrawlerService(BaseCrawlerService):
             self.log_error(f"데이터 처리 중 오류: {str(e)}", e)
             return False
 
-    def _extract_digest_hash(self, content: str) -> Optional[str]:
-        """파일 내용에서 digest 해시값 추출"""
-        lines = content.strip().split('\n')
-        for line in reversed(lines):  # 파일 끝에서부터 검색
-            line = line.strip()
-            if line.startswith('# digest:'):
-                # 형식: # digest: [해시값]:[다른 해시값]
-                digest_str = line[len('# digest:'):].strip()
-                # 전체 digest 문자열을 해시로 사용 (더 고유함)
-                main_hash = digest_str
-                return main_hash
-        return None 
+    def _extract_digest_hash(self, content: Union[str, Dict]) -> str:
+        """템플릿 파일에서 digest 해시 값 추출"""
+        # 문자열인 경우 정규 표현식으로 추출
+        if isinstance(content, str):
+            # 정규 표현식으로 digest 값 추출
+            digest_pattern = r'id:\s+([a-f0-9]{40})'
+            match = re.search(digest_pattern, content)
+            if match:
+                return match.group(1)
+            return ""
+        
+        # YAML 데이터인 경우 템플릿 ID 사용
+        elif isinstance(content, dict):
+            template_id = content.get('id', '')
+            if template_id and isinstance(template_id, str):
+                return template_id
+            
+            # ID가 없는 경우 info 섹션에서 이름 사용
+            info = content.get('info', {})
+            name = info.get('name', '')
+            if name:
+                # 이름을 해시로 변환
+                import hashlib
+                return hashlib.sha1(name.encode('utf-8')).hexdigest()
+        
+        # 해시를 찾지 못한 경우 빈 문자열 반환
+        return "" 
