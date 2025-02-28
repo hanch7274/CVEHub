@@ -146,21 +146,28 @@ export class WebSocketService {
   }
 
   /**
-   * 현재 WebSocket 연결 상태 확인
+   * 현재 웹소켓 연결 상태 확인
    * @returns {boolean} 연결 상태
    */
   isConnected() {
     // 실제 WebSocket 연결 상태 확인
     const connected = !!this.ws && this.ws.readyState === WebSocket.OPEN;
     
-    // 상태 변화가 있을 때만 로그 출력
+    // 연결된 경우 isReady 속성을 true로 설정
+    if (connected && !this.isReady) {
+      console.log('[WebSocket] 연결됨 상태 확인: isReady = true로 설정');
+      this.isReady = true;
+    }
+    
+    // 상태 변화가 있을 때만 로그 출력 (마지막 상태와 다르거나 마지막 로그로부터 1분 이상 지났을 때)
     if (this._lastConnectedState !== connected || 
-        (this._lastLogTime && Date.now() - this._lastLogTime > 10000)) {
+        (this._lastLogTime && Date.now() - this._lastLogTime > 60000)) {
       this._lastConnectedState = connected;
       this._lastLogTime = Date.now();
       
       console.log('[WebSocket] 연결 상태 확인:');
       console.log(`- 실제 WebSocket 연결 상태: ${connected ? '연결됨' : '연결되지 않음'}`);
+      console.log(`- isReady 상태: ${this.isReady}`);
     }
     
     return connected;

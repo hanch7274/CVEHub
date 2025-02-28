@@ -356,7 +356,9 @@ export const WebSocketProvider = ({ children }) => {
   const [lastConnectionStatus, setLastConnectionStatus] = useState({ 
     connected: false, 
     error: null,
-    lastCheckedAt: Date.now() 
+    lastCheckedAt: Date.now(),
+    lastLogTime: Date.now(),
+    ready: false,
   });
   const [connectionCheckCount, setConnectionCheckCount] = useState(0);
   
@@ -391,7 +393,7 @@ export const WebSocketProvider = ({ children }) => {
     console.log('[WebSocketContext] 연결 상태 체크 타이머 시작');
     const interval = setInterval(() => {
       setConnectionCheckCount(prev => prev + 1);
-    }, 2000); // 2초마다 체크
+    }, 1000); // 1초마다 체크로 변경
     
     return () => {
       console.log('[WebSocketContext] 연결 상태 체크 타이머 정리');
@@ -401,6 +403,9 @@ export const WebSocketProvider = ({ children }) => {
   
   // 연결 상태에 따른 isReady 상태 관리 (수정: 로직 단순화)
   useEffect(() => {
+    // isReady 상태 변경 추적 변수
+    const prevIsReady = isReady;
+    
     if (!isAuthenticated) {
       // 인증되지 않은 경우 isReady 상태도 false로 설정
       if (isReady) {
@@ -414,20 +419,21 @@ export const WebSocketProvider = ({ children }) => {
       // 실제 웹소켓 인스턴스의 연결 상태 확인
       const actuallyConnected = webSocketInstance?.isConnected() || false;
       
+      // isReady 상태 확인 (디버깅용)
+      if (connectionCheckCount % 10 === 0) {
+        console.log('[WebSocketContext] 정기 isReady 상태 확인:', { 
+          isConnected, 
+          actuallyConnected, 
+          currentIsReady: isReady 
+        });
+      }
+      
       // 실제 연결 상태에 따라 isReady 상태 업데이트
       if (isConnected && actuallyConnected) {
-        // 연결됨 상태에서만 isReady를 true로 설정 (지연 적용)
+        // 연결됨 상태이면 무조건 isReady를 true로 설정
         if (!isReady) {
-          console.log('[WebSocketContext] WebSocket 연결됨, 준비 상태 확인 중...');
-          // 300ms로 단축하여 더 빠른 준비 상태 설정
-          const readyTimer = setTimeout(() => {
-            console.log('[WebSocketContext] WebSocket 준비 완료 (타임아웃 후)');
-            setIsReady(true);
-          }, 300);
-          
-          return () => {
-            clearTimeout(readyTimer);
-          };
+          console.log('[WebSocketContext] WebSocket 연결 확인됨, isReady = true로 강제 설정');
+          setIsReady(true);
         }
       } else {
         // 연결되지 않은 경우 isReady를 false로 설정
@@ -440,7 +446,7 @@ export const WebSocketProvider = ({ children }) => {
       console.error('[WebSocketContext] isReady 상태 관리 중 오류 발생:', error);
       if (isReady) setIsReady(false);
     }
-  }, [isAuthenticated, isConnected, isReady]);
+  }, [isAuthenticated, isConnected, connectionCheckCount]);
   
   // WebSocket 상태 및 오류 처리 (수정: 로깅 최적화)
   useEffect(() => {
@@ -450,8 +456,26 @@ export const WebSocketProvider = ({ children }) => {
       // 실제 웹소켓 인스턴스의 연결 상태 확인
       const actuallyConnected = webSocketInstance?.isConnected() || false;
       
-      // 10초마다 1번 상세 로그 출력 (과도한 로깅 방지)
-      if (connectionCheckCount % 5 === 0) {
+      // 연결된 상태인데 isReady가 false라면 강제로 true로 설정
+      if (isConnected && actuallyConnected && !isReady) {
+        console.log('[WebSocketContext] WebSocket 연결이 확인되었으나 isReady가 false임. 강제로 true로 설정');
+        setIsReady(true);
+        
+        // 서비스 인스턴스의 isReady도 true로 설정
+        if (webSocketInstance && !webSocketInstance.isReady) {
+          webSocketInstance.isReady = true;
+        }
+      }
+      
+      // 상태 변경이 있거나 1분마다 1번 상세 로그 출력
+      const stateChanged = isConnected !== lastConnectionStatus.connected || 
+                          actuallyConnected !== lastConnectionStatus.actualConnected ||
+                          isReady !== lastConnectionStatus.ready;
+      
+      const timeToLog = !lastConnectionStatus.lastLogTime || 
+                       (Date.now() - lastConnectionStatus.lastLogTime > 60000); // 1분마다 로깅
+      
+      if (stateChanged || timeToLog) {
         console.log('[WebSocketProvider] 상세 연결 상태 진단:');
         console.log(`- Redux 상태: isConnected=${isConnected}`);
         console.log(`- 실제 연결 상태: actuallyConnected=${actuallyConnected}`);
@@ -460,17 +484,24 @@ export const WebSocketProvider = ({ children }) => {
         if (webSocketInstance) {
           console.log(`- 웹소켓 readyState: ${webSocketInstance.ws?.readyState}`);
         }
+        
+        // 로깅 시간 기록
+        setLastConnectionStatus(prev => ({ 
+          ...prev, 
+          lastLogTime: Date.now() 
+        }));
       }
       
       // 연결 상태가 변경되었을 때만 로그 출력
       if (lastConnectionStatus.connected !== isConnected || 
-          lastConnectionStatus.actualConnected !== actuallyConnected) {
-        console.log(`[WebSocketProvider] WebSocket 연결 상태 변경: Redux=${isConnected}, 실제=${actuallyConnected}`);
+          lastConnectionStatus.actualConnected !== actuallyConnected ||
+          lastConnectionStatus.ready !== isReady) {
+        console.log(`[WebSocketProvider] WebSocket 상태 변경: Redux=${isConnected}, 실제=${actuallyConnected}, 준비=${isReady}`);
         setLastConnectionStatus(prev => ({ 
           ...prev, 
           connected: isConnected,
           actualConnected: actuallyConnected,
-          lastCheckedAt: Date.now() 
+          ready: isReady
         }));
       }
       
