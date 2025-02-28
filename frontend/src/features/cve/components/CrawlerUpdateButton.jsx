@@ -161,9 +161,8 @@ const CrawlerUpdateButton = () => {
     loadCrawlerStatus();
   }, [loadCrawlerStatus]);
 
-  // 컴포넌트 마운트/언마운트 시 폴링 관리
+  // 컴포넌트 언마운트 시 폴링 중지
   useEffect(() => {
-    // 컴포넌트 언마운트 시 폴링 중지
     return () => stopPolling();
   }, [stopPolling]);
 
@@ -186,7 +185,6 @@ const CrawlerUpdateButton = () => {
       if (data.stage === '완료' || data.stage === '오류') {
         setIsRunning(false);
       } else {
-        // 그 외의 경우에는 백엔드에서 보낸 isRunning 값을 사용
         setIsRunning(data.isRunning);
       }
       
@@ -196,7 +194,7 @@ const CrawlerUpdateButton = () => {
         setActiveStep(stageIndex);
         setHasError(false);
       } else {
-        setHasError(true); // 오류 상태 설정
+        setHasError(true);
       }
       
       // 업데이트된 CVE 목록이 있으면 표시
@@ -216,13 +214,9 @@ const CrawlerUpdateButton = () => {
       // 완료 또는 오류 상태이면 폴링 중지
       if (data.stage === '완료' || data.stage === '오류') {
         stopPolling();
-        
-        // 팝업이 닫혀있으면 자동으로 열기
         if (!progressOpen && selectedCrawler) {
           setProgressOpen(true);
         }
-        
-        // 완료 시 CVE 목록 새로고침
         if (data.stage === '완료') {
           dispatch(fetchCVEList());
           enqueueSnackbar(`${selectedCrawler.name} 업데이트가 완료되었습니다.`, { 
@@ -299,13 +293,11 @@ const CrawlerUpdateButton = () => {
       console.error('크롤러 실행 오류:', error);
       setHasError(true);
       const errorMessage = error.response?.data?.detail || '크롤러 실행 중 오류가 발생했습니다.';
-      
       setProgress({
         stage: '오류',
         percent: 0,
         message: errorMessage
       });
-      
       enqueueSnackbar(errorMessage, { 
         variant: 'error',
         autoHideDuration: 5000
@@ -313,7 +305,7 @@ const CrawlerUpdateButton = () => {
     }
   };
 
-  // 마지막 업데이트 시간 포맷팅
+  // 마지막 업데이트 시간 포맷팅 함수
   const formatLastUpdate = (dateString) => {
     if (!dateString) return '없음';
     try {

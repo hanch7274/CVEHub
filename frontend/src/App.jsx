@@ -1,7 +1,6 @@
 import React, { useState, useCallback, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Box } from '@mui/material';
-import { useDispatch, useSelector } from 'react-redux';
 import { Alert, Snackbar } from '@mui/material';
 import Header from './layout/Header';
 import Sidebar from './layout/Sidebar';
@@ -12,9 +11,8 @@ import Login from './features/auth/Login';
 import PrivateRoute from './features/auth/PrivateRoute';
 import AuthRoute from './features/auth/AuthRoute';
 import { AuthProvider } from './contexts/AuthContext';
-import { addNotificationAsync } from './store/slices/notificationSlice';
-import { store, persistor } from './store';
-import { WebSocketProvider, useWebSocketContext } from './contexts/WebSocketContext';
+import { store } from './store';
+import { WebSocketProvider } from './contexts/WebSocketContext';
 import { Provider } from 'react-redux';
 import { SnackbarProvider } from 'notistack';
 import { ThemeProvider } from '@mui/material/styles';
@@ -32,9 +30,6 @@ const MainLayout = React.memo(({ children }) => {
     message: '',
     severity: 'info'
   });
-  const dispatch = useDispatch();
-  const { user } = useSelector((state) => state.auth);
-  const { isConnected } = useWebSocketContext();
 
   const handleSnackbarClose = useCallback(() => {
     setSnackbar(prev => ({ ...prev, open: false }));
@@ -101,7 +96,7 @@ const ErrorHandlerSetup = ({ children }) => {
 const MainRoutes = () => {
   return (
     <Routes>
-      {/* 인증 관련 라우트 */}
+      {/* Authentication Routes */}
       <Route
         path="/signup"
         element={
@@ -123,7 +118,7 @@ const MainRoutes = () => {
         }
       />
 
-      {/* 보호된 라우트 */}
+      {/* Protected Routes */}
       <Route
         path="/cves"
         element={
@@ -155,13 +150,13 @@ const MainRoutes = () => {
         }
       />
 
-      {/* 기본 라우트 */}
+      {/* Default Route */}
       <Route
         path="/"
         element={<Navigate to="/cves" replace />}
       />
 
-      {/* 알 수 없는 라우트 */}
+      {/* Catch-all Route */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
@@ -170,13 +165,12 @@ const MainRoutes = () => {
 const CVEDetail = lazy(() => import('./features/cve/CVEDetail'));
 
 const App = () => {
-  // store 주입
+  // Inject store on load
   useEffect(() => {
     injectStore(store);
   }, []);
 
   const [selectedCVE, setSelectedCVE] = useState(null);
-  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
 
   return (
     <Provider store={store}>

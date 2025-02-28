@@ -37,13 +37,24 @@ export const CRAWLER = {
 
 // WebSocket endpoints
 export const WEBSOCKET = {
+  BASE_URL: process.env.REACT_APP_WS_URL || 'ws://localhost:8000',
   CONNECT: (token) => {
     // 기본 WebSocket URL 설정
-    const wsUrl = process.env.REACT_APP_WS_URL || 'ws://10.0.7.200:8000';
+    const wsUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:8000';
+    
+    // 경로 검증 및 로깅
+    console.log('[WEBSOCKET.CONNECT] WebSocket URL 구성:');
+    console.log(`- 기본 URL: ${wsUrl}`);
+    console.log(`- 토큰 길이: ${token ? token.length : 0}`);
+    
     // URL 끝에 슬래시가 있는지 확인하고 적절히 처리
     const baseUrl = wsUrl.endsWith('/') ? wsUrl.slice(0, -1) : wsUrl;
+    
     // 최종 WebSocket URL 구성
-    return `${baseUrl}/ws?token=${encodeURIComponent(token)}`;
+    const finalUrl = `${baseUrl}/ws?token=${encodeURIComponent(token)}`;
+    console.log(`- 최종 URL: ${finalUrl}`);
+    
+    return finalUrl;
   }
 };
 

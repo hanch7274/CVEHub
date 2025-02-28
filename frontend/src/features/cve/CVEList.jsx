@@ -42,7 +42,8 @@ import {
   FilterList as FilterIcon
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
-import { api } from '../../utils/auth';
+import { useWebSocketContext, useWebSocketMessage } from '../../contexts/WebSocketContext';
+import { useSnackbar } from 'notistack';
 import CVEDetail from './CVEDetail';
 import CreateCVE from './CreateCVE';
 import { debounce } from 'lodash';
@@ -55,8 +56,6 @@ import {
   refreshCVEList,
   deleteCVE
 } from '../../store/slices/cveSlice';
-import { useSnackbar } from 'notistack';
-import { useWebSocketContext, useWebSocketMessage } from '../../contexts/WebSocketContext';
 import CrawlerUpdateButton from './components/CrawlerUpdateButton';
 
 const STATUS_OPTIONS = ["전체", "신규등록", "분석중", "분석완료", "대응완료"];
@@ -85,6 +84,8 @@ const CVEList = () => {
   const [selectedCVE, setSelectedCVE] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [localStatusFilter, setLocalStatusFilter] = useState("전체");
+  const [forceUpdate, setForceUpdate] = useState(false);
+  const [showConnectingScreen, setShowConnectingScreen] = useState(false);
 
   console.log('[CVE] Current state:', {
     cves,
@@ -135,10 +136,10 @@ const CVEList = () => {
       });
     };
 
-    if (user && isReady) {
+    if (user) {
       fetchData();
     }
-  }, [dispatch, page, rowsPerPage, searchQuery, statusFilter, user, isReady, enqueueSnackbar]);
+  }, [dispatch, page, rowsPerPage, searchQuery, statusFilter, user, enqueueSnackbar]);
 
   const debouncedSearch = useMemo(
     () => debounce((term) => {
@@ -188,18 +189,9 @@ const CVEList = () => {
   };
 
   const handleCVEClick = (cve) => {
-    console.log('CVEList: Clicked on CVE', cve);
-    
-    // 선택된 CVE 상태 업데이트
-    setSelectedCVE(cve);
-    
-    // 상세 모달 열기 전에 약간의 지연 추가 (선택 사항)
-    setTimeout(() => {
-      setDetailOpen(true);
-    }, 50);
-    
-    // 디버깅용 로그
-    console.log('CVEList: Detail modal should open now');
+    console.log(`[CVEList] CVE 클릭: ${cve.cveId}`);
+    setSelectedCVE(cve.cveId);
+    setDetailOpen(true);
   };
 
   const handleDetailClose = () => {
@@ -250,29 +242,44 @@ const CVEList = () => {
     }
   };
 
+  // WebSocket 메시지 처리
   useWebSocketMessage((message) => {
     if (message && message.type === 'cve_update') {
+      console.log('[CVEList] WebSocket 메시지 수신: CVE 업데이트', message);
       dispatch(refreshCVEList());
     }
   });
+  
+  // 데이터 로드 시 WebSocket 상태 확인
+  useEffect(() => {
+    console.log(`[CVEList] 컴포넌트 마운트, WebSocket 상태: 연결=${isConnected}, 준비=${isReady}`);
+  }, [isConnected, isReady]);
+  
+  // CVE 행 클릭 처리
+  const handleRowClick = useCallback((params) => {
+    const cveId = params.row.cveId;
+    console.log(`[CVEList] CVE 행 클릭: ${cveId}`);
+    setSelectedCVE(cveId);
+    setDetailOpen(true);
+  }, []);
+  
+  // 모달 닫기 처리
+  const handleCloseDetail = useCallback(() => {
+    console.log('[CVEList] CVE 상세 모달 닫기');
+    setDetailOpen(false);
+    setSelectedCVE(null);
+  }, []);
+
+  // 로딩 화면 표시
+  const renderLoadingScreen = () => (
+    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
+      <CircularProgress />
+      <Typography sx={{ mt: 2 }}>인증 확인 중...</Typography>
+    </Box>
+  );
 
   if (!user) {
-    return (
-      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-        <CircularProgress />
-        <Typography sx={{ mt: 2 }}>인증 확인 중...</Typography>
-      </Box>
-    );
-  }
-
-  if (!isReady) {
-    console.log('Waiting for WebSocket connection...', { isReady });
-    return (
-      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-        <CircularProgress />
-        <Typography sx={{ mt: 2 }}>서버와 연결 설정 중...</Typography>
-      </Box>
-    );
+    return renderLoadingScreen();
   }
 
   return (
@@ -452,16 +459,11 @@ const CVEList = () => {
         </CardContent>
       </Card>
 
-      {detailOpen && selectedCVE && (
-        <CVEDetail
-          open={detailOpen}
-          onClose={() => {
-            console.log('CVEList: Closing detail modal');
-            setDetailOpen(false);
-          }}
-          cveId={selectedCVE.cveId}
-        />
-      )}
+      <CVEDetail
+        open={detailOpen}
+        onClose={handleCloseDetail}
+        cveId={selectedCVE}
+      />
 
       {createDialogOpen && (
         <CreateCVE

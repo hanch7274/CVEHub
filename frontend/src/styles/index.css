@@ -10,4 +10,82 @@ body {
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
+}
+
+/* 웹소켓 상태 표시를 위한 애니메이션 정의 */
+@keyframes pulse {
+  0% {
+    opacity: 1;
+    filter: brightness(1);
+  }
+  50% {
+    opacity: 0.5;
+    filter: brightness(0.8);
+  }
+  100% {
+    opacity: 1;
+    filter: brightness(1);
+  }
+}
+
+/* 오류 상태를 위한 강한 깜빡임 애니메이션 */
+@keyframes errorPulse {
+  0% {
+    opacity: 1;
+    filter: drop-shadow(0 0 2px rgba(255, 0, 0, 0.7));
+  }
+  50% {
+    opacity: 0.6;
+    filter: drop-shadow(0 0 5px rgba(255, 0, 0, 0.9));
+  }
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 2px rgba(255, 0, 0, 0.7));
+  }
+}
+
+/* 준비 중 상태를 위한 부드러운 깜빡임 애니메이션 */
+@keyframes readyPulse {
+  0% {
+    opacity: 1;
+    filter: drop-shadow(0 0 2px rgba(0, 255, 0, 0.5));
+  }
+  50% {
+    opacity: 0.8;
+    filter: drop-shadow(0 0 5px rgba(0, 255, 0, 0.8));
+  }
+  100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 2px rgba(0, 255, 0, 0.5));
+  }
+}
+
+/* 페이드인 애니메이션 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 페이드아웃 애니메이션 */
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* 로드 스피너 애니메이션 */
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 } 

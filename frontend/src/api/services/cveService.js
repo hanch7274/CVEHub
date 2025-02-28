@@ -5,6 +5,10 @@ import { CVE } from '../config/endpoints';
 const cache = new Map();
 const CACHE_TTL = 10 * 60 * 1000; // 10분으로 기본 TTL 연장
 
+// 최근 HEAD 요청 타임스탬프를 추적하는 맵
+const lastHeadRequestTime = new Map();
+const HEAD_REQUEST_DEBOUNCE = 5000; // 5초 디바운싱
+
 export const cveService = {
   // CVE 관리
   getCVEs: async (params) => {
@@ -40,9 +44,17 @@ export const cveService = {
     // 3. 캐시 만료 확인
     const isCacheExpired = Date.now() - cachedItem.timestamp > CACHE_TTL;
     
-    // 4. 만료되었거나 수정 확인이 필요하면 HEAD 요청으로 lastModifiedDate 확인
-    if (isCacheExpired || checkModified) {
+    // 4. 최근 HEAD 요청 시간 확인하여 디바운싱 적용
+    const now = Date.now();
+    const lastHeadTime = lastHeadRequestTime.get(cveId) || 0;
+    const shouldSkipHeadRequest = now - lastHeadTime < HEAD_REQUEST_DEBOUNCE;
+    
+    // 5. 만료되었거나 수정 확인이 필요하고, 디바운싱 기간이 지났으면 HEAD 요청으로 확인
+    if ((isCacheExpired || checkModified) && !shouldSkipHeadRequest) {
       try {
+        // HEAD 요청 시간 기록
+        lastHeadRequestTime.set(cveId, now);
+        
         // HEAD 요청으로 메타데이터만 가져오기 (효율적)
         const headResponse = await api.head(`/cves/${cveId}`);
         const serverLastModified = headResponse.headers['last-modified'] || 
@@ -71,6 +83,10 @@ export const cveService = {
         }
         return cveService.fetchAndCacheFullCVE(cveId);
       }
+    } else if (shouldSkipHeadRequest) {
+      // 최근에 HEAD 요청을 했으면 추가 요청 없이 캐시 사용
+      console.log(`[API] Skipping HEAD request for CVE ${cveId} (debounced)`);
+      return cachedItem.data;
     }
     
     // 캐시가 유효하고, 수정 확인이 필요없으면 캐시 데이터 반환
@@ -160,6 +176,10 @@ export const cveService = {
   // 전체 CVE 데이터를 가져와서 캐싱하는 헬퍼 메서드 (재사용성)
   fetchAndCacheFullCVE: async (cveId) => {
     console.log(`[API] Fetching full CVE ${cveId} data`);
+    
+    // 풀 요청할 때 HEAD 타임스탬프도 갱신
+    lastHeadRequestTime.set(cveId, Date.now());
+    
     const response = await api.get(`/cves/${cveId}`);
     
     // 응답에서 lastModifiedDate 추출
@@ -183,8 +203,10 @@ export const cveService = {
   invalidateCache(cveId) {
     if (cveId) {
       cache.delete(`cve_${cveId}`);
+      lastHeadRequestTime.delete(cveId); // HEAD 요청 타임스탬프도 제거
     } else {
       cache.clear();
+      lastHeadRequestTime.clear();
     }
   }
 };

@@ -20,6 +20,8 @@ export const useSubscription = (cveId, onUpdateReceived, onSubscribersChange) =>
   const isMountedRef = useRef(true);
   const isInitialSubscriptionRef = useRef(true);
   const isProcessingRef = useRef(false);
+  const lastManageAttemptRef = useRef(0);
+  const DEBOUNCE_TIME = 1000; // 1초
   
   // 안정적인 콜백 참조 유지
   const callbacksRef = useRef({
@@ -67,9 +69,18 @@ export const useSubscription = (cveId, onUpdateReceived, onSubscribersChange) =>
     }
   }, []);
   
-  // 구독 관리 함수
+  // 구독 관리 함수 (디바운싱 적용)
   const manageSubscription = useCallback(async () => {
     if (!cveIdRef.current || !isAuthenticated || isProcessingRef.current) return;
+    
+    // 디바운싱 적용
+    const now = Date.now();
+    if (now - lastManageAttemptRef.current < DEBOUNCE_TIME) {
+      console.log('[useSubscription] 디바운싱: 짧은 시간 내 중복 구독 요청 방지');
+      return;
+    }
+    
+    lastManageAttemptRef.current = now;
     
     try {
       isProcessingRef.current = true;
@@ -89,17 +100,25 @@ export const useSubscription = (cveId, onUpdateReceived, onSubscribersChange) =>
         console.log('[useSubscription] 새 메시지 핸들러 등록');
       }
       
-      // 구독 처리
-      const success = await webSocketInstance.subscribeToCVE(cveIdRef.current);
-      if (success) {
-        console.log(`[useSubscription] CVE 구독 성공: ${cveIdRef.current}`);
+      // 구독 처리 - 이미 구독 중인지 확인
+      const isAlreadySubscribed = webSocketInstance.isSubscribedTo && 
+        typeof webSocketInstance.isSubscribedTo === 'function' && 
+        webSocketInstance.isSubscribedTo(cveIdRef.current);
         
-        // 최초 구독 시에만 스낵바 표시
-        if (isInitialSubscriptionRef.current) {
-          isInitialSubscriptionRef.current = false;
+      if (!isAlreadySubscribed) {
+        const success = await webSocketInstance.subscribeToCVE(cveIdRef.current);
+        if (success) {
+          console.log(`[useSubscription] CVE 구독 성공: ${cveIdRef.current}`);
+          
+          // 최초 구독 시에만 스낵바 표시
+          if (isInitialSubscriptionRef.current) {
+            isInitialSubscriptionRef.current = false;
+          }
+        } else {
+          console.error(`[useSubscription] CVE 구독 실패: ${cveIdRef.current}`);
         }
       } else {
-        console.error(`[useSubscription] CVE 구독 실패: ${cveIdRef.current}`);
+        console.log(`[useSubscription] 이미 ${cveIdRef.current}에 구독 중입니다`);
       }
     } catch (error) {
       console.error('[useSubscription] 구독 관리 오류:', error);
@@ -125,8 +144,14 @@ export const useSubscription = (cveId, onUpdateReceived, onSubscribersChange) =>
       }
       
       // 구독 해제
-      await webSocketInstance.unsubscribeFromCVE(currentCveId);
-      console.log(`[useSubscription] CVE 구독 해제 완료: ${currentCveId}`);
+      const isSubscribed = webSocketInstance.isSubscribedTo && 
+        typeof webSocketInstance.isSubscribedTo === 'function' && 
+        webSocketInstance.isSubscribedTo(currentCveId);
+        
+      if (isSubscribed) {
+        await webSocketInstance.unsubscribeFromCVE(currentCveId);
+        console.log(`[useSubscription] CVE 구독 해제 완료: ${currentCveId}`);
+      }
     } catch (error) {
       console.error('[useSubscription] 구독 해제 오류:', error);
     } finally {
