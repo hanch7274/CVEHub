@@ -50,6 +50,7 @@ import InlineEditText from './components/InlineEditText';
 import { useSnackbar } from 'notistack';
 import PropTypes from 'prop-types';
 import { useSubscription } from '../../hooks/useSubscription';
+import { useCVEWebSocketUpdate } from '../../contexts/WebSocketContext';
 
 const countActiveComments = (comments) => {
   if (!Array.isArray(comments)) return 0;
@@ -347,6 +348,27 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
     handleUpdateReceived,
     handleSubscribersChange
   );
+
+  // 웹소켓을 통해 메시지를 보낼 수 있는 함수를 가져옵니다.
+  // 이 함수는 자식 컴포넌트에 props로 전달하여 중앙에서 관리되는 구독을 통해 메시지를 보낼 수 있게 합니다.
+  const { sendCustomMessage } = useCVEWebSocketUpdate(
+    cveId,
+    handleUpdateReceived,
+    handleRefreshTrigger,
+    handleSubscribersChange
+  );
+
+  // 이 함수를 각 탭 컴포넌트에 전달하여 중복 구독을 방지합니다
+  const sendMessage = useCallback(async (type, data) => {
+    try {
+      console.log(`[CVEDetail] 자식 컴포넌트로부터 메시지 전송 요청: ${type}`);
+      return await sendCustomMessage(type, data);
+    } catch (error) {
+      console.error(`[CVEDetail] 메시지 전송 오류: ${type}`, error);
+      enqueueSnackbar('메시지 전송 실패', { variant: 'error' });
+      throw error;
+    }
+  }, [sendCustomMessage, enqueueSnackbar]);
   
   // cveId가 변경될 때마다 상태를 초기화하는 로직
   useEffect(() => {
@@ -759,6 +781,7 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
                     currentUser={currentUser} 
                     refreshTrigger={refreshTriggers.poc} 
                     tabConfig={pocTabConfig}
+                    sendMessage={sendMessage}
                   />
                 </Box>
                 <Box 
@@ -789,6 +812,7 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
                     refreshTrigger={refreshTriggers.snortRules}
                     tabConfig={snortRulesTabConfig}
                     onCountChange={(count) => setTabCounts(prev => ({ ...prev, snortRules: count }))}
+                    sendMessage={sendMessage}
                   />
                 </Box>
                 <Box 
@@ -818,6 +842,8 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
                     currentUser={currentUser}
                     refreshTrigger={refreshTriggers.references}
                     tabConfig={referencesTabConfig}
+                    onCountChange={(count) => setTabCounts(prev => ({ ...prev, references: count }))}
+                    sendMessage={sendMessage}
                   />
                 </Box>
                 <Box 
@@ -844,10 +870,10 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
                 >
                   <CommentsTab
                     cve={cve}
-                    onUpdate={() => dispatch(fetchCVEDetail(cve.cveId))}
                     currentUser={currentUser}
                     refreshTrigger={refreshTriggers.comments}
-                    open={open}
+                    onCountChange={(count) => setTabCounts(prev => ({ ...prev, comments: count }))}
+                    sendMessage={sendMessage}
                   />
                 </Box>
                 <Box 

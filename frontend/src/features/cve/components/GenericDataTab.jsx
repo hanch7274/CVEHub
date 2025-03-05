@@ -35,7 +35,6 @@ import {
   updateCVEDetail,
   fetchCVEDetail
 } from '../../../store/slices/cveSlice';
-import { useCVEWebSocketUpdate } from '../../../contexts/WebSocketContext';
 import { WS_EVENT_TYPE } from '../../../services/websocket';
 import { useSnackbar } from 'notistack';
 
@@ -48,12 +47,12 @@ const GenericDataTab = memo(({
   currentUser,                  // 현재 사용자
   refreshTrigger,               // 새로고침 트리거
   tabConfig,                    // 탭 구성 설정
+  sendMessage,                  // 메시지 전송 함수 (상위 컴포넌트에서 전달)
 
   // 선택적 속성 (기본값 설정)
   onCountChange = () => {}      // 항목 수가 변경될 때 호출되는 콜백
 }) => {
   const dispatch = useDispatch();
-  const { sendCustomMessage } = useCVEWebSocketUpdate(cve.cveId);
   const { enqueueSnackbar } = useSnackbar();
   
   const [loading, setLoading] = useState(false);
@@ -169,7 +168,7 @@ const GenericDataTab = memo(({
 
       if (response) {
         // WebSocket 메시지 전송 - 필드 정보 추가
-        await sendCustomMessage(
+        await sendMessage(
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,
@@ -212,7 +211,7 @@ const GenericDataTab = memo(({
 
       if (response) {
         // WebSocket 메시지 전송 - 필드 정보 추가
-        await sendCustomMessage(
+        await sendMessage(
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,
@@ -273,7 +272,7 @@ const GenericDataTab = memo(({
 
       if (response) {
         // WebSocket 메시지 전송 - 필드 정보 추가
-        await sendCustomMessage(
+        await sendMessage(
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,

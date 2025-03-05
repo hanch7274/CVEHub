@@ -12,7 +12,6 @@ import { api } from '../../../utils/auth';
 import { formatDistanceToNow } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import { useSnackbar } from 'notistack';
-import { useCVEWebSocketUpdate } from '../../../contexts/WebSocketContext';
 import { WS_EVENT_TYPE } from '../../../services/websocket';
 import {
   ListHeader,
@@ -43,7 +42,8 @@ const CommentsTab = React.memo(({
   onCommentCountChange,
   currentUser,
   refreshTrigger,
-  open
+  open,
+  sendMessage
 }) => {
   const dispatch = useDispatch();
   const { enqueueSnackbar } = useSnackbar();
@@ -59,7 +59,7 @@ const CommentsTab = React.memo(({
   }, [currentUser?.username, enqueueSnackbar]);
   
   // useCVEWebSocketUpdate 훅을 사용하여 웹소켓 메시지 처리 및 알림
-  const { sendCustomMessage } = useCVEWebSocketUpdate(cve.cveId, handleCommentNotification);
+  //const { sendCustomMessage } = useCVEWebSocketUpdate(cve.cveId, handleCommentNotification);
 
   // 상위 상태
   const [newComment, setNewComment] = useState('');
@@ -69,8 +69,8 @@ const CommentsTab = React.memo(({
   const [mentionInputKey, setMentionInputKey] = useState(0);
   const [users, setUsers] = useState([]);
 
-  // 최상위 댓글 입력값
-  const commentInputRef = useRef('');
+  // 최상위 댓글 입력값을 위한 ref - 객체로 올바르게 사용
+  const commentInputRef = useRef(null);
 
   // 수정 모드 핸들러
   const handleStartEdit = useCallback((commentId) => {
@@ -122,10 +122,9 @@ const CommentsTab = React.memo(({
     return rootComments;
   }, []);
 
-  // 활성 댓글 수 계산
+  // 활성 댓글 수 계산 (삭제되지 않은 댓글만)
   const activeCommentCount = useMemo(() => {
-    if (!cve.comments) return 0;
-    return cve.comments.filter(comment => !comment.isDeleted).length;
+    return (cve.comments || []).filter(comment => !comment.isDeleted).length;
   }, [cve.comments]);
 
   // 댓글 구조화
@@ -148,7 +147,7 @@ const CommentsTab = React.memo(({
       });
 
       if (response) {
-        await sendCustomMessage(
+        await sendMessage(
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,
@@ -172,7 +171,7 @@ const CommentsTab = React.memo(({
     } finally {
       setLoading(false);
     }
-  }, [cve.cveId, sendCustomMessage, enqueueSnackbar]);
+  }, [cve.cveId, sendMessage, enqueueSnackbar]);
 
   // 댓글 수정 함수
   const handleEdit = useCallback(async (commentId, content) => {
@@ -186,7 +185,7 @@ const CommentsTab = React.memo(({
 
       if (response) {
         if (mentions.length > 0) {
-          await sendCustomMessage(
+          await sendMessage(
             WS_EVENT_TYPE.NOTIFICATION,
             {
               type: 'mention',
@@ -202,7 +201,7 @@ const CommentsTab = React.memo(({
         }
         
         // WebSocket 메시지 전송 - 필드 정보 추가
-        await sendCustomMessage(
+        await sendMessage(
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             cveId: cve.cveId,
@@ -224,7 +223,7 @@ const CommentsTab = React.memo(({
     } finally {
       setLoading(false);
     }
-  }, [cve.cveId, currentUser, sendCustomMessage, enqueueSnackbar, handleFinishEdit]);
+  }, [cve.cveId, currentUser, sendMessage, enqueueSnackbar, handleFinishEdit]);
 
   // 답글 작성 함수
   const handleReplySubmit = useCallback(async (parentId, content) => {
@@ -239,7 +238,7 @@ const CommentsTab = React.memo(({
 
       if (response) {
         if (mentions.length > 0) {
-          await sendCustomMessage(
+          await sendMessage(
             WS_EVENT_TYPE.NOTIFICATION,
             {
               type: 'mention',
@@ -268,7 +267,7 @@ const CommentsTab = React.memo(({
     } finally {
       setLoading(false);
     }
-  }, [cve.cveId, currentUser, sendCustomMessage, enqueueSnackbar]);
+  }, [cve.cveId, currentUser, sendMessage, enqueueSnackbar]);
 
   // 개별 댓글 아이템 (메모이제이션)
   const CommentItem = useCallback(({ comment }) => {
@@ -339,11 +338,11 @@ const CommentsTab = React.memo(({
     enqueueSnackbar
   ]);
 
-  // 댓글 입력 중 멘션 처리 - 원래 코드로 복원
+  // 댓글 입력 중 멘션 처리
   const handleCommentChange = useCallback((e) => {
     const value = e.target.value;
     setNewComment(value);
-    commentInputRef.current = value;
+    // commentInputRef는 객체를 저장하는 ref이므로 값을 직접 할당하지 않음
   }, []);
 
   // 댓글 작성 함수
@@ -364,7 +363,7 @@ const CommentsTab = React.memo(({
       if (response) {
         // 멘션이 있을 경우 알림 전송
         if (mentions.length > 0) {
-          await sendCustomMessage(
+          await sendMessage(
             WS_EVENT_TYPE.NOTIFICATION,
             {
               type: 'mention',
@@ -380,7 +379,7 @@ const CommentsTab = React.memo(({
         }
 
         // WebSocket 메시지 전송 - 필드 정보 추가
-        await sendCustomMessage(
+        await sendMessage(
           WS_EVENT_TYPE.CVE_UPDATED,
           {
             type: 'comment_added',
@@ -392,19 +391,22 @@ const CommentsTab = React.memo(({
         );
         
         setNewComment('');
-        commentInputRef.current = '';
+        // commentInputRef 올바르게 초기화
         setMentionInputKey(prev => prev + 1);
         
         // 즉시 데이터 갱신 호출 제거
         enqueueSnackbar('댓글이 작성되었습니다.', { variant: 'success' });
       }
     } catch (error) {
-      console.error('Error creating comment:', error);
-      enqueueSnackbar('댓글 작성에 실패했습니다.', { variant: 'error' });
+      console.error('Failed to submit comment:', error);
+      enqueueSnackbar(
+        error.response?.data?.detail || '댓글 작성 중 오류가 발생했습니다.',
+        { variant: 'error' }
+      );
     } finally {
       setLoading(false);
     }
-  }, [cve.cveId, newComment, currentUser, sendCustomMessage, enqueueSnackbar]);
+  }, [cve.cveId, newComment, currentUser, sendMessage, enqueueSnackbar]);
 
   // 초기 로딩
   useEffect(() => {
@@ -515,14 +517,18 @@ const CommentsTab = React.memo(({
     </Box>
   );
 }, (prevProps, nextProps) => {
-  // 디버깅용 로그
-  console.log('CommentsTab memo comparison');
-  console.log('prevProps.refreshTrigger:', prevProps.refreshTrigger);
-  console.log('nextProps.refreshTrigger:', nextProps.refreshTrigger);
-  
-  // 댓글이 변경된 경우 즉시 리렌더링
-  const commentsChanged = JSON.stringify(prevProps.cve.comments) !== JSON.stringify(nextProps.cve.comments);
-  console.log('comments changed:', commentsChanged);
+  // 댓글 목록 변경 비교 - 효율적인 방식으로 개선
+  const commentsChanged = 
+    prevProps.cve.comments?.length !== nextProps.cve.comments?.length ||
+    prevProps.cve.comments?.some((prevComment, index) => {
+      const nextComment = nextProps.cve.comments?.[index];
+      if (!nextComment) return true;
+      
+      return prevComment.id !== nextComment.id || 
+             prevComment.content !== nextComment.content ||
+             prevComment.updatedAt !== nextComment.updatedAt ||
+             prevComment.isDeleted !== nextComment.isDeleted;
+    });
   
   if (commentsChanged) {
     return false; // 변경되었으므로 리렌더링 필요

@@ -750,13 +750,23 @@ export class WebSocketService {
     
     // 세션 스토리지에서 구독 정보 및 세션 ID 정리
     try {
+      // 자체 관리 세션 스토리지
       const ACTIVE_SUBSCRIPTIONS_KEY = 'cvehubActiveSubscriptions';
       sessionStorage.removeItem(ACTIVE_SUBSCRIPTIONS_KEY);
       sessionStorage.removeItem('cvehubWsSessionId');
+      
+      // WebSocketContext에서 사용하는 세션 스토리지도 정리 (activeSubscriptions)
+      sessionStorage.removeItem('activeSubscriptions');
+      
       console.log('[WebSocket] 연결 종료 시 세션 스토리지 정리 완료 (구독 정보, 세션 ID)');
     } catch (error) {
       console.error('[WebSocket] 세션 스토리지 정리 오류:', error);
     }
+    
+    // 활성 구독 목록 초기화
+    this.activeSubscriptions.clear();
+    this.pendingSubscriptions.clear();
+    this.pendingUnsubscriptions.clear();
     
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);

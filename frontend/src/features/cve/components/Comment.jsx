@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -40,7 +40,7 @@ import MentionInput from './MentionInput';
  *   - onStartEdit: (commentId) => {} 수정 모드 시작
  *   - onFinishEdit: 수정 모드 종료
  */
-const Comment = ({
+const Comment = React.memo(({
   comment,
   depth = 0,
   currentUsername,
@@ -69,16 +69,16 @@ const Comment = ({
   const isAuthor = currentUsername === comment.username;
   const canModify = isAdmin || isAuthor;
 
-  // 날짜 포맷 함수
-  const formatDate = (dateString) => {
-    if (!dateString) return '';
+  // 날짜 포맷 함수를 useMemo로 최적화
+  const formattedDate = useMemo(() => {
+    if (!comment.createdAt) return '';
     try {
-      const date = parseISO(dateString);
+      const date = parseISO(comment.createdAt);
       return formatDistanceToNow(date, { addSuffix: true, locale: ko });
     } catch {
-      return dateString;
+      return comment.createdAt;
     }
-  };
+  }, [comment.createdAt]);
 
   // 수정 모드 토글
   const handleEditToggle = () => {
@@ -270,7 +270,7 @@ const Comment = ({
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
             <Typography variant="subtitle2">{comment.username}</Typography>
             <Typography variant="caption" color="text.secondary">
-              {formatDate(comment.createdAt)}
+              {formattedDate}
             </Typography>
           </Box>
 
@@ -385,6 +385,14 @@ const Comment = ({
       {children}
     </StyledListItem>
   );
-};
+}, (prevProps, nextProps) => {
+  // 최적화된 비교 로직
+  return prevProps.comment.id === nextProps.comment.id &&
+         prevProps.comment.content === nextProps.comment.content &&
+         prevProps.comment.updatedAt === nextProps.comment.updatedAt &&
+         prevProps.comment.isDeleted === nextProps.comment.isDeleted &&
+         prevProps.isEditing === nextProps.isEditing &&
+         prevProps.replyMode === nextProps.replyMode;
+});
 
 export default Comment;
