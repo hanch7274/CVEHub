@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { useSnackbar } from 'notistack';
@@ -34,17 +34,47 @@ const Login = () => {
   const [error, setError] = useState('');
   const [saveId, setSaveId] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  
+  // 컴포넌트 마운트 상태를 추적하는 ref
+  const isMounted = useRef(true);
+  // 타이머 참조를 저장하는 ref
+  const timerRef = useRef(null);
 
+  // 컴포넌트 마운트 시 초기화
   useEffect(() => {
+    // 컴포넌트 마운트 시 이벤트 리스너 정리
+    window.addEventListener('beforeunload', cleanupBeforeUnload);
+    
     const savedEmail = localStorage.getItem('savedEmail');
     if (savedEmail) {
       setFormData(prev => ({ ...prev, email: savedEmail }));
       setSaveId(true);
     }
+    
+    // 컴포넌트 언마운트 시 정리 작업
+    return () => {
+      isMounted.current = false;
+      window.removeEventListener('beforeunload', cleanupBeforeUnload);
+      
+      // 타이머 정리
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+      
+      // 디버깅 정보
+      console.log('[Login] 컴포넌트 언마운트, 리소스 정리 완료');
+    };
   }, []);
 
+  // 페이지 이탈 시 정리 함수
+  const cleanupBeforeUnload = () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+  };
+
   useEffect(() => {
-    if (authError) {
+    if (authError && isMounted.current) {
       setError(authError);
     }
   }, [authError]);
@@ -74,21 +104,18 @@ const Login = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!isMounted.current) return;
+    
     setError('');
     setLoading(true);
 
-    console.log('=== Login Form Submit Debug ===');
-    console.log('Form Data:', formData);
-    console.log('Save ID:', saveId);
-
     try {
-      console.log('Dispatching login thunk...');
       const result = await dispatch(loginThunk(formData)).unwrap();
-      console.log('Login thunk result:', result);
+      
+      if (!isMounted.current) return;
       
       if (saveId) {
         localStorage.setItem('savedEmail', formData.email);
-        console.log('Email saved to localStorage:', formData.email);
       }
       
       enqueueSnackbar('로그인에 성공했습니다.', {
@@ -100,17 +127,17 @@ const Login = () => {
         autoHideDuration: 2000
       });
       
-      console.log('Waiting for WebSocket connection to stabilize...');
-      setTimeout(() => {
-        console.log('Navigating to home page...');
-        navigate('/', { replace: true });
-      }, 500);
+      // 메시지 채널이 닫히기 전에 비동기 작업을 완료하도록 타이머 설정
+      timerRef.current = setTimeout(() => {
+        if (isMounted.current) {
+          navigate('/', { replace: true });
+        }
+      }, 100);
 
     } catch (err) {
-      console.error('=== Login Component Error Debug ===');
-      console.error('Error:', err);
-      console.error('Auth Error State:', authError);
+      if (!isMounted.current) return;
       
+      console.error('Login Error:', err);
       setError(err || '로그인 중 오류가 발생했습니다. 다시 시도해주세요.');
       
       enqueueSnackbar(err || '로그인 중 오류가 발생했습니다.', {
@@ -122,8 +149,9 @@ const Login = () => {
         autoHideDuration: 3000
       });
     } finally {
-      setLoading(false);
-      console.log('Login attempt completed. Loading state reset.');
+      if (isMounted.current) {
+        setLoading(false);
+      }
     }
   };
 

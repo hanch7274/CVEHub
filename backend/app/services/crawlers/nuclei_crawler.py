@@ -320,10 +320,27 @@ class NucleiCrawlerService(BaseCrawlerService):
                 cve_id = item.get("cve_id")
                 nuclei_hash = item.get("nuclei_hash")
                 
-                if not cve_id or not nuclei_hash:
-                    self.log_warning(f"필수 필드 누락: cve_id={cve_id}, nuclei_hash={nuclei_hash}")
+                if not cve_id:
+                    self.log_warning(f"CVE ID가 누락되었습니다. 항목을 건너뜁니다.")
                     result["skipped"] += 1
                     continue
+                
+                # nuclei_hash가 비어있으면 생성
+                if not nuclei_hash:
+                    # 컨텐츠에서 해시 재생성 시도
+                    content = item.get("content", "")
+                    if content:
+                        nuclei_hash = self._extract_digest_hash(content)
+                        item["nuclei_hash"] = nuclei_hash
+                        self.log_warning(f"누락된 nuclei_hash를 콘텐츠에서 생성했습니다: {nuclei_hash[:10]}...")
+                    else:
+                        # 컨텐츠도 없으면 타임스탬프 기반 해시 생성
+                        import hashlib
+                        import random
+                        random_value = random.randint(10000, 99999)
+                        nuclei_hash = hashlib.sha1(f"fallback_{cve_id}_{datetime.now().isoformat()}_{random_value}".encode('utf-8')).hexdigest()
+                        item["nuclei_hash"] = nuclei_hash
+                        self.log_warning(f"콘텐츠 없이 nuclei_hash를 생성했습니다: {nuclei_hash[:10]}...")
                 
                 # 기존 문서 조회
                 existing = await CVEModel.find_one(
@@ -348,11 +365,12 @@ class NucleiCrawlerService(BaseCrawlerService):
                 }
                 
                 # 콘텐츠 및 해시 추가
-                if "content" in item:
-                    cve_data["nuclei_template"] = item["content"]
-                
                 if nuclei_hash:
                     cve_data["nuclei_hash"] = nuclei_hash
+                
+                # 템플릿 파일 경로 추가 (내부용)
+                if "file_path" in item:
+                    cve_data["template_path"] = item["file_path"]
                 
                 # 기존 문서가 있으면 업데이트, 없으면 생성
                 if existing:
@@ -385,12 +403,30 @@ class NucleiCrawlerService(BaseCrawlerService):
         """진행 상황 보고"""
         self.log_info(f"[{stage}] {percent}% - {message}")
         
+        # 웹소켓 메시지 전송 디버그 로그 추가
+        self.log_info(f"[WebSocket] 진행 상황 메시지 전송 시작: stage={stage}, percent={percent}, message={message}")
+        
         # 부모 클래스의 메서드 호출하여 웹소켓 메시지 전송
-        await super().report_progress(stage, percent, message, updated_cves)
+        try:
+            await super().report_progress(stage, percent, message, updated_cves)
+            self.log_info(f"[WebSocket] 진행 상황 메시지 전송 성공: stage={stage}, percent={percent}, message={message}")
+            
+            # 업데이트된 CVE 정보가 있는 경우 로깅
+            if updated_cves:
+                cve_count = len(updated_cves) if isinstance(updated_cves, list) else "알 수 없음"
+                self.log_info(f"[WebSocket] 업데이트된 CVE 정보 포함: {cve_count}개")
+        except Exception as e:
+            self.log_error(f"[WebSocket] 진행 상황 메시지 전송 실패: {str(e)}", e)
+            self.log_error(f"[WebSocket] 전송 실패한 메시지 내용: stage={stage}, percent={percent}, message={message}")
         
         # 기존 콜백 호출 로직 유지
         if hasattr(self, 'on_progress') and callable(self.on_progress):
-            await self.on_progress(self.crawler_id, stage, percent, message)
+            try:
+                await self.on_progress(self.crawler_id, stage, percent, message)
+                self.log_info(f"[WebSocket] on_progress 콜백 호출 성공: stage={stage}, percent={percent}")
+            except Exception as e:
+                self.log_error(f"[WebSocket] on_progress 콜백 호출 실패: {str(e)}", e)
+                self.log_error(f"[WebSocket] 콜백 호출 실패한 메시지: stage={stage}, percent={percent}, message={message}")
 
     async def crawl(self) -> bool:
         """전체 크롤링 프로세스 실행"""
@@ -652,28 +688,44 @@ class NucleiCrawlerService(BaseCrawlerService):
 
     def _extract_digest_hash(self, content: Union[str, Dict]) -> str:
         """템플릿 파일에서 digest 해시 값 추출"""
-        # 문자열인 경우 정규 표현식으로 추출
-        if isinstance(content, str):
-            # 정규 표현식으로 digest 값 추출
-            digest_pattern = r'id:\s+([a-f0-9]{40})'
-            match = re.search(digest_pattern, content)
-            if match:
-                return match.group(1)
-            return ""
+        # 텍스트 콘텐츠로 변환
+        if isinstance(content, dict):
+            try:
+                # 딕셔너리를 YAML 텍스트로 변환
+                import yaml
+                content = yaml.dump(content)
+                self.log_debug("딕셔너리를 YAML 텍스트로 변환하여 digest 추출을 시도합니다.")
+            except Exception as e:
+                self.log_error(f"YAML 변환 중 오류: {str(e)}")
+                content = str(content)  # 실패 시 문자열로 변환
+
+        if not isinstance(content, str):
+            content = str(content)
+            self.log_warning(f"콘텐츠가 문자열이 아니므로 변환했습니다: {type(content)}")
+
+        # 파일 끝에 있는 digest 주석 형식 검색
+        digest_pattern = r'#\s*digest:\s*([a-fA-F0-9:]+)'
+        match = re.search(digest_pattern, content)
         
-        # YAML 데이터인 경우 템플릿 ID 사용
-        elif isinstance(content, dict):
-            template_id = content.get('id', '')
-            if template_id and isinstance(template_id, str):
-                return template_id
-            
-            # ID가 없는 경우 info 섹션에서 이름 사용
-            info = content.get('info', {})
-            name = info.get('name', '')
-            if name:
-                # 이름을 해시로 변환
-                import hashlib
-                return hashlib.sha1(name.encode('utf-8')).hexdigest()
+        if match:
+            self.log_debug(f"파일에서 digest 값을 추출했습니다: {match.group(1)}")
+            return match.group(1)
         
-        # 해시를 찾지 못한 경우 빈 문자열 반환
+        # ID 형식으로 검색 시도 (대체 방법)
+        id_pattern = r'id:\s+([a-fA-F0-9]{40})'
+        match = re.search(id_pattern, content)
+        
+        if match:
+            self.log_debug(f"파일에서 id 값을 digest로 사용합니다: {match.group(1)}")
+            return match.group(1)
+        
+        # digest를 찾지 못한 경우 에러 로깅
+        self.log_error("템플릿 파일에서 digest 값을 찾을 수 없습니다. 모든 Nuclei 템플릿에는 digest 값이 있어야 합니다.")
+        # 첫 100자와 마지막 100자 로깅하여 문제 확인 가능하도록 함
+        content_start = content[:100] if len(content) > 100 else content
+        content_end = content[-100:] if len(content) > 100 else content
+        self.log_error(f"콘텐츠 시작 부분: {content_start}...")
+        self.log_error(f"콘텐츠 마지막 부분: ...{content_end}")
+        
+        # digest가 없을 경우 빈 문자열 반환 (오류 표시를 위해)
         return "" 

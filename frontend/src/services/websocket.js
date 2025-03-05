@@ -40,7 +40,8 @@ export const WS_EVENT_TYPE = {
   SNORT_RULE_ADDED: "snort_rule_added",
   REFERENCE_ADDED: "reference_added",
   SUBSCRIBE_CVE: "subscribe_cve",
-  UNSUBSCRIBE_CVE: "unsubscribe_cve"
+  UNSUBSCRIBE_CVE: "unsubscribe_cve",
+  CRAWLER_UPDATE_PROGRESS: "crawler_update_progress"
 };
 
 export const WS_STATE = {
@@ -153,21 +154,31 @@ export class WebSocketService {
     // 실제 WebSocket 연결 상태 확인
     const connected = !!this.ws && this.ws.readyState === WebSocket.OPEN;
     
-    // 연결된 경우 isReady 속성을 true로 설정
-    if (connected && !this.isReady) {
-      console.log('[WebSocket] 연결됨 상태 확인: isReady = true로 설정');
-      this.isReady = true;
+    // 연결 상태가 true인데 isReady가 false라면 항상 isReady를 true로 설정
+    if (connected) {
+      // isReady가 false라면 true로 동기화 (로그는 상태 변경 시에만 출력)
+      if (!this.isReady) {
+        console.log('[WebSocket] 연결됨 상태 확인: isReady = true로 설정 (서비스 객체 상태 동기화)');
+        this.isReady = true;
+      }
+    } else {
+      // 연결이 끊어진 경우 isReady도 false로 설정
+      if (this.isReady) {
+        console.log('[WebSocket] 연결 끊김 확인: isReady = false로 설정 (서비스 객체 상태 동기화)');
+        this.isReady = false;
+      }
     }
     
     // 상태 변화가 있을 때만 로그 출력 (마지막 상태와 다르거나 마지막 로그로부터 1분 이상 지났을 때)
     if (this._lastConnectedState !== connected || 
-        (this._lastLogTime && Date.now() - this._lastLogTime > 60000)) {
+        !this._lastLogTime || Date.now() - this._lastLogTime > 60000) {
       this._lastConnectedState = connected;
       this._lastLogTime = Date.now();
       
       console.log('[WebSocket] 연결 상태 확인:');
       console.log(`- 실제 WebSocket 연결 상태: ${connected ? '연결됨' : '연결되지 않음'}`);
       console.log(`- isReady 상태: ${this.isReady}`);
+      console.log(`- readyState: ${this.ws ? this.ws.readyState : '인스턴스 없음'}`);
     }
     
     return connected;
@@ -231,7 +242,11 @@ export class WebSocketService {
           timestamp: new Date().toISOString()
         };
         
-        console.log(`[WebSocket] 메시지 전송: ${type}`, normalizedData);
+        // ping 메시지는 디버그 모드에서만 로그 출력
+        if (type !== WS_EVENT_TYPE.PING || this.debug) {
+          console.log(`[WebSocket] 메시지 전송: ${type}`, normalizedData);
+        }
+        
         this.ws.send(JSON.stringify(message));
         return true;
       } catch (error) {
@@ -441,9 +456,13 @@ export class WebSocketService {
     try {
       console.log('[WebSocket] 연결 성공');
       this._isConnected = true;
-      this.isReady = true;
+      this.isReady = true; // 명시적으로 isReady를 true로 설정
       this.reconnectAttempts = 0;
       this.connectionState = WS_STATE.CONNECTED;
+      
+      // 연결 시간 기록 (마지막 상태 로그용)
+      this._lastConnectedTime = Date.now();
+      this._lastConnectedState = true;
       
       // Redux 상태 업데이트
       store.dispatch(wsConnected({ connected: true }));
@@ -598,9 +617,12 @@ export class WebSocketService {
       // 30초마다 ping 메시지 전송
       this.pingInterval = setInterval(() => {
         if (this.isConnected()) {
-          this.send(WS_EVENT_TYPE.PING).catch(error => {
-            console.error('[WebSocket] Ping 메시지 전송 실패:', error);
-          });
+          // ping 메시지는 로그 없이 조용히 전송
+          this.ws.send(JSON.stringify({
+            type: WS_EVENT_TYPE.PING,
+            data: {},
+            timestamp: new Date().toISOString()
+          }));
         } else {
           this._clearPingInterval();
         }
@@ -650,75 +672,67 @@ export class WebSocketService {
   // WebSocket 연결 시도
   connect() {
     try {
-      // 이미 연결된 경우 중복 연결 방지
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      // 이미 연결 중이면 추가 연결 시도 방지
+      if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+        console.log('[WebSocket] 이미 연결 중입니다.');
+        return;
+      }
+      
+      // 이미 연결되어 있으면 재연결 불필요
+      if (this.isConnected()) {
         console.log('[WebSocket] 이미 연결되어 있습니다.');
-        this.updateConnectionState(true);
         return;
       }
-  
-      if (this.connectionState === WS_STATE.CONNECTING || this.connectionState === WS_STATE.RECONNECTING) {
-        console.log('[WebSocket] 이미 연결 시도 중입니다.');
-        return;
-      }
-  
-      console.log('[WebSocket] 연결 시작...');
-      this.connectionState = WS_STATE.CONNECTING;
-      store.dispatch(wsConnected({ connected: false }));
-  
-      // 이전 연결 정리
+      
+      // 기존 연결과 타이머 정리
       this._cleanup();
-  
-      // 토큰 가져오기
-      const token = getAccessToken();
-      if (!token) {
-        console.error('[WebSocket] 인증 토큰이 없어 연결할 수 없습니다.');
-        this._handleConnectionError(new Error('인증 토큰이 없습니다.'));
+      
+      // 연결 시작 전 상태 초기화
+      this.reconnectAttempts = 0;
+      this.reAuthAttempts = 0;
+      this.isReady = false;  // 초기 상태: 준비되지 않음
+      this.connectionState = WS_STATE.CONNECTING;
+      this.notifyConnectionState(false);  // 연결 중 상태 알림
+      
+      // 액세스 토큰 가져오기
+      const accessToken = getAccessToken();
+      
+      // 인증되지 않은 경우 처리
+      if (!accessToken) {
+        console.error('[WebSocket] 인증 토큰 없음, 연결을 계속할 수 없습니다.');
+        this.updateConnectionState(false, new Error('인증되지 않음'));
+        this._dispatchEvent('error', new Error('인증되지 않음'));
         return;
       }
-  
-      try {
-        // WEBSOCKET.CONNECT 함수를 사용하여 WebSocket URL 생성
-        const wsUrl = WEBSOCKET.CONNECT(token);
-        
-        // 환경 변수 체크 및 디버깅 정보 출력
-        console.log('[WebSocket] 환경변수 확인:');
-        console.log(`- REACT_APP_WS_URL: ${process.env.REACT_APP_WS_URL}`);
-        console.log(`- WS 기본 URL: ${WEBSOCKET.BASE_URL}`);
-        console.log(`[WebSocket] 최종 연결 URL: ${wsUrl}`);
-        
-        if (!wsUrl || wsUrl.startsWith('undefined')) {
-          throw new Error('유효하지 않은 WebSocket URL: ' + wsUrl);
-        }
-
-        // WebSocket 인스턴스 생성
-        this.ws = new WebSocket(wsUrl);
-        
-        // 이벤트 핸들러 설정
-        this._setupHandlers();
-        
-        console.log('[WebSocket] 연결 시도 중...');
-      } catch (error) {
-        console.error('[WebSocket] 연결 초기화 오류:', error);
-        this._handleConnectionError(error);
-      }
-    } catch (outerError) {
-      console.error('[WebSocket] connect 메서드 실행 중 예기치 않은 오류:', outerError);
-      this.connectionState = WS_STATE.ERROR;
-      store.dispatch(wsError({ message: outerError?.message || '웹소켓 연결 중 예기치 않은 오류' }));
+      
+      // WebSocket 연결 주소 설정 - CONNECT 함수 사용
+      const wsUrl = WEBSOCKET.CONNECT(accessToken);
+      console.log(`[WebSocket] 연결 시도 (토큰 생략)`);
+      
+      // WebSocket 인스턴스 생성
+      this.ws = new WebSocket(wsUrl);
+      
+      // 이벤트 핸들러 설정
+      this._setupHandlers();
+      
+      // 메시지 핸들러 설정 (스네이크 케이스에서 카멜 케이스로 변환 포함)
+      this.setupMessageHandler();
+      
+      // ping 타이머 설정
+      this._setupPingInterval();
+      
+      return true;
+    } catch (error) {
+      console.error('[WebSocket] 연결 중 오류 발생:', error);
+      this.updateConnectionState(false, error);
+      this._dispatchEvent('error', error);
+      return false;
     }
   }
 
   updateConnectionState(connected, error = null) {
     this._isConnected = connected;
-    
-    // 전역 변수를 통한 isReady 상태 우회
-    if (window.bypassWebSocketCheck) {
-      console.log('[WebSocket] 전역 변수를 통해 isReady 상태 우회 (항상 true)');
-      this.isReady = true;
-    } else {
-      this.isReady = connected;
-    }
+    this.isReady = connected;
     
     this.notifyConnectionState(connected, error);
   }
@@ -733,6 +747,16 @@ export class WebSocketService {
     this.unsubscribeAll().catch(error => {
       console.error('[WebSocket] 연결 종료 전 구독 해제 실패:', error);
     });
+    
+    // 세션 스토리지에서 구독 정보 및 세션 ID 정리
+    try {
+      const ACTIVE_SUBSCRIPTIONS_KEY = 'cvehubActiveSubscriptions';
+      sessionStorage.removeItem(ACTIVE_SUBSCRIPTIONS_KEY);
+      sessionStorage.removeItem('cvehubWsSessionId');
+      console.log('[WebSocket] 연결 종료 시 세션 스토리지 정리 완료 (구독 정보, 세션 ID)');
+    } catch (error) {
+      console.error('[WebSocket] 세션 스토리지 정리 오류:', error);
+    }
     
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -844,97 +868,39 @@ export class WebSocketService {
   _handleMessage(event) {
     try {
       const rawData = event.data;
-      const message = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+      let message = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+      
+      // 스네이크 케이스를 카멜 케이스로 변환
+      if (message.data) {
+        message.data = snakeToCamel(message.data);
+      }
+      
+      // ping/pong 메시지는 디버그 모드에서만 로그 출력
+      if (message.type !== WS_EVENT_TYPE.PING && message.type !== WS_EVENT_TYPE.PONG) {
+        console.log(`[WebSocket] 메시지 수신: ${message.type}`, message.data);
+      }
       
       // 메시지 타입에 따른 처리
-      if (message.type === WS_EVENT_TYPE.PING) {
-        // PING에 대한 응답으로 PONG 전송
-        this.send(WS_EVENT_TYPE.PONG);
-        return;
+      if (message.type === WS_EVENT_TYPE.CONNECT_ACK || message.type === WS_EVENT_TYPE.CONNECTED) {
+        // 연결 확인 응답 처리
+        this.updateConnectionState(true, null);
+        this.isReady = true;
+        console.log('[WebSocket] 연결 확인 메시지 수신, isReady = true로 설정');
+      } else if (message.type === WS_EVENT_TYPE.ERROR) {
+        console.error('[WebSocket] 오류 메시지 수신:', message.data);
+        this._dispatchEvent('error', message.data);
+      } else if (message.type === "crawler_update_progress") {
+        // 크롤러 업데이트 진행 상황 메시지 처리
+        console.log('[WebSocket] 크롤러 업데이트 메시지 수신:', message.data);
+        this._dispatchEvent('message', message);
+      } else {
+        // 기타 메시지 처리
+        this._dispatchEvent('message', message);
       }
       
       // 마지막 메시지 시간 업데이트
       this.lastMessageTime = Date.now();
       
-      // 메시지 로깅 (디버그 모드에서만)
-      if (this.debug) {
-        if (message.type === WS_EVENT_TYPE.PONG) {
-          console.debug('[WebSocket] PONG 메시지 수신');
-        } else {
-          console.log(`[WebSocket] 메시지 수신: ${message.type}`, message.data);
-        }
-      }
-      
-      // 연결 확인 메시지 처리
-      if (message.type === WS_EVENT_TYPE.CONNECT_ACK) {
-        console.log('[WebSocket] 연결 확인 메시지 수신:', message.data);
-        this.isReady = true;
-        this._dispatchEvent('ready', { isReady: true });
-        
-        // 서버에서 제공한 세션 정보 저장
-        if (message.data?.session_id) {
-          this.sessionId = message.data.session_id;
-          this._saveSessionId();
-          console.log(`[WebSocket] 서버 세션 ID 설정: ${this.sessionId}`);
-        }
-        
-        // 재인증 시도 카운터 초기화
-        this.reAuthAttempts = 0;
-      }
-      
-      // 에러 메시지 처리
-      if (message.type === WS_EVENT_TYPE.ERROR) {
-        console.error('[WebSocket] 서버에서 에러 메시지 수신:', message.data);
-        
-        // 인증 오류인 경우 토큰 갱신 시도
-        if (message.data?.code === 401 || (message.data?.message && message.data.message.includes('인증'))) {
-          this._handleAuthError();
-          return;
-        }
-        
-        this._dispatchEvent('error', new Error(message.data?.message || '서버 오류'));
-      }
-      
-      // CVE 업데이트 메시지 처리
-      if (message.type === WS_EVENT_TYPE.CVE_UPDATED && this.cacheInvalidationEnabled) {
-        const cveId = message.data?.cveId;
-        if (cveId) {
-          console.log(`[WebSocket] CVE 업데이트 감지: ${cveId}, 필드: ${message.data?.field || '전체'}`);
-          
-          // 캐시 무효화 액션 디스패치
-          store.dispatch(invalidateCache(cveId));
-          
-          // 필드 정보가 있는 경우 추가 로깅
-          if (message.data?.field) {
-            console.log(`[WebSocket] 업데이트된 필드: ${message.data.field}`);
-          }
-        }
-      }
-      
-      // 구독 관련 메시지 처리
-      if (message.type === WS_EVENT_TYPE.SUBSCRIBE_CVE) {
-        const cveId = message.data?.cveId;
-        if (cveId) {
-          console.log(`[WebSocket] CVE 구독 확인: ${cveId}, 구독자 수: ${message.data?.subscribers?.length || 0}`);
-          this.activeSubscriptions.add(cveId);
-          this.pendingSubscriptions.delete(cveId);
-        }
-      }
-      
-      if (message.type === WS_EVENT_TYPE.UNSUBSCRIBE_CVE) {
-        const cveId = message.data?.cveId;
-        if (cveId) {
-          console.log(`[WebSocket] CVE 구독 해제 확인: ${cveId}`);
-          this.activeSubscriptions.delete(cveId);
-          this.pendingUnsubscriptions.delete(cveId);
-        }
-      }
-      
-      // Redux 스토어에 메시지 디스패치
-      store.dispatch(wsMessageReceived(message));
-      
-      // 등록된 모든 메시지 핸들러에 메시지 전달
-      this._dispatchEvent('message', message);
     } catch (error) {
       console.error('[WebSocket] 메시지 처리 중 오류 발생:', error, event.data);
     }
@@ -964,7 +930,7 @@ export class WebSocketService {
         }
         
         // 핸들러 메서드 호출
-        await this.handleMessage(message);
+        await this._handleMessage({ data: rawMessage });
       } catch (error) {
         console.error('[WebSocket] 메시지 처리 오류:', error);
       }

@@ -22,6 +22,7 @@ import { injectStore, injectErrorHandler } from './utils/auth';
 import { ErrorProvider, useError } from './contexts/ErrorContext';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+import { useSelector } from 'react-redux';
 
 const MainLayout = React.memo(({ children }) => {
   const [selectedCVE, setSelectedCVE] = useState(null);
@@ -186,16 +187,14 @@ const App = () => {
           }}
         >
           <AuthProvider>
-            <WebSocketProvider>
-              <Router>
-                <ErrorProvider>
-                  <ErrorHandlerSetup>
-                    <CssBaseline />
-                    <MainRoutes />
-                  </ErrorHandlerSetup>
-                </ErrorProvider>
-              </Router>
-            </WebSocketProvider>
+            <Router>
+              <ErrorProvider>
+                <ErrorHandlerSetup>
+                  <CssBaseline />
+                  <AppRoutes setSelectedCVE={setSelectedCVE} selectedCVE={selectedCVE} />
+                </ErrorHandlerSetup>
+              </ErrorProvider>
+            </Router>
           </AuthProvider>
         </SnackbarProvider>
         <ToastContainer
@@ -210,17 +209,46 @@ const App = () => {
           pauseOnHover
           theme="colored"
         />
-        <Suspense fallback={<div>로딩 중...</div>}>
-          {selectedCVE && (
-            <CVEDetail 
-              cveId={selectedCVE}
-              open={true}
-              onClose={() => setSelectedCVE(null)}
-            />
-          )}
-        </Suspense>
       </ThemeProvider>
     </Provider>
+  );
+};
+
+// 인증 상태에 따라 WebSocketProvider를 적용하는 컴포넌트
+const AppRoutes = ({ setSelectedCVE, selectedCVE }) => {
+  const isAuthenticated = useSelector((state) => state.auth.isAuthenticated);
+
+  return (
+    <>
+      {/* 인증된 경우에만 WebSocketProvider 사용 */}
+      {isAuthenticated ? (
+        <WebSocketProvider>
+          <MainRoutes />
+          <Suspense fallback={<div>로딩 중...</div>}>
+            {selectedCVE && (
+              <CVEDetail 
+                cveId={selectedCVE}
+                open={true}
+                onClose={() => setSelectedCVE(null)}
+              />
+            )}
+          </Suspense>
+        </WebSocketProvider>
+      ) : (
+        <>
+          <MainRoutes />
+          <Suspense fallback={<div>로딩 중...</div>}>
+            {selectedCVE && (
+              <CVEDetail 
+                cveId={selectedCVE}
+                open={true}
+                onClose={() => setSelectedCVE(null)}
+              />
+            )}
+          </Suspense>
+        </>
+      )}
+    </>
   );
 };
 

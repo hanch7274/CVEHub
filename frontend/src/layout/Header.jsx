@@ -17,7 +17,6 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import PersonIcon from '@mui/icons-material/Person';
 import SignalWifiStatusbar4BarIcon from '@mui/icons-material/SignalWifiStatusbar4Bar';
 import SignalWifiConnectedNoInternet4Icon from '@mui/icons-material/SignalWifiConnectedNoInternet4';
-import Wifi1BarIcon from '@mui/icons-material/Wifi1Bar';
 import { useAuth } from '../contexts/AuthContext';
 import { getAnimalEmoji } from '../utils/avatarUtils';
 import NotificationBell from '../features/notification/NotificationBell';
@@ -39,7 +38,7 @@ const Header = ({ onOpenCVEDetail }) => {
 
   // WebSocket 상태 변경 모니터링
   useEffect(() => {
-    console.log(`[Header] WebSocket 상태 변경: isConnected=${isConnected}, isReady=${isReady}, bypassCheck=${window.bypassWebSocketCheck}`);
+    console.log(`[Header] WebSocket 상태 변경: isConnected=${isConnected}, isReady=${isReady}`);
   }, [isConnected, isReady]);
 
   const handleMenu = (event) => {
@@ -70,9 +69,10 @@ const Header = ({ onOpenCVEDetail }) => {
       console.log('[Logout] 3. Resetting Redux Store...');
       dispatch({ type: 'RESET_STORE' });
       
-      // 4. 로컬 스토리지 완전 정리 (마지막에 수행)
-      console.log('[Logout] 4. Clearing localStorage...');
+      // 4. 로컬 스토리지 및 세션 스토리지 완전 정리 (마지막에 수행)
+      console.log('[Logout] 4. Clearing storage...');
       localStorage.clear();
+      sessionStorage.clear(); // 세션 스토리지도 함께 정리
       
       // 5. 페이지 이동 (즉시 수행)
       console.log('[Logout] 5. Navigating to login page...');
@@ -98,36 +98,7 @@ const Header = ({ onOpenCVEDetail }) => {
   const renderConnectionStatus = () => {
     if (!user) return null;  // 로그인하지 않은 경우 표시하지 않음
     
-    // WebSocket 우회 모드
-    if (window.bypassWebSocketCheck) {
-      return (
-        <Tooltip title="WebSocket 체크 우회 모드 (테스트용)">
-          <IconButton 
-            size="small" 
-            sx={{ ml: 2 }}
-            onClick={() => {
-              window.bypassWebSocketCheck = false;
-              console.log('[Header] WebSocket 체크 우회 모드 해제');
-              enqueueSnackbar('WebSocket 체크 우회 모드가 해제되었습니다.', { 
-                variant: 'info', 
-                anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-              });
-              // 페이지 새로고침
-              window.location.reload();
-            }}
-          >
-            <Wifi1BarIcon 
-              sx={{ 
-                color: theme.palette.warning.main,
-                animation: 'pulse 1.5s infinite'
-              }} 
-            />
-          </IconButton>
-        </Tooltip>
-      );
-    }
-    
-    // 일반 모드 (연결 상태에 따른 아이콘)
+    // 연결 상태에 따른 아이콘 표시
     return (
       <Tooltip title={
         isConnected 
@@ -145,16 +116,6 @@ const Header = ({ onOpenCVEDetail }) => {
                 variant: 'info', 
                 anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
               });
-            } else {
-              // 테스트용 우회 모드 활성화
-              window.bypassWebSocketCheck = true;
-              console.log('[Header] WebSocket 체크 우회 모드 활성화');
-              enqueueSnackbar('WebSocket 체크 우회 모드가 활성화되었습니다.', { 
-                variant: 'warning', 
-                anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-              });
-              // 페이지 새로고침
-              window.location.reload();
             }
           }}
         >

@@ -23,7 +23,7 @@ class EmergingThreatsCrawlerService(BaseCrawlerService):
             display_name="EmergingThreats Rules Crawler"
         )
         self.rule_url = "https://rules.emergingthreats.net/open/snort-2.9.0/emerging-all.rules"
-        self.download_path = os.path.join(settings.TEMP_DIR, "emerging_threats")
+        self.download_path = os.path.join(settings.EMERGING_DIR, "emerging_threats")
         self.rule_file_path = os.path.join(self.download_path, "emerging-all.rules")
         self.hash_file_path = os.path.join(self.download_path, "last_hash.txt")
         self.updated_cves = []  # 업데이트된 CVE 목록 (결과 보고용)

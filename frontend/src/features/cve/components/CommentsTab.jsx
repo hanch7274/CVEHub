@@ -339,7 +339,7 @@ const CommentsTab = React.memo(({
     enqueueSnackbar
   ]);
 
-  // 최상위 댓글 작성
+  // 댓글 입력 중 멘션 처리 - 원래 코드로 복원
   const handleCommentChange = useCallback((e) => {
     const value = e.target.value;
     setNewComment(value);

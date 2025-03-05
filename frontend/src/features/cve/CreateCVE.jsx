@@ -353,7 +353,7 @@ const CreateCVE = ({ onClose, onSuccess }) => {
           <Paper elevation={0} variant="outlined" sx={{ p: 3 }}>
             <Typography variant="h6" sx={{ mb: 2, color: 'text.primary' }}>Snort Rules</Typography>
             <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-              <FormControl fullWidth sx={{ mt: 2 }}>
+              <FormControl size="medium" sx={{ width: '25%', minWidth: 100 }}>
                 <InputLabel>Rule Type</InputLabel>
                 <Select
                   value={newSnortRule.type}

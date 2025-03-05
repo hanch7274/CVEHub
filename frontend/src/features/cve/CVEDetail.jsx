@@ -42,9 +42,8 @@ import {
   setCVEDetail
 } from '../../store/slices/cveSlice';
 import TabPanel from './components/TabPanel';
-import PoCTab from './components/PoCTab';
-import SnortRulesTab from './components/SnortRulesTab';
-import ReferencesTab from './components/ReferencesTab';
+import GenericDataTab from './components/GenericDataTab';
+import { pocTabConfig, snortRulesTabConfig, referencesTabConfig } from './components/tabConfigs';
 import CommentsTab from './components/CommentsTab';
 import HistoryTab from './components/HistoryTab';
 import InlineEditText from './components/InlineEditText';
@@ -732,16 +731,117 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
                 ))}
               </Tabs>
               <Box sx={{ flex: 1, overflowY: 'auto', bgcolor: 'background.paper' }}>
-                <TabPanel value={tabValue} index={0}>
-                  <PoCTab cve={cve} currentUser={currentUser} refreshTrigger={refreshTriggers.poc} />
-                </TabPanel>
-                <TabPanel value={tabValue} index={1}>
-                  <SnortRulesTab cve={cve} currentUser={currentUser} refreshTrigger={refreshTriggers.snortRules} />
-                </TabPanel>
-                <TabPanel value={tabValue} index={2}>
-                  <ReferencesTab cve={cve} refreshTrigger={refreshTriggers.references} />
-                </TabPanel>
-                <TabPanel value={tabValue} index={3}>
+                {/* 모든 탭 컴포넌트를 미리 렌더링하고 display 속성으로 표시 여부만 제어 */}
+                <Box 
+                  sx={{ 
+                    display: tabValue === 0 ? 'block' : 'none', 
+                    height: '100%', 
+                    p: 3,
+                    overflowY: 'auto',
+                    '&::-webkit-scrollbar': {
+                      width: '8px',
+                      backgroundColor: 'transparent'
+                    },
+                    '&::-webkit-scrollbar-thumb': {
+                      backgroundColor: 'rgba(0, 0, 0, 0.1)',
+                      borderRadius: '4px',
+                      '&:hover': {
+                        backgroundColor: 'rgba(0, 0, 0, 0.2)'
+                      }
+                    }
+                  }}
+                  role="tabpanel"
+                  id={`tabpanel-0`}
+                  aria-labelledby={`tab-0`}
+                >
+                  <GenericDataTab 
+                    cve={cve} 
+                    currentUser={currentUser} 
+                    refreshTrigger={refreshTriggers.poc} 
+                    tabConfig={pocTabConfig}
+                  />
+                </Box>
+                <Box 
+                  sx={{ 
+                    display: tabValue === 1 ? 'block' : 'none', 
+                    height: '100%', 
+                    p: 3,
+                    overflowY: 'auto',
+                    '&::-webkit-scrollbar': {
+                      width: '8px',
+                      backgroundColor: 'transparent'
+                    },
+                    '&::-webkit-scrollbar-thumb': {
+                      backgroundColor: 'rgba(0, 0, 0, 0.1)',
+                      borderRadius: '4px',
+                      '&:hover': {
+                        backgroundColor: 'rgba(0, 0, 0, 0.2)'
+                      }
+                    }
+                  }}
+                  role="tabpanel"
+                  id={`tabpanel-1`}
+                  aria-labelledby={`tab-1`}
+                >
+                  <GenericDataTab
+                    cve={cve}
+                    currentUser={currentUser}
+                    refreshTrigger={refreshTriggers.snortRules}
+                    tabConfig={snortRulesTabConfig}
+                    onCountChange={(count) => setTabCounts(prev => ({ ...prev, snortRules: count }))}
+                  />
+                </Box>
+                <Box 
+                  sx={{ 
+                    display: tabValue === 2 ? 'block' : 'none', 
+                    height: '100%', 
+                    p: 3,
+                    overflowY: 'auto',
+                    '&::-webkit-scrollbar': {
+                      width: '8px',
+                      backgroundColor: 'transparent'
+                    },
+                    '&::-webkit-scrollbar-thumb': {
+                      backgroundColor: 'rgba(0, 0, 0, 0.1)',
+                      borderRadius: '4px',
+                      '&:hover': {
+                        backgroundColor: 'rgba(0, 0, 0, 0.2)'
+                      }
+                    }
+                  }}
+                  role="tabpanel"
+                  id={`tabpanel-2`}
+                  aria-labelledby={`tab-2`}
+                >
+                  <GenericDataTab
+                    cve={cve}
+                    currentUser={currentUser}
+                    refreshTrigger={refreshTriggers.references}
+                    tabConfig={referencesTabConfig}
+                  />
+                </Box>
+                <Box 
+                  sx={{ 
+                    display: tabValue === 3 ? 'block' : 'none', 
+                    height: '100%', 
+                    p: 3,
+                    overflowY: 'auto',
+                    '&::-webkit-scrollbar': {
+                      width: '8px',
+                      backgroundColor: 'transparent'
+                    },
+                    '&::-webkit-scrollbar-thumb': {
+                      backgroundColor: 'rgba(0, 0, 0, 0.1)',
+                      borderRadius: '4px',
+                      '&:hover': {
+                        backgroundColor: 'rgba(0, 0, 0, 0.2)'
+                      }
+                    }
+                  }}
+                  role="tabpanel"
+                  id={`tabpanel-3`}
+                  aria-labelledby={`tab-3`}
+                >
                   <CommentsTab
                     cve={cve}
                     onUpdate={() => dispatch(fetchCVEDetail(cve.cveId))}
@@ -749,10 +849,31 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
                     refreshTrigger={refreshTriggers.comments}
                     open={open}
                   />
-                </TabPanel>
-                <TabPanel value={tabValue} index={4}>
+                </Box>
+                <Box 
+                  sx={{ 
+                    display: tabValue === 4 ? 'block' : 'none', 
+                    height: '100%', 
+                    p: 3,
+                    overflowY: 'auto',
+                    '&::-webkit-scrollbar': {
+                      width: '8px',
+                      backgroundColor: 'transparent'
+                    },
+                    '&::-webkit-scrollbar-thumb': {
+                      backgroundColor: 'rgba(0, 0, 0, 0.1)',
+                      borderRadius: '4px',
+                      '&:hover': {
+                        backgroundColor: 'rgba(0, 0, 0, 0.2)'
+                      }
+                    }
+                  }}
+                  role="tabpanel"
+                  id={`tabpanel-4`}
+                  aria-labelledby={`tab-4`}
+                >
                   <HistoryTab modificationHistory={cve?.modificationHistory || []} />
-                </TabPanel>
+                </Box>
               </Box>
             </Box>
             {isCached && (

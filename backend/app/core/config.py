@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # Crawler settings
     REPO_PATH: str = "/app/nuclei-templates"  # Docker 컨테이너 내부 경로
 
+    # emerging-threats 크롤러 설정
+    EMERGING_DIR: str = "/app/emerging-threats"
+
     # 데이터 디렉토리 설정 추가
     DATA_DIR: str = "data"
 

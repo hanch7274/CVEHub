@@ -58,6 +58,18 @@ const updateSubscriptionStorage = (cveId, isSubscribing) => {
 };
 
 /**
+ * 세션 스토리지의 구독 정보 전체 정리
+ */
+const clearSubscriptionStorage = () => {
+  try {
+    sessionStorage.removeItem(ACTIVE_SUBSCRIPTIONS_KEY);
+    console.log('[WebSocket] 세션 스토리지 구독 정보 전체 정리 완료');
+  } catch (error) {
+    console.error('[WebSocket] 세션 스토리지 구독 정보 정리 오류:', error);
+  }
+};
+
+/**
  * 페이지 로드 시 이전 세션의 구독 정보 확인 및 정리
  */
 const cleanupPreviousSubscriptions = async () => {
@@ -371,43 +383,59 @@ export const WebSocketProvider = ({ children }) => {
   
   // 인증 상태에 따른 WebSocket 연결 관리
   useEffect(() => {
+    // 인증되지 않은 경우 아무 작업도 수행하지 않음
+    if (!isAuthenticated) {
+      // 웹소켓 연결 종료 및 세션 스토리지 정리는 유지
+      webSocketInstance.disconnect();
+      
+      // 인증되지 않은 상태에서 구독 정보 정리
+      clearSubscriptionStorage();
+      
+      // 인증되지 않은 경우 isReady 상태도 false로 설정
+      if (isReady) setIsReady(false);
+      
+      return;
+    }
+    
     try {
-      if (isAuthenticated) {
-        console.log('[WebSocketProvider] 인증 상태 확인: 인증됨, WebSocket 연결 시도');
-        dispatch(wsConnecting());
-        webSocketInstance.connect();
-        webSocketInstance.setCacheInvalidation(true);
-      } else {
-        console.log('[WebSocketProvider] 인증 상태 확인: 인증되지 않음, WebSocket 연결 종료');
-        webSocketInstance.disconnect();
-        // 인증되지 않은 경우 isReady 상태도 false로 설정
-        if (isReady) setIsReady(false);
-      }
+      console.log('[WebSocketProvider] 인증 상태 확인: 인증됨, WebSocket 연결 시도');
+      dispatch(wsConnecting());
+      webSocketInstance.connect();
+      webSocketInstance.setCacheInvalidation(true);
     } catch (error) {
       console.error('[WebSocketProvider] WebSocket 연결 관리 중 오류 발생:', error);
     }
   }, [isAuthenticated, dispatch, isReady]);
   
-  // 주기적인 연결 상태 확인 (수정: 불필요한 체크 제거)
+  // 주기적인 연결 상태 확인 - 인증된 경우에만 실행
   useEffect(() => {
+    // 인증되지 않은 경우 타이머 설정하지 않음
+    if (!isAuthenticated) {
+      return;
+    }
+    
     console.log('[WebSocketContext] 연결 상태 체크 타이머 시작');
     const interval = setInterval(() => {
       setConnectionCheckCount(prev => prev + 1);
-    }, 1000); // 1초마다 체크로 변경
+    }, 1000); // 1초마다 체크
     
     return () => {
-      console.log('[WebSocketContext] 연결 상태 체크 타이머 정리');
       clearInterval(interval);
     };
-  }, []);
-  
-  // 연결 상태에 따른 isReady 상태 관리 (수정: 로직 단순화)
+  }, [isAuthenticated]);
+
+  // 초기 구독 정리 - 인증된 경우에만 실행
   useEffect(() => {
-    // isReady 상태 변경 추적 변수
-    const prevIsReady = isReady;
+    if (!isAuthenticated) return;
     
+    // 이전 세션의 구독 정보 정리
+    cleanupPreviousSubscriptions();
+  }, [isAuthenticated]);
+  
+  // 연결 상태에 따른 isReady 상태 관리
+  useEffect(() => {
+    // 인증되지 않은 경우 즉시 반환
     if (!isAuthenticated) {
-      // 인증되지 않은 경우 isReady 상태도 false로 설정
       if (isReady) {
         console.log('[WebSocketContext] 인증되지 않음, isReady = false로 설정');
         setIsReady(false);
@@ -416,31 +444,29 @@ export const WebSocketProvider = ({ children }) => {
     }
     
     try {
-      // 실제 웹소켓 인스턴스의 연결 상태 확인
+      // 실제 웹소켓 인스턴스의 연결 상태와 isReady 상태 확인
       const actuallyConnected = webSocketInstance?.isConnected() || false;
+      const serviceIsReady = webSocketInstance?.isReady || false;
       
-      // isReady 상태 확인 (디버깅용)
-      if (connectionCheckCount % 10 === 0) {
+      // isReady 상태 확인 (디버깅용) - 출력 빈도 줄임
+      if (connectionCheckCount % 60 === 0) { // 1분마다 로그 출력
         console.log('[WebSocketContext] 정기 isReady 상태 확인:', { 
-          isConnected, 
-          actuallyConnected, 
-          currentIsReady: isReady 
+          reduxConnected: isConnected, 
+          serviceConnected: actuallyConnected, 
+          serviceIsReady: serviceIsReady,
+          contextIsReady: isReady 
         });
       }
       
-      // 실제 연결 상태에 따라 isReady 상태 업데이트
-      if (isConnected && actuallyConnected) {
-        // 연결됨 상태이면 무조건 isReady를 true로 설정
-        if (!isReady) {
-          console.log('[WebSocketContext] WebSocket 연결 확인됨, isReady = true로 강제 설정');
-          setIsReady(true);
-        }
-      } else {
-        // 연결되지 않은 경우 isReady를 false로 설정
-        if (isReady) {
-          console.log('[WebSocketContext] WebSocket 연결 끊김, isReady = false로 설정');
-          setIsReady(false);
-        }
+      // 웹소켓 서비스 객체의 isReady 상태와 컨텍스트의 isReady 상태 동기화
+      if (serviceIsReady !== isReady) {
+        console.log(`[WebSocketContext] isReady 상태 동기화: ${isReady} → ${serviceIsReady}`);
+        setIsReady(serviceIsReady);
+      }
+      // 이미 isReady가 true인 상태에서 연결이 끊어진 경우 처리
+      else if (isReady && !actuallyConnected) {
+        console.log('[WebSocketContext] 연결이 끊어진 상태에서 isReady = false로 설정');
+        setIsReady(false);
       }
     } catch (error) {
       console.error('[WebSocketContext] isReady 상태 관리 중 오류 발생:', error);
@@ -448,38 +474,26 @@ export const WebSocketProvider = ({ children }) => {
     }
   }, [isAuthenticated, isConnected, connectionCheckCount]);
   
-  // WebSocket 상태 및 오류 처리 (수정: 로깅 최적화)
+  // WebSocket 상태 및 오류 처리
   useEffect(() => {
+    // 인증되지 않은 경우 처리하지 않음
     if (!isAuthenticated) return;
     
     try {
-      // 실제 웹소켓 인스턴스의 연결 상태 확인
-      const actuallyConnected = webSocketInstance?.isConnected() || false;
-      
-      // 연결된 상태인데 isReady가 false라면 강제로 true로 설정
-      if (isConnected && actuallyConnected && !isReady) {
-        console.log('[WebSocketContext] WebSocket 연결이 확인되었으나 isReady가 false임. 강제로 true로 설정');
-        setIsReady(true);
-        
-        // 서비스 인스턴스의 isReady도 true로 설정
-        if (webSocketInstance && !webSocketInstance.isReady) {
-          webSocketInstance.isReady = true;
-        }
-      }
-      
       // 상태 변경이 있거나 1분마다 1번 상세 로그 출력
-      const stateChanged = isConnected !== lastConnectionStatus.connected || 
-                          actuallyConnected !== lastConnectionStatus.actualConnected ||
-                          isReady !== lastConnectionStatus.ready;
-      
       const timeToLog = !lastConnectionStatus.lastLogTime || 
                        (Date.now() - lastConnectionStatus.lastLogTime > 60000); // 1분마다 로깅
       
-      if (stateChanged || timeToLog) {
-        console.log('[WebSocketProvider] 상세 연결 상태 진단:');
+      if (timeToLog) {
+        // 실제 웹소켓 인스턴스의 연결 상태 확인 (로깅 목적)
+        const actuallyConnected = webSocketInstance?.isConnected() || false;
+        const serviceIsReady = webSocketInstance?.isReady || false;
+        
+        console.log('[WebSocketProvider] 주기적 연결 상태 진단:');
         console.log(`- Redux 상태: isConnected=${isConnected}`);
         console.log(`- 실제 연결 상태: actuallyConnected=${actuallyConnected}`);
-        console.log(`- 웹소켓 준비 상태: isReady=${isReady}`);
+        console.log(`- 서비스 isReady: serviceIsReady=${serviceIsReady}`);
+        console.log(`- 컨텍스트 isReady: contextIsReady=${isReady}`);
         console.log(`- 웹소켓 인스턴스 존재 여부: ${!!webSocketInstance}`);
         if (webSocketInstance) {
           console.log(`- 웹소켓 readyState: ${webSocketInstance.ws?.readyState}`);
@@ -489,19 +503,6 @@ export const WebSocketProvider = ({ children }) => {
         setLastConnectionStatus(prev => ({ 
           ...prev, 
           lastLogTime: Date.now() 
-        }));
-      }
-      
-      // 연결 상태가 변경되었을 때만 로그 출력
-      if (lastConnectionStatus.connected !== isConnected || 
-          lastConnectionStatus.actualConnected !== actuallyConnected ||
-          lastConnectionStatus.ready !== isReady) {
-        console.log(`[WebSocketProvider] WebSocket 상태 변경: Redux=${isConnected}, 실제=${actuallyConnected}, 준비=${isReady}`);
-        setLastConnectionStatus(prev => ({ 
-          ...prev, 
-          connected: isConnected,
-          actualConnected: actuallyConnected,
-          ready: isReady
         }));
       }
       
@@ -541,6 +542,12 @@ export const WebSocketProvider = ({ children }) => {
   
   // 메시지 핸들러
   useEffect(() => {
+    // 인증되지 않은 경우 메시지 핸들러를 등록하지 않음
+    if (!isAuthenticated) {
+      console.log('[WebSocketProvider] 인증되지 않음, 메시지 핸들러 등록하지 않음');
+      return;
+    }
+    
     try {
       const handleGlobalSocketMessage = async (message) => {
         if (!message || !message.type || !message.data) return;
@@ -576,6 +583,25 @@ export const WebSocketProvider = ({ children }) => {
               ),
             });
           }
+        } else if (message.type === "crawler_update_progress" || message.type === WS_EVENT_TYPE.CRAWLER_UPDATE_PROGRESS) {
+          // 크롤러 업데이트 메시지 처리
+          console.log('[WebSocketContext] 크롤러 업데이트 메시지 수신:', message.data);
+          
+          // 업데이트된 CVE 개수가 있을 경우 알림 표시
+          if (message.data?.stage === "완료" && message.data?.updatedCount) {
+            enqueueSnackbar(`크롤러 업데이트 완료: ${message.data.updatedCount}개의 CVE가 업데이트되었습니다.`, {
+              variant: 'success',
+              autoHideDuration: 5000,
+            });
+          }
+          
+          // 오류 발생 시 알림 표시
+          if (message.data?.stage === "오류") {
+            enqueueSnackbar(`크롤러 업데이트 오류: ${message.data.message || '알 수 없는 오류가 발생했습니다.'}`, {
+              variant: 'error',
+              autoHideDuration: 7000,
+            });
+          }
         }
       };
       
@@ -586,7 +612,7 @@ export const WebSocketProvider = ({ children }) => {
     } catch (error) {
       console.error('[WebSocketProvider] 메시지 핸들러 설정 중 오류 발생:', error);
     }
-  }, [currentCVE, enqueueSnackbar, dispatch]);
+  }, [currentCVE, enqueueSnackbar, dispatch, isAuthenticated]);
   
   const value = useMemo(() => ({
     isConnected,
