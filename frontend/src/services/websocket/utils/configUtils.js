@@ -48,6 +48,7 @@ export const WS_CONFIG = {
   PING_INTERVAL: 30000,          // 핑 메시지 전송 간격 (30초)
   CONNECTION_CHECK_INTERVAL: 5000, // 연결 상태 확인 간격 (5초)
   CONNECTION_TIMEOUT: 5000,      // 연결 타임아웃 (5초로 단축)
+  SESSION_RESEND_TIMEOUT: 3000,  // 세션 정보 재전송 시간 (3초)
   
   // 재연결 관련 설정
   AUTO_RECONNECT: true,          // 자동 재연결 활성화
@@ -63,6 +64,7 @@ export const WS_CONFIG = {
   DEBUG_MODE: true,              // 디버그 모드 활성화
   VERBOSE_LOGGING: true,         // 상세 로깅 활성화
   LOG_MESSAGES: true,            // 메시지 로깅 활성화
+  LOG_NON_STANDARD_EVENTS: true, // 비표준 이벤트 로깅
   LOG_TRUNCATE_LENGTH: 500       // 로그 메시지 길이 제한
 };
 

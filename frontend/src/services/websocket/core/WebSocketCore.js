@@ -2,7 +2,7 @@ import { getAccessToken } from '../../../utils/storage/tokenStorage';
 import { WEBSOCKET } from '../../../api/config/endpoints';
 import eventSystem from '../eventSystem';
 import { snakeToCamel } from '../../../utils/caseConverter';
-import { WS_EVENT, WS_STATE, WS_CONFIG } from '../utils/configUtils';
+import { WS_EVENT, WS_STATE, WS_CONFIG, calculateReconnectDelay } from '../utils/configUtils';
 import logger from '../utils/loggingService';
 
 /**
@@ -54,6 +54,11 @@ class WebSocketCore {
       autoReconnect: this.autoReconnect,
       maxReconnectAttempts: this.maxReconnectAttempts
     });
+
+    // 디버그 모드에서 전역 접근 설정
+    if (WS_CONFIG.DEBUG_MODE && typeof window !== 'undefined') {
+      window._webSocketCoreInstance = this;
+    }
   }
 
   /**
@@ -141,422 +146,246 @@ class WebSocketCore {
    * @returns {Promise<boolean>} 연결 성공 여부
    */
   async connect() {
-    // 이미 연결되었거나 연결 중인 경우
-    if (this.checkConnection()) {
-      this._log('이미 연결되어 있음, 새 연결 시도 건너뜀');
-      return true;
-    }
-    
-    if (this._isConnecting) {
-      this._log('이미 연결 중, 중복 연결 시도 건너뜀');
-      return true;
-    }
-    
-    // 기존 연결이 있으면 정리
-    if (this.ws) {
-      this._log('새 연결 시도 전 기존 연결 정리');
-      try {
-        await this.disconnect(true);
-      } catch (error) {
-        this._log('기존 연결 정리 중 오류 (무시됨)', error);
-      }
-    }
-    
-    // 연결 초기화
-    this._isConnecting = true;
-    this._connectionAttemptTime = Date.now();
-    this._cleanup();
-    
     try {
-      // 인증 토큰 및 URL 확인
-      const token = getAccessToken();
-      if (!token) {
-        logger.error('WebSocketCore', '인증 토큰 없음');
-        this._isConnecting = false;
-        return false;
+      // 이미 연결 중인 경우 중복 연결 시도 방지
+      if (this._isConnecting) {
+        this._log('이미 연결 시도 중입니다.');
+        return true;
       }
       
-      const wsUrl = WEBSOCKET.getWebSocketURL(token);
-      if (!wsUrl) {
-        logger.error('WebSocketCore', 'WebSocket URL 생성 실패');
-        this._isConnecting = false;
-        return false;
+      // 이미 연결된 경우
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this._log('이미 연결되어 있습니다.');
+        return true;
       }
       
-      // 이전의 연결 상태 이벤트 발생
-      this._emitEvent('stateChanged', { 
-        state: WS_STATE.CONNECTING,
-        isConnecting: true,
-        timestamp: Date.now()
+      // 연결 중 상태로 설정
+      this._isConnecting = true;
+      this._connectionAttemptTime = Date.now();
+      
+      // 기존 연결 정리
+      this._cleanup();
+      
+      // 연결 상태 초기화
+      this.state = WS_STATE.CONNECTING;
+      this._connectAckProcessed = false;
+      this._connectMessageSent = false;
+      
+      // 연결 실패 시 재시도 전 지연 시간 계산
+      const reconnectDelay = this._calculateReconnectDelay();
+      
+      // 디버그 로깅: 연결 시도 정보
+      this._log(`WebSocket 연결 시도`, {
+        apiUrl: WS_CONFIG.API_URL,
+        connectionAttempts: this.reconnectAttempts,
+        reconnectDelay,
+        sessionId: this._getSessionId()
       });
       
-      // 연결 생성
-      this.ws = new WebSocket(wsUrl);
-      this._setupHandlers();
-      this._setupConnectionTimeout();
+      // 연결 상태 이벤트 발생
+      this._emitStateChanged();
       
-      return true;
+      try {
+        // WebSocket 인스턴스 생성
+        this.ws = new WebSocket(WS_CONFIG.API_URL);
+        
+        // WebSocket 이벤트 핸들러 설정
+        this._setupHandlers();
+        
+        // 연결 시간 초과 설정
+        this._setupConnectionTimeout();
+        
+        // 연결 성공 또는 실패까지 대기
+        const result = await this._waitForConnection();
+        return result;
+      } catch (error) {
+        logger.error('WebSocketCore', '연결 중 오류 발생', {
+          error: error.message,
+          stack: error.stack
+        });
+        
+        // 연결 실패 로직 실행
+        this._handleConnectionFailure(error);
+        return false;
+      } finally {
+        this._isConnecting = false;
+      }
     } catch (error) {
-      console.error('[웹소켓] 연결 중 오류:', error);
-      this._handleError(error);
+      logger.error('WebSocketCore', '예상치 못한 연결 오류', error);
       this._isConnecting = false;
       return false;
     }
   }
   
   /**
-   * WebSocket 연결 종료
-   * @param {boolean} cleanDisconnect 정상 종료 여부
-   * @returns {boolean} 종료 성공 여부
+   * 연결 대기 및 결과 반환
+   * @returns {Promise<boolean>} 연결 성공 여부
+   * @private
    */
-  disconnect(cleanDisconnect = true) {
-    if (!this.ws) return true;
-    
-    try {
-      // 연결 상태 업데이트
-      this.state = WS_STATE.DISCONNECTED;
-      
-      // 재연결 중지
-      if (this.reconnectTimeout) {
-        clearTimeout(this.reconnectTimeout);
-        this.reconnectTimeout = null;
-      }
-      
-      // 정상 종료 처리
-      if (cleanDisconnect && this.checkConnection()) {
-        this.ws.close(1000, 'Normal closure');
-      }
-      
-      // 리소스 정리
-      this._cleanup();
-      
-      // 이벤트 발생
-      this._emitEvent(WS_EVENT.DISCONNECTED, { timestamp: Date.now() });
-      
-      return true;
-    } catch (error) {
-      console.error('[웹소켓] 연결 종료 중 오류:', error);
-      return false;
-    }
-  }
-  
-  /**
-   * 재연결 시도
-   * @returns {boolean} 재연결 시도 성공 여부
-   */
-  reconnect() {
-    // 이미 연결된 경우
-    if (this.checkConnection()) return true;
-    
-    // 재연결 최대 시도 횟수 초과
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error(`[웹소켓] 재연결 최대 시도 횟수(${this.maxReconnectAttempts}) 초과`);
-      return false;
-    }
-    
-    // 재연결 타이머가 이미 설정된 경우
-    if (this.reconnectTimeout) return true;
-    
-    // 재연결 지연 시간 계산
-    this.reconnectAttempts++;
-    const delay = this._calculateReconnectDelay();
-    
-    this._log(`${delay}ms 후 재연결 시도 (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
-    
-    // 재연결 타이머 설정
-    this.reconnectTimeout = setTimeout(async () => {
-      this.reconnectTimeout = null;
-      
-      try {
-        // 재연결 상태 업데이트
-        this._emitEvent(WS_EVENT.RECONNECTING, { attempt: this.reconnectAttempts });
+  _waitForConnection() {
+    return new Promise((resolve) => {
+      // 연결 성공 핸들러
+      const handleOpen = () => {
+        this.ws.removeEventListener('open', handleOpen);
+        this.ws.removeEventListener('error', handleError);
+        this.ws.removeEventListener('close', handleClose);
         
-        // 기존 리소스 정리 후 연결 시도
-        if (this.ws) {
-          this.ws.close();
-          this.ws = null;
+        if (this._timers.connectionTimeout) {
+          clearTimeout(this._timers.connectionTimeout);
+          this._timers.connectionTimeout = null;
         }
         
-        await this.connect();
-      } catch (error) {
-        console.error('[웹소켓] 재연결 중 오류:', error);
-      }
-    }, delay);
-    
-    return true;
-  }
-  
-  /**
-   * 메시지 전송
-   * @param {string} type 메시지 타입
-   * @param {object} data 메시지 데이터
-   * @returns {Promise<boolean>} 전송 성공 여부
-   */
-  async send(type, data = {}) {
-    if (!this.checkConnection()) {
-      console.error('[웹소켓] 연결되지 않은 상태에서 메시지 전송 시도:', type);
-      return false;
-    }
-    
-    try {
-      // 메시지 객체 생성
-      const message = {
-        type,
-        data,
-        timestamp: Date.now()
+        this.state = WS_STATE.CONNECTED;
+        this.lastMessageTime = Date.now();
+        this.reconnectAttempts = 0;
+        
+        // 이벤트 발생
+        this._emitEvent(WS_EVENT.CONNECTED, { timestamp: Date.now() });
+        
+        // 연결 체크 타이머 설정
+        this._setupConnectionCheckTimer();
+        
+        resolve(true);
       };
       
-      // 메시지 직렬화
-      const jsonMessage = JSON.stringify(message);
+      // 연결 오류 핸들러
+      const handleError = (error) => {
+        this.ws.removeEventListener('open', handleOpen);
+        this.ws.removeEventListener('error', handleError);
+        this.ws.removeEventListener('close', handleClose);
+        
+        if (this._timers.connectionTimeout) {
+          clearTimeout(this._timers.connectionTimeout);
+          this._timers.connectionTimeout = null;
+        }
+        
+        logger.error('WebSocketCore', '연결 오류 발생', { 
+          error: error.message || '알 수 없는 오류',
+          stack: error.stack
+        });
+        
+        this.state = WS_STATE.ERROR;
+        this._isReady = false;
+        this._connectAckProcessed = false;
+        
+        // 이벤트 발생: 연결 끊김
+        this._emitEvent(WS_EVENT.DISCONNECTED, {
+          reason: '연결 실패',
+          error: error.message || '알 수 없는 오류',
+          wasConnected: false,
+          timestamp: Date.now()
+        });
+        
+        resolve(false);
+      };
       
-      // 메시지 전송
-      this.ws.send(jsonMessage);
+      // 연결 종료 핸들러 (연결 전 종료)
+      const handleClose = (event) => {
+        this.ws.removeEventListener('open', handleOpen);
+        this.ws.removeEventListener('error', handleError);
+        this.ws.removeEventListener('close', handleClose);
+        
+        if (this._timers.connectionTimeout) {
+          clearTimeout(this._timers.connectionTimeout);
+          this._timers.connectionTimeout = null;
+        }
+        
+        logger.warn('WebSocketCore', '연결 시도 중 종료됨', { 
+          code: event.code,
+          reason: event.reason
+        });
+        
+        this.state = WS_STATE.DISCONNECTED;
+        this._isReady = false;
+        this._connectAckProcessed = false;
+        
+        // 이벤트 발생: 연결 끊김
+        this._emitEvent(WS_EVENT.DISCONNECTED, {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean,
+          timestamp: Date.now()
+        });
+        
+        resolve(false);
+      };
       
-      // 핑/퐁 제외한 메시지 로깅
-      if (this.debug && ![WS_EVENT.PING, WS_EVENT.PONG].includes(type)) {
-        console.log(`[웹소켓] 메시지 전송: ${type}`);
-      }
-      
-      return true;
-    } catch (error) {
-      console.error('[웹소켓] 메시지 전송 중 오류:', error);
-      return false;
-    }
+      // 이벤트 리스너 추가
+      this.ws.addEventListener('open', handleOpen);
+      this.ws.addEventListener('error', handleError);
+      this.ws.addEventListener('close', handleClose);
+    });
   }
   
   /**
-   * Ping 메시지 전송
-   * @returns {boolean} 전송 성공 여부
+   * 연결 실패 처리
+   * @param {Error} error - 연결 오류
+   * @private
    */
-  sendPing() {
-    return this.send(WS_EVENT.PING, { timestamp: Date.now() });
+  _handleConnectionFailure(error) {
+    this._log('연결 실패', { error: error.message || '알 수 없는 오류' });
+    
+    // 연결 상태 업데이트
+    this.state = WS_STATE.ERROR;
+    this._isReady = false;
+    this._connectAckProcessed = false;
+    
+    // 이벤트 발생: 연결 끊김
+    this._emitEvent(WS_EVENT.DISCONNECTED, {
+      reason: '연결 실패',
+      error: error.message || '알 수 없는 오류',
+      wasConnected: false,
+      timestamp: Date.now()
+    });
+    
+    // 연결 시도 횟수 증가
+    this.reconnectAttempts++;
   }
   
   /**
-   * 이벤트 구독
-   * @param {string} event - 구독할 이벤트 타입
-   * @param {Function} callback - 콜백 함수
-   * @returns {Function} 구독 취소 함수
-   */
-  on(event, callback) {
-    if (!event || typeof callback !== 'function') {
-      logger.warn('WebSocketCore', '잘못된 이벤트 구독 요청', { event, hasCallback: !!callback });
-      return () => {};
-    }
-    
-    // eventSystem을 통한 이벤트 구독
-    return this.eventSystem.subscribe(event, callback, `core_${Date.now()}`);
-  }
-  
-  /**
-   * 이벤트 구독 취소
-   * @param {string} event - 이벤트 타입
-   * @param {Function} callback - 콜백 함수
-   * @returns {boolean} 구독 취소 성공 여부
-   */
-  off(event, callback) {
-    // eventSystem은 구독 취소 함수를 반환하므로 직접 취소가 필요 없음
-    // 하지만 호환성을 위해 유지
-    logger.warn('WebSocketCore', 'off() 메서드는 더 이상 사용되지 않습니다. on()에서 반환된 함수를 사용하세요.');
-    return true;
-  }
-  
-  /**
-   * 메시지 타입 핸들러 등록
-   * @param {string} type - 메시지 타입
-   * @param {Function} handler - 핸들러 함수
-   * @returns {Function} 핸들러 제거 함수
-   */
-  addHandler(type, handler) {
-    if (!type || typeof handler !== 'function') {
-      logger.warn('WebSocketCore', '잘못된 핸들러 등록 요청', { type, hasHandler: !!handler });
-      return () => {};
-    }
-    
-    // 핸들러 맵에 추가
-    if (!this.handlers.has(type)) {
-      this.handlers.set(type, new Set());
-    }
-    
-    this.handlers.get(type).add(handler);
-    
-    logger.debug('WebSocketCore', `'${type}' 메시지 핸들러 등록됨`);
-    
-    // 핸들러 제거 함수 반환
-    return () => this.removeHandler(type, handler);
-  }
-  
-  /**
-   * 메시지 타입 핸들러 제거
-   * @param {string} type - 메시지 타입
-   * @param {Function} handler - 핸들러 함수
-   * @returns {boolean} 제거 성공 여부
-   */
-  removeHandler(type, handler) {
-    if (!type || typeof handler !== 'function') return false;
-    
-    const typeHandlers = this.handlers.get(type);
-    if (!typeHandlers) return false;
-    
-    const removed = typeHandlers.delete(handler);
-    
-    // 핸들러가 없으면 맵에서 해당 타입 제거
-    if (typeHandlers.size === 0) {
-      this.handlers.delete(type);
-    }
-    
-    if (removed) {
-      logger.debug('WebSocketCore', `'${type}' 메시지 핸들러 제거됨`);
-    }
-    
-    return removed;
-  }
-  
-  /* === 내부 메서드 === */
-  
-  /**
-   * 웹소켓 이벤트 핸들러 설정
+   * WebSocket 이벤트 핸들러 설정
    * @private
    */
   _setupHandlers() {
     if (!this.ws) return;
     
-    // 기본 이벤트 핸들러 설정
-    this.ws.onopen = this._handleOpen.bind(this);
-    this.ws.onmessage = this._handleMessage.bind(this);
-    this.ws.onclose = this._handleClose.bind(this);
-    this.ws.onerror = this._handleError.bind(this);
+    this._log('WebSocket 이벤트 핸들러 설정');
     
-    // 기존 connect_ack 핸들러 제거 후 새로 등록 (중복 방지)
-    this.removeHandler(WS_EVENT.CONNECT_ACK, this._handleConnectAck.bind(this));
-    this.addHandler(WS_EVENT.CONNECT_ACK, this._handleConnectAck.bind(this));
-    
-    // 핸들러 설정 로깅
-    if (WS_CONFIG.DEBUG_MODE) {
-      console.debug('[웹소켓] 이벤트 핸들러 설정 완료');
-    }
-  }
-  
-  /**
-   * 연결 시간 초과 설정
-   * @private
-   */
-  _setupConnectionTimeout() {
-    if (this._timers.connectionTimeout) {
-      clearTimeout(this._timers.connectionTimeout);
-    }
-    
-    this._timers.connectionTimeout = setTimeout(() => {
-      if (this.state !== WS_STATE.CONNECTED) {
-        console.warn('[웹소켓] 연결 시간 초과');
-        
-        try {
-          if (this.ws) {
-            this.ws.close();
-            this.ws = null;
-          }
-          
-          this._isConnecting = false;
-          this.state = WS_STATE.DISCONNECTED;
-          
-          // 이벤트 발생
-          this._emitEvent(WS_EVENT.ERROR, { 
-            error: '연결 시간 초과',
-            timestamp: Date.now()
-          });
-          
-          if (this.autoReconnect) {
-            this.reconnect();
-          }
-        } catch (error) {
-          console.error('[웹소켓] 연결 시간 초과 처리 중 오류:', error);
-        }
-      }
-      
-      this._timers.connectionTimeout = null;
-    }, WS_CONFIG.CONNECTION_TIMEOUT);
-  }
-  
-  /**
-   * Connect ACK 메시지 처리
-   * @param {Object} data - 메시지 데이터
-   * @private
-   */
-  _handleConnectAck(data) {
-    // 연결 타이밍 계산 (성능 측정용)
-    const connectionTime = Date.now() - this._connectionAttemptTime;
-    
-    // 상세 디버깅: 전체 Connect ACK 데이터 로깅
-    this._log(`Connect ACK 수신 (${connectionTime}ms)`, {
-      connectAckProcessed: this._connectAckProcessed,
-      hasUserId: !!data?.userId,
-      hasSessionId: !!data?.sessionId,
-      hasConnectionInfo: !!data?.connectionInfo,
-      receiveTime: new Date().toISOString()
-    });
-    
-    // 이미 처리된 경우 중복 처리 방지
-    if (this._connectAckProcessed) {
-      logger.debug('WebSocketCore', '중복 Connect ACK 무시됨', data);
-      return;
-    }
-    
-    this._connectAckProcessed = true;
-    
-    // 마지막 메시지 시간 업데이트
-    this.lastMessageTime = Date.now();
-    
-    // 세션 정보 업데이트
-    if (data?.sessionId) {
+    // 연결 열림 이벤트
+    this.ws.onopen = (event) => {
       try {
-        // 세션 ID가 다른 경우에만 저장
-        const currentSessionId = sessionStorage.getItem('wsSessionId');
-        if (currentSessionId !== data.sessionId) {
-          sessionStorage.setItem('wsSessionId', data.sessionId);
-          logger.info('WebSocketCore', '세션 ID 업데이트됨', { oldId: currentSessionId, newId: data.sessionId });
-        }
+        this._handleOpen(event);
       } catch (error) {
-        logger.error('WebSocketCore', '세션 ID 저장 실패', error);
+        logger.error('WebSocketCore', 'onopen 핸들러 처리 중 오류', error);
       }
-    }
+    };
     
-    // 서버가 제공하는 사용자 연결 정보가 있는 경우 처리
-    if (data?.connectionInfo && data.connectionInfo.userConnections > 1) {
-      this._handleMultipleConnections(data.connectionInfo.userConnections);
-    }
+    // 메시지 수신 이벤트
+    this.ws.onmessage = (event) => {
+      try {
+        this._handleMessage(event);
+      } catch (error) {
+        logger.error('WebSocketCore', 'onmessage 핸들러 처리 중 오류', error);
+      }
+    };
     
-    // 연결 준비 상태로 변경
-    this._isReady = true;
+    // 연결 종료 이벤트
+    this.ws.onclose = (event) => {
+      try {
+        this._handleClose(event);
+      } catch (error) {
+        logger.error('WebSocketCore', 'onclose 핸들러 처리 중 오류', error);
+      }
+    };
     
-    // 상태 변경 이벤트 발생
-    this._emitStateChanged();
-    
-    // 외부 이벤트 리스너에게 직접 connect_ack 이벤트 발생
-    try {
-      const eventType = WS_EVENT.CONNECT_ACK;
-      const enrichedData = { 
-        ...data, 
-        receivedAt: Date.now(),
-        connectionTime: connectionTime
-      };
-      
-      // 이벤트 발생 시스템을 통해 직접 이벤트 발생 (내부 _emitEvent 사용하지 않음)
-      this.eventSystem.emit(eventType, enrichedData);
-      
-      // 로깅
-      logger.info('WebSocketCore', '연결 준비 완료', { 
-        userId: data?.userId,
-        connectionTime: `${connectionTime}ms` 
-      });
-    } catch (error) {
-      logger.error('WebSocketCore', 'Connect ACK 이벤트 발생 중 오류', { 
-        error,
-        stack: error.stack
-      });
-    }
-    
-    // 타이머 설정
-    this._setupConnectionCheckTimer();
+    // 오류 이벤트
+    this.ws.onerror = (error) => {
+      try {
+        this._handleError(error);
+      } catch (e) {
+        logger.error('WebSocketCore', 'onerror 핸들러 처리 중 오류', e);
+      }
+    };
   }
   
   /**
@@ -1280,6 +1109,467 @@ class WebSocketCore {
     
     // 자원 정리 로깅
     logger.debug('WebSocketCore', '웹소켓 연결 자원 정리 완료');
+  }
+
+  /**
+   * ping 메시지 처리
+   * @param {Object} data - 핑 메시지 데이터
+   * @private
+   */
+  _handlePing(data) {
+    try {
+      // 핑 메시지 응답으로 퐁 메시지 전송
+      this.send(WS_EVENT.PONG, { 
+        echo: data?.timestamp,
+        timestamp: new Date().toISOString(),
+        sessionId: this._getSessionId() 
+      });
+      
+      if (WS_CONFIG.DEBUG_MODE && WS_CONFIG.VERBOSE_LOGGING) {
+        this._log('핑 메시지 응답 송신');
+      }
+      
+      // 핑 이벤트는 일반적으로 UI에 표시하지 않으므로 별도 이벤트 발생 안함
+    } catch (error) {
+      logger.error('WebSocketCore', '핑 메시지 처리 중 오류', { 
+        error: error.message,
+        stack: error.stack,
+        data
+      });
+    }
+  }
+  
+  /**
+   * pong 메시지 처리
+   * @param {Object} data - 퐁 메시지 데이터
+   * @private
+   */
+  _handlePong(data) {
+    try {
+      if (WS_CONFIG.DEBUG_MODE && WS_CONFIG.VERBOSE_LOGGING) {
+        const responseTime = data?.echo ? Date.now() - new Date(data.echo).getTime() : null;
+        this._log('퐁 메시지 수신', { 
+          timestamp: data?.timestamp,
+          echo: data?.echo,
+          responseTime: responseTime ? `${responseTime}ms` : 'N/A'
+        });
+      }
+      
+      // 연결 상태 확인 타이머 갱신
+      this._lastPongTime = Date.now();
+      
+      // 연결 상태 추가 체크는 필요하지 않음
+      // 퐁 이벤트는 일반적으로 UI에 표시하지 않으므로 별도 이벤트 발생 안함
+    } catch (error) {
+      logger.error('WebSocketCore', '퐁 메시지 처리 중 오류', { 
+        error: error.message,
+        stack: error.stack,
+        data
+      });
+    }
+  }
+
+  /**
+   * Connect ACK 메시지 처리
+   * @param {Object} data - 메시지 데이터
+   * @private
+   */
+  _handleConnectAck(data) {
+    try {
+      // 연결 타이밍 계산 (성능 측정용)
+      const connectionTime = Date.now() - this._connectionAttemptTime;
+      
+      // 디버깅용 상세 로깅
+      logger.info('WebSocketCore', `Connect ACK 수신 (${connectionTime}ms)`, {
+        hasUserId: !!data?.userId,
+        timestamp: new Date().toISOString(),
+        connectAckProcessed: this._connectAckProcessed
+      });
+      
+      // 이미 처리된 경우 중복 처리 방지
+      if (this._connectAckProcessed) {
+        logger.debug('WebSocketCore', 'Connect ACK 중복 수신 - 무시함', data);
+        return;
+      }
+      
+      // Connect ACK 처리 완료 표시
+      this._connectAckProcessed = true;
+      
+      // 마지막 메시지 시간 업데이트
+      this.lastMessageTime = Date.now();
+      
+      // 세션 정보 업데이트 (새 세션 ID가 있는 경우에만)
+      if (data?.sessionId) {
+        try {
+          const currentSessionId = this._getSessionId();
+          
+          // 세션 ID가 다른 경우만 업데이트
+          if (currentSessionId !== data.sessionId) {
+            sessionStorage.setItem('wsSessionId', data.sessionId);
+            logger.info('WebSocketCore', '세션 ID 업데이트됨', { 
+              oldId: currentSessionId, 
+              newId: data.sessionId 
+            });
+          } else {
+            logger.debug('WebSocketCore', '세션 ID 유지됨', { sessionId: data.sessionId });
+          }
+        } catch (error) {
+          logger.error('WebSocketCore', '세션 ID 저장 실패', error);
+        }
+      }
+      
+      // 다중 연결 정보 처리
+      if (data?.connectionInfo?.userConnections > 1) {
+        logger.info('WebSocketCore', '다중 연결 감지됨', {
+          userConnections: data.connectionInfo.userConnections
+        });
+        
+        // 다중 연결 처리 로직 호출
+        this._handleMultipleConnections(data.connectionInfo.userConnections);
+      }
+      
+      // 상태 변경: 연결 준비 완료
+      this._isReady = true;
+      this.state = WS_STATE.CONNECTED;
+      
+      // 이벤트 발생 (상태 변경)
+      this._emitStateChanged();
+      
+      // Connect ACK 이벤트 직접 발생
+      // 내부 _emitEvent 메서드를 사용하지 않고 eventSystem을 직접 호출하여 성능 최적화
+      const enrichedData = {
+        ...data,
+        receivedAt: Date.now(),
+        connectionTime
+      };
+      
+      // 이벤트 시스템을 통해 이벤트 발생
+      this.eventSystem.emit(WS_EVENT.CONNECT_ACK, enrichedData);
+      
+      // 연결 체크 타이머 설정
+      this._setupConnectionCheckTimer();
+    } catch (error) {
+      logger.error('WebSocketCore', 'Connect ACK 처리 중 오류', { 
+        error: error.message,
+        stack: error.stack,
+        data: JSON.stringify(data || {}).substring(0, 100)
+      });
+    }
+  }
+
+  /**
+   * 연결 시간 초과 설정
+   * @private
+   */
+  _setupConnectionTimeout() {
+    // 기존 타이머가 있으면 제거
+    if (this._timers.connectionTimeout) {
+      clearTimeout(this._timers.connectionTimeout);
+      this._timers.connectionTimeout = null;
+    }
+    
+    // 시간 초과 기간 설정 (기본값 5초로 줄임)
+    const timeoutInterval = WS_CONFIG.CONNECTION_TIMEOUT || 5000; 
+    
+    this._log(`연결 시간 초과 설정: ${timeoutInterval}ms`);
+    
+    // 시간 초과 타이머 설정
+    this._timers.connectionTimeout = setTimeout(() => {
+      try {
+        // 여전히 연결 중인 상태인지 확인
+        if (!this._connectAckProcessed) {
+          logger.warn('WebSocketCore', '연결 시간 초과', {
+            timeout: timeoutInterval,
+            elapsed: Date.now() - this._connectionAttemptTime,
+            wsReadyState: this.ws ? this.ws.readyState : 'no socket'
+          });
+          
+          // 연결 종료
+          if (this.ws) {
+            this.ws.close(1006, '연결 시간 초과');
+            this.ws = null;
+          }
+          
+          // 연결 상태 업데이트
+          this._isConnecting = false;
+          this.state = WS_STATE.ERROR;
+          this._isReady = false;
+          
+          // 이벤트 발생: 오류
+          this._emitEvent(WS_EVENT.ERROR, { 
+            error: '연결 시간 초과',
+            timeout: timeoutInterval,
+            timestamp: Date.now()
+          });
+          
+          // 연결 끊김 이벤트 발생
+          this._emitEvent(WS_EVENT.DISCONNECTED, {
+            reason: '연결 시간 초과',
+            wasClean: false,
+            timestamp: Date.now()
+          });
+          
+          // 자동 재연결 설정이 활성화된 경우 재연결 시도
+          if (this.autoReconnect) {
+            logger.info('WebSocketCore', '자동 재연결 시도');
+            
+            // 바로 재연결하지 않고 짧은 지연 후 재연결
+            setTimeout(() => this.reconnect(), 500);
+          }
+        }
+      } catch (error) {
+        logger.error('WebSocketCore', '연결 시간 초과 처리 중 오류', { 
+          error: error.message,
+          stack: error.stack
+        });
+      } finally {
+        // 타이머 초기화
+        this._timers.connectionTimeout = null;
+      }
+    }, timeoutInterval);
+  }
+
+  /**
+   * 이벤트 구독
+   * @param {string} eventType - 이벤트 타입
+   * @param {Function} callback - 콜백 함수
+   * @returns {Function} 구독 취소 함수
+   */
+  on(eventType, callback) {
+    if (!eventType || typeof callback !== 'function') {
+      logger.warn('WebSocketCore', '잘못된 이벤트 구독 요청', { 
+        eventType, 
+        hasCallback: !!callback 
+      });
+      return () => {};
+    }
+    
+    // eventSystem을 통한 이벤트 구독
+    return this.eventSystem.subscribe(eventType, callback, `core_${Date.now()}`);
+  }
+  
+  /**
+   * 이벤트 구독 취소 
+   * @param {string} eventType - 이벤트 타입  
+   * @param {Function} callback - 콜백 함수
+   * @returns {boolean} 구독 취소 성공 여부
+   */
+  off(eventType, callback) {
+    // 이 메서드는 호환성을 위해 유지되지만 사용을 권장하지 않음
+    // on()에서 반환된 함수를 사용하는 것이 더 안전함
+    logger.warn('WebSocketCore', 'off() 메서드는 권장되지 않습니다. on()이 반환하는 함수를 사용하세요.');
+    return true;
+  }
+
+  /**
+   * WebSocket 연결 종료
+   * @param {boolean} cleanDisconnect - 정상 종료 여부
+   * @returns {boolean} 성공 여부
+   */
+  disconnect(cleanDisconnect = true) {
+    try {
+      // 이미 연결 종료되었거나 없는 경우
+      if (!this.ws) {
+        logger.debug('WebSocketCore', '연결 이미 종료됨');
+        return true;
+      }
+      
+      logger.info('WebSocketCore', '연결 종료 시작', { cleanDisconnect });
+      
+      // 연결 상태 업데이트
+      this.state = WS_STATE.DISCONNECTED;
+      this._isReady = false;
+      
+      // 타이머 정리
+      this._cleanup();
+      
+      // 정상 종료인 경우 1000 코드로 종료
+      if (cleanDisconnect && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.close(1000, 'Normal closure');
+      }
+      
+      // 웹소켓 연결 정리
+      this._cleanupConnection();
+      
+      // 이벤트 발생: 연결 끊김
+      this._emitEvent(WS_EVENT.DISCONNECTED, { 
+        reason: '사용자 요청으로 종료',
+        wasClean: true,
+        timestamp: Date.now() 
+      });
+      
+      return true;
+    } catch (error) {
+      logger.error('WebSocketCore', '연결 종료 중 오류', { 
+        error: error.message,
+        stack: error.stack 
+      });
+      return false;
+    }
+  }
+  
+  /**
+   * 재연결 시도
+   * @returns {Promise<boolean>} 재연결 시도 성공 여부
+   */
+  async reconnect() {
+    // 이미 연결된 경우
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      logger.debug('WebSocketCore', '이미 연결됨, 재연결 불필요');
+      return true;
+    }
+    
+    // 최대 재연결 시도 횟수 확인
+    if (this.reconnectAttempts >= WS_CONFIG.MAX_RECONNECT_ATTEMPTS) {
+      logger.error('WebSocketCore', '최대 재연결 시도 횟수 초과', {
+        attempts: this.reconnectAttempts,
+        max: WS_CONFIG.MAX_RECONNECT_ATTEMPTS
+      });
+      return false;
+    }
+    
+    try {
+      // 재연결 시도 이벤트 발생
+      this._emitEvent(WS_EVENT.RECONNECTING, {
+        attempt: this.reconnectAttempts + 1,
+        maxAttempts: WS_CONFIG.MAX_RECONNECT_ATTEMPTS,
+        timestamp: Date.now()
+      });
+      
+      // 연결 시도 (타이머를 사용하지 않고 바로 시도)
+      logger.info('WebSocketCore', '재연결 시도', { 
+        attempt: this.reconnectAttempts + 1
+      });
+      
+      // 기존 연결 종료
+      if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
+        this.disconnect(false);
+      }
+      
+      // 새 연결 시작
+      return await this.connect();
+    } catch (error) {
+      logger.error('WebSocketCore', '재연결 중 오류', { 
+        error: error.message,
+        stack: error.stack 
+      });
+      return false;
+    }
+  }
+  
+  /**
+   * 메시지 전송
+   * @param {string} type - 메시지 타입
+   * @param {Object} data - 메시지 데이터
+   * @returns {boolean} 전송 성공 여부
+   */
+  send(type, data = {}) {
+    try {
+      // 연결 확인
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        logger.warn('WebSocketCore', '연결되지 않은 상태에서 메시지 전송 시도', { type });
+        return false;
+      }
+      
+      // 메시지 객체 구성
+      const message = {
+        type,
+        data,
+        timestamp: new Date().toISOString()
+      };
+      
+      // JSON 직렬화
+      const jsonMessage = JSON.stringify(message);
+      
+      // 메시지 전송
+      this.ws.send(jsonMessage);
+      
+      // 핑/퐁 이외의 메시지만 로깅
+      if (WS_CONFIG.DEBUG_MODE && ![WS_EVENT.PING, WS_EVENT.PONG].includes(type)) {
+        this._log(`메시지 전송: ${type}`, {
+          size: jsonMessage.length,
+          sample: jsonMessage.substring(0, 100) + (jsonMessage.length > 100 ? '...' : '')
+        });
+      }
+      
+      return true;
+    } catch (error) {
+      logger.error('WebSocketCore', '메시지 전송 중 오류', { 
+        type,
+        error: error.message,
+        stack: error.stack 
+      });
+      return false;
+    }
+  }
+  
+  /**
+   * 핑 메시지 전송
+   * @returns {boolean} 전송 성공 여부
+   */
+  sendPing() {
+    return this.send(WS_EVENT.PING, { 
+      timestamp: new Date().toISOString(),
+      sessionId: this._getSessionId() 
+    });
+  }
+
+  /**
+   * 메시지 타입 핸들러 등록
+   * @param {string} type - 메시지 타입
+   * @param {Function} handler - 핸들러 함수
+   * @returns {Function} 핸들러 제거 함수
+   */
+  addHandler(type, handler) {
+    if (!type || typeof handler !== 'function') {
+      logger.warn('WebSocketCore', '잘못된 핸들러 등록 요청', { 
+        type, 
+        hasHandler: !!handler 
+      });
+      return () => {};
+    }
+    
+    // 핸들러 맵 초기화
+    if (!this.handlers) {
+      this.handlers = new Map();
+    }
+    
+    // 타입별 핸들러 목록 가져오기
+    if (!this.handlers.has(type)) {
+      this.handlers.set(type, new Set());
+    }
+    
+    // 핸들러 추가
+    this.handlers.get(type).add(handler);
+    
+    // 핸들러 제거 함수 반환
+    return () => this.removeHandler(type, handler);
+  }
+  
+  /**
+   * 메시지 타입 핸들러 제거
+   * @param {string} type - 메시지 타입
+   * @param {Function} handler - 핸들러 함수
+   * @returns {boolean} 제거 성공 여부
+   */
+  removeHandler(type, handler) {
+    if (!type || typeof handler !== 'function' || !this.handlers) {
+      return false;
+    }
+    
+    const handlers = this.handlers.get(type);
+    if (!handlers) {
+      return false;
+    }
+    
+    const removed = handlers.delete(handler);
+    
+    // 핸들러가 없으면 해당 타입 항목 제거
+    if (handlers.size === 0) {
+      this.handlers.delete(type);
+    }
+    
+    return removed;
   }
 }
 

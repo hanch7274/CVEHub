@@ -101,14 +101,13 @@ function webSocketReducer(state, action) {
  * 웹소켓 연결 상태를 관리하고 하위 컴포넌트에 제공합니다.
  */
 export const WebSocketProvider = ({ children }) => {
-  const reduxDispatch = useDispatch();
-  const { enqueueSnackbar, closeSnackbar } = useSnackbar();
-  
-  // 리듀서를 사용하여 웹소켓 상태 관리
   const [state, dispatch] = useReducer(webSocketReducer, initialState);
-  
-  // 이벤트 구독 레퍼런스 유지
+  const reduxDispatch = useDispatch();
   const eventSubscriptions = useRef({});
+  const { enqueueSnackbar, closeSnackbar } = useSnackbar();
+  const notificationRef = useRef(null);
+  // isFirstMount ref를 컴포넌트 최상위 레벨로 이동
+  const isFirstMount = useRef(true);
   
   // 알림 관리 메모이제이션
   const showNotification = useCallback((message, options = {}) => {
@@ -198,6 +197,7 @@ export const WebSocketProvider = ({ children }) => {
       // 연결 확인 이벤트 (connect_ack)
       eventSubscriptions.current.connectAck = webSocketService.on(WS_EVENT.CONNECT_ACK, (data) => {
         console.log('[WebSocketContext] 연결 확인(connect_ack) 이벤트 수신', data);
+        
         // 이미 연결 상태인 경우는 무시
         if (state.isConnected && state.isReady) {
           console.log('[WebSocketContext] 이미 연결된 상태, connect_ack 무시');
@@ -259,16 +259,27 @@ export const WebSocketProvider = ({ children }) => {
       console.log('[WebSocketContext] 이벤트 구독 설정 완료');
     };
     
-    // 구독 설정
-    setupSubscriptions();
+    const initConnection = () => {
+      // 이미 연결 중이거나 연결된 상태면 새로 연결하지 않음
+      if (state.isConnected || state.connectionStatus === 'connecting') {
+        console.log('[WebSocketContext] 이미 연결되어 있거나 연결 중, 연결 시작 무시');
+        return;
+      }
+      
+      console.log('[WebSocketContext] 웹소켓 연결 시작');
+      connect();
+    };
     
-    // 초기 연결 시도 - 약간의 지연 추가 (페이지 로드 우선순위)
-    if (!state.isConnected && state.connectionStatus !== 'connecting') {
-      console.log('[WebSocketContext] 웹소켓 연결 시작 예약 (100ms 지연)');
-      connectionTimer = setTimeout(() => {
-        console.log('[WebSocketContext] 웹소켓 연결 시작');
-        connect();
-      }, 100); // 100ms 지연으로 페이지 로딩 완료 후 연결 시작
+    // 최초 마운트 시에만 구독 설정
+    // useRef 호출을 컴포넌트 최상위 레벨로 이동했으므로 여기서는 참조만 함
+    if (isFirstMount.current) {
+      console.log('[WebSocketContext] 최초 마운트 - 이벤트 구독 설정');
+      setupSubscriptions();
+      isFirstMount.current = false;
+      
+      // 초기 연결 시도 - 약간의 지연 추가 (페이지 로드 우선순위)
+      console.log('[WebSocketContext] 웹소켓 연결 시작 예약 (250ms 지연)');
+      connectionTimer = setTimeout(initConnection, 250); // 250ms 지연으로 페이지 로딩 완료 후 연결 시작
     }
     
     // 컴포넌트 언마운트 시 정리
@@ -282,6 +293,7 @@ export const WebSocketProvider = ({ children }) => {
       // 일반적인 페이지 전환에서는 구독을 유지하여 재구독 반복 방지
       if (typeof window !== 'undefined' && window.isUnloading) {
         // 페이지 언로드 시에만 모든 구독 정리
+        console.log('[WebSocketContext] 페이지 언로드 - 구독 정리');
         Object.entries(eventSubscriptions.current).forEach(([key, unsub]) => {
           if (typeof unsub === 'function') {
             console.log(`[WebSocketContext] 언마운트 구독 정리: ${key}`);

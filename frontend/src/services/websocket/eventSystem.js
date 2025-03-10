@@ -293,7 +293,12 @@ class EventSystem {
   }
 }
 
-// 싱글톤 인스턴스
+// 싱글톤 인스턴스 생성
 const eventSystem = new EventSystem();
+
+// 디버깅을 위한 전역 접근 설정 (개발 모드에서만)
+if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
+  window._eventSystem = eventSystem;
+}
 
 export default eventSystem; 
