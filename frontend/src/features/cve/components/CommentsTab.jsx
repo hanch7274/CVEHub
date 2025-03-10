@@ -12,7 +12,7 @@ import { api } from '../../../utils/auth';
 import { formatDistanceToNow } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import { useSnackbar } from 'notistack';
-import { WS_EVENT_TYPE } from '../../../services/websocket';
+import { WS_EVENT} from '../../../services/websocket/index';
 import {
   ListHeader,
   EmptyState
@@ -148,7 +148,7 @@ const CommentsTab = React.memo(({
 
       if (response) {
         await sendMessage(
-          WS_EVENT_TYPE.CVE_UPDATED,
+          WS_EVENT.CVE_UPDATED,
           {
             cveId: cve.cveId,
             field: 'comments',
@@ -186,7 +186,7 @@ const CommentsTab = React.memo(({
       if (response) {
         if (mentions.length > 0) {
           await sendMessage(
-            WS_EVENT_TYPE.NOTIFICATION,
+            WS_EVENT.NOTIFICATION,
             {
               type: 'mention',
               recipients: mentions,
@@ -202,7 +202,7 @@ const CommentsTab = React.memo(({
         
         // WebSocket 메시지 전송 - 필드 정보 추가
         await sendMessage(
-          WS_EVENT_TYPE.CVE_UPDATED,
+          WS_EVENT.CVE_UPDATED,
           {
             cveId: cve.cveId,
             field: 'comments',
@@ -239,7 +239,7 @@ const CommentsTab = React.memo(({
       if (response) {
         if (mentions.length > 0) {
           await sendMessage(
-            WS_EVENT_TYPE.NOTIFICATION,
+            WS_EVENT.NOTIFICATION,
             {
               type: 'mention',
               recipients: mentions,
@@ -364,7 +364,7 @@ const CommentsTab = React.memo(({
         // 멘션이 있을 경우 알림 전송
         if (mentions.length > 0) {
           await sendMessage(
-            WS_EVENT_TYPE.NOTIFICATION,
+            WS_EVENT.NOTIFICATION,
             {
               type: 'mention',
               recipients: mentions,
@@ -380,7 +380,7 @@ const CommentsTab = React.memo(({
 
         // WebSocket 메시지 전송 - 필드 정보 추가
         await sendMessage(
-          WS_EVENT_TYPE.CVE_UPDATED,
+          WS_EVENT.CVE_UPDATED,
           {
             type: 'comment_added',
             cveId: cve.cveId,

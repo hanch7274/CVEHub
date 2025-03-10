@@ -178,7 +178,7 @@ class NucleiCrawlerService(BaseCrawlerService):
                         60,  # 고정된 60% 진행률 유지
                         f"데이터 처리 중 ({idx+1}/{total})"  # 현재/전체 형식으로 메시지 표시
                     )
-                
+                    
                 # 파일 경로 유효성 검사
                 if not isinstance(file_path, str):
                     self.log_warning(f"잘못된 파일 경로 형식: {file_path}, 타입: {type(file_path)}")
@@ -315,7 +315,7 @@ class NucleiCrawlerService(BaseCrawlerService):
                         80,  # 고정된 80% 진행률 유지
                         f"데이터베이스 업데이트 중 ({idx+1}/{total})"
                     )
-                
+                    
                 # CVE ID 확인
                 cve_id = item.get("cve_id")
                 nuclei_hash = item.get("nuclei_hash")
@@ -399,120 +399,81 @@ class NucleiCrawlerService(BaseCrawlerService):
         self.log_info(f"데이터베이스 업데이트 완료: 총 {result['total']}개 중 생성 {result['created']}개, 업데이트 {result['updated']}개, 스킵 {result['skipped']}개")
         return result
 
-    async def report_progress(self, stage, percent, message, updated_cves=None):
+    async def report_progress(self, stage, percent, message, updated_cves=None, require_websocket=False):
         """진행 상황 보고"""
         self.log_info(f"[{stage}] {percent}% - {message}")
         
         # 웹소켓 메시지 전송 디버그 로그 추가
-        self.log_info(f"[WebSocket] 진행 상황 메시지 전송 시작: stage={stage}, percent={percent}, message={message}")
+        self.log_info(f"[웹소켓] 진행 상황 메시지 전송 시작: stage={stage}, percent={percent}, message={message}")
         
         # 부모 클래스의 메서드 호출하여 웹소켓 메시지 전송
         try:
-            await super().report_progress(stage, percent, message, updated_cves)
-            self.log_info(f"[WebSocket] 진행 상황 메시지 전송 성공: stage={stage}, percent={percent}, message={message}")
+            await super().report_progress(stage, percent, message, updated_cves, require_websocket)
+            self.log_info(f"[웹소켓] 진행 상황 메시지 전송 성공: stage={stage}, percent={percent}, message={message}")
             
             # 업데이트된 CVE 정보가 있는 경우 로깅
             if updated_cves:
                 cve_count = len(updated_cves) if isinstance(updated_cves, list) else "알 수 없음"
-                self.log_info(f"[WebSocket] 업데이트된 CVE 정보 포함: {cve_count}개")
+                self.log_info(f"[웹소켓] 업데이트된 CVE 정보 포함: {cve_count}개")
         except Exception as e:
-            self.log_error(f"[WebSocket] 진행 상황 메시지 전송 실패: {str(e)}", e)
-            self.log_error(f"[WebSocket] 전송 실패한 메시지 내용: stage={stage}, percent={percent}, message={message}")
+            self.log_error(f"[웹소켓] 진행 상황 메시지 전송 실패: {str(e)}", e)
+            self.log_error(f"[웹소켓] 전송 실패한 메시지 내용: stage={stage}, percent={percent}, message={message}")
         
         # 기존 콜백 호출 로직 유지
         if hasattr(self, 'on_progress') and callable(self.on_progress):
             try:
                 await self.on_progress(self.crawler_id, stage, percent, message)
-                self.log_info(f"[WebSocket] on_progress 콜백 호출 성공: stage={stage}, percent={percent}")
+                self.log_info(f"[웹소켓] on_progress 콜백 호출 성공: stage={stage}, percent={percent}")
             except Exception as e:
-                self.log_error(f"[WebSocket] on_progress 콜백 호출 실패: {str(e)}", e)
-                self.log_error(f"[WebSocket] 콜백 호출 실패한 메시지: stage={stage}, percent={percent}, message={message}")
+                self.log_error(f"[웹소켓] on_progress 콜백 호출 실패: {str(e)}", e)
+                self.log_error(f"[웹소켓] 콜백 호출 실패한 메시지: stage={stage}, percent={percent}, message={message}")
 
     async def crawl(self) -> bool:
-        """전체 크롤링 프로세스 실행"""
+        """전체 크롤링 프로세스"""
         try:
-            # 초기 진행 상황 보고
-            await self.report_progress("준비", 0, f"{self.crawler_id} 업데이트를 시작합니다.")
-            # 메시지 전송 보장을 위한 지연
-            await asyncio.sleep(0.5)
+            # 초기 상태 메시지 (웹소켓 연결 필수)
+            await self.report_progress("준비", 0, f"{self.crawler_id} 업데이트를 시작합니다.", require_websocket=True)
             
-            # 1. 데이터 수집 단계
-            await self.report_progress("데이터 수집", 10, "Git 저장소에서 데이터를 가져오는 중입니다...")
-            # 메시지 전송 보장을 위한 지연
-            await asyncio.sleep(0.5)
+            # 1. 준비 단계 (고정 진행률: 0-20%)
+            await self.report_progress("준비", 0, "Nuclei 템플릿 저장소 준비 중...(0%)")
             
-            success = await self.fetch_data()
-            if not success:
-                await self.report_progress("오류", 0, "Git 저장소에서 데이터를 가져오는데 실패했습니다.")
-                return False
-            await self.report_progress("데이터 수집", 40, "데이터 수집이 완료되었습니다.")
-            # 메시지 전송 보장을 위한 지연
-            await asyncio.sleep(0.5)
+            # 2. 저장소 클론 또는 풀
+            if not await self._clone_or_pull_repo():
+                raise Exception("저장소 클론/풀 작업 실패")
             
-            # 2. 데이터 처리 단계
-            await self.report_progress("데이터 처리", 45, "YAML 파일을 파싱하고 CVE 정보를 추출하는 중입니다...")
-            cve_data = await self.parse_data(self.repo_path)
-            if not cve_data or not cve_data.get('items'):
-                await self.report_progress("오류", 0, "템플릿 파싱에 실패했거나 추출된 CVE가 없습니다.")
-                return False
-            await self.report_progress("데이터 처리", 70, f"{len(cve_data['items'])}개의 CVE 정보 파싱이 완료되었습니다.")
-            # 메시지 전송 보장을 위한 지연
-            await asyncio.sleep(0.5)
+            # 준비 단계 완료 메시지 (20%)
+            await self.report_progress("준비", 20, "준비 단계 완료")
             
-            # 3. 데이터베이스 업데이트 단계
-            await self.report_progress("데이터베이스 업데이트", 75, "데이터베이스에 CVE 정보를 업데이트하는 중입니다...")
-            process_result = await self.process_data(cve_data)
+            # 3. 데이터 수집 단계 (고정 진행률: 20-40%)
+            await self.report_progress("데이터 수집", 40, "데이터 수집 중...(40%)")
+            templates = await self.fetch_data()
+            self.log_info(f"총 {len(templates)}개의 템플릿 파일 발견")
             
-            # 처리 결과에 따른 처리
-            if isinstance(process_result, dict):
-                # 처리 결과가 상세 정보를 포함하는 딕셔너리인 경우
-                status = process_result.get('status', 'error')
-                updated_count = process_result.get('updated_count', 0)
-                failed_count = process_result.get('failed_count', 0)
-                result_message = process_result.get('message', '')
-                
-                if status == 'error':
-                    await self.report_progress("오류", 0, f"데이터베이스 업데이트 오류: {result_message}")
-                    return False
-                elif status == 'partial_success':
-                    # 부분 성공인 경우 - 일부 성공, 일부 실패
-                    await self.report_progress("완료", 100, 
-                                           f"{updated_count}개 항목 업데이트 성공, {failed_count}개 항목 처리 실패")
-                    
-                    # 실패한 항목 목록 전달
-                    if hasattr(self, 'failed_updates'):
-                        # 최대 10개까지 실패 항목 샘플 전달
-                        failed_samples = self.failed_updates[:10] if self.failed_updates else []
-                        await self.report_progress("완료", 100, 
-                                               f"{updated_count}개 항목 업데이트 성공, {failed_count}개 항목 처리 실패", 
-                                               self.updated_cves[:20] if hasattr(self, 'updated_cves') else [])
-                    return True
-            elif not process_result:
-                await self.report_progress("오류", 0, "데이터베이스 업데이트에 실패했습니다.")
-                return False
+            # 4. 데이터 처리 단계 (고정 진행률: 40-60%)
+            await self.report_progress("데이터 처리", 60, "데이터 처리 중...(60%)", require_websocket=True)
+            processed_data = await self.parse_data(templates)
+            self.log_info(f"템플릿 처리 완료: {len(processed_data['items'])}개 처리됨")
             
-            # 4. 완료 단계
-            updated_cves = self.updated_cves if hasattr(self, 'updated_cves') else []
-            update_count = len(updated_cves)
+            # 5. 데이터베이스 업데이트 단계 (고정 진행률: 60-80%)
+            await self.report_progress("데이터베이스 업데이트", 80, "데이터베이스 업데이트 중...(80%)", require_websocket=True)
+            update_result = await self._update_database(processed_data['items'])
             
-            message = f"{self.crawler_id} 업데이트가 완료되었습니다. "
-            if update_count > 0:
-                message += f"{update_count}개의 CVE가 업데이트되었습니다."
-            else:
-                message += "업데이트된 CVE가 없습니다."
-            
-            # 완료 상태 명확하게 전송
-            await self.report_progress("완료", 100, message, updated_cves)
+            # 6. 완료 보고 (고정 진행률: 80-100%)
+            await self.report_progress("완료", 100, f"완료: {update_result['total']}개의 CVE가 업데이트되었습니다.", require_websocket=True)
             
             # 최종 상태 확실히 전송 (100ms 후)
             await asyncio.sleep(0.1)
-            await self.report_progress("완료", 100, message, updated_cves)
+            await self.report_progress("완료", 100, "업데이트가 완료되었습니다.", require_websocket=True)
             
             return True
-            
         except Exception as e:
-            self.log_error(f"크롤링 중 오류 발생: {str(e)}", e)
-            await self.report_progress("오류", 0, f"크롤링 중 오류 발생: {str(e)}")
+            # 오류 메시지를 웹소켓 필수로 전송 시도
+            try:
+                await self.report_progress("오류", 0, f"오류 발생: {str(e)}", require_websocket=True)
+            except:
+                # 웹소켓 메시지 전송 실패 시, 로그만 남김
+                self.log_error(f"크롤러 오류 및 웹소켓 메시지 전송 실패: {str(e)}")
+            
             return False
 
     async def fetch_data(self) -> Any:
@@ -643,7 +604,73 @@ class NucleiCrawlerService(BaseCrawlerService):
                         # 새 CVE 추가 (해시 포함)
                         self.log_info(f"새 CVE 추가: {cve_id}")
                         item['nuclei_hash'] = content_hash
-                        item['created_by'] = 'nuclei_crawler'  # 생성자 표시
+                        item['created_by'] = 'Nuclei-Crawler'  # 생성자 표시
+                        
+                        # 히스토리 정보 추가
+                        current_time = datetime.now(ZoneInfo("Asia/Seoul"))
+                        changes = [
+                            {"field": "cve", "old_value": None, "new_value": cve_id},
+                            {"field": "status", "old_value": None, "new_value": "신규등록"}
+                        ]
+                        
+                        # 제목 정보 기록
+                        if item.get('title'):
+                            changes.append({
+                                "field": "title",
+                                "field_name": "제목",
+                                "action": "add",
+                                "detail_type": "detailed",
+                                "after": item.get('title'),
+                                "summary": "제목 추가됨"
+                            })
+                            
+                        # 설명 정보 기록
+                        if item.get('description'):
+                            changes.append({
+                                "field": "description",
+                                "field_name": "설명",
+                                "action": "add",
+                                "detail_type": "detailed",
+                                "after": item.get('description'),
+                                "summary": "설명 추가됨"
+                            })
+                            
+                        # 상태 정보 기록
+                        changes.append({
+                            "field": "status",
+                            "field_name": "상태",
+                            "action": "add",
+                            "detail_type": "detailed",
+                            "after": item.get('status', '신규등록'),
+                            "summary": f"상태가 '{item.get('status', '신규등록')}'(으)로 설정됨"
+                        })
+                        
+                        # 참조 정보 기록
+                        if item.get('references') and len(item.get('references')) > 0:
+                            changes.append({
+                                "field": "references",
+                                "field_name": "References",
+                                "action": "add",
+                                "detail_type": "simple",
+                                "summary": f"Reference {len(item.get('references'))}개 추가됨"
+                            })
+                            
+                        # PoC 정보 기록
+                        if item.get('pocs') and len(item.get('pocs')) > 0:
+                            changes.append({
+                                "field": "pocs",
+                                "field_name": "PoC",
+                                "action": "add",
+                                "detail_type": "simple",
+                                "summary": f"PoC {len(item.get('pocs'))}개 추가됨"
+                            })
+                        
+                        item['modification_history'] = [{
+                            "username": "Nuclei-Crawler",
+                            "timestamp": current_time,
+                            "changes": changes
+                        }]
+                        
                         try:
                             await cve_service.create_cve(item)
                             self.log_info(f"새 CVE 추가 성공: {cve_id}")

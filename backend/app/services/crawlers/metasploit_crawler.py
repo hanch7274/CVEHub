@@ -3,9 +3,11 @@ import git
 import re
 import logging
 from pathlib import Path
-from .crawler_base import BaseCrawlerService
-from ..models.cve_model import CVEModel
-from ..core.config import get_settings
+from ..crawler_base import BaseCrawlerService
+from ...models.cve_model import CVEModel
+from ...core.config import get_settings
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -143,6 +145,77 @@ class MetasploitCrawlerService(BaseCrawlerService):
             
             if not cve:
                 # 새로운 CVE인 경우 전체 데이터 저장
+                
+                # 히스토리 정보 추가
+                current_time = datetime.now(ZoneInfo("Asia/Seoul"))
+                changes = []
+                
+                # 기본 CVE 생성 정보
+                changes.append({
+                    "field": "cve",
+                    "field_name": "CVE",
+                    "action": "add",
+                    "summary": "CVE 생성 (Metasploit-Crawler)"
+                })
+                
+                # 제목 정보 기록
+                if cve_data.get('title'):
+                    changes.append({
+                        "field": "title",
+                        "field_name": "제목",
+                        "action": "add",
+                        "detail_type": "detailed",
+                        "after": cve_data.get('title'),
+                        "summary": "제목 추가됨"
+                    })
+                    
+                # 설명 정보 기록
+                if cve_data.get('description'):
+                    changes.append({
+                        "field": "description",
+                        "field_name": "설명",
+                        "action": "add",
+                        "detail_type": "detailed",
+                        "after": cve_data.get('description'),
+                        "summary": "설명 추가됨"
+                    })
+                    
+                # 상태 정보 기록
+                changes.append({
+                    "field": "status",
+                    "field_name": "상태",
+                    "action": "add",
+                    "detail_type": "detailed",
+                    "after": "신규등록",
+                    "summary": "상태가 '신규등록'(으)로 설정됨"
+                })
+                
+                # 참조 정보 기록
+                if cve_data.get('references') and len(cve_data.get('references')) > 0:
+                    changes.append({
+                        "field": "references",
+                        "field_name": "References",
+                        "action": "add",
+                        "detail_type": "simple",
+                        "summary": f"Reference {len(cve_data.get('references'))}개 추가됨"
+                    })
+                    
+                # PoC 정보 기록
+                if cve_data.get('pocs') and len(cve_data.get('pocs')) > 0:
+                    changes.append({
+                        "field": "pocs",
+                        "field_name": "PoC",
+                        "action": "add",
+                        "detail_type": "simple",
+                        "summary": f"PoC {len(cve_data.get('pocs'))}개 추가됨"
+                    })
+                
+                modification_history = [{
+                    "username": "Metasploit-Crawler",
+                    "modified_at": current_time,
+                    "changes": changes
+                }]
+                
                 cve = CVEModel(
                     cve_id=cve_data['cve_id'],
                     title=cve_data['title'],
@@ -151,7 +224,8 @@ class MetasploitCrawlerService(BaseCrawlerService):
                     pocs=cve_data['pocs'],
                     published_date=cve_data['published_date'],
                     last_modified_date=cve_data['last_modified_date'],
-                    created_by=cve_data['created_by']
+                    created_by="Metasploit-Crawler",
+                    modification_history=modification_history
                 )
             else:
                 # 기존 CVE의 경우 PoC와 Reference만 업데이트
@@ -179,7 +253,11 @@ class MetasploitCrawlerService(BaseCrawlerService):
     async def crawl(self) -> bool:
         """전체 크롤링 프로세스"""
         try:
+            # 초기 상태 메시지 (웹소켓 연결 필수)
+            await self.report_progress("준비", 0, f"Metasploit 크롤링을 시작합니다", require_websocket=True)
+            
             if not await self.fetch_data():
+                await self.report_progress("오류", 0, "저장소 데이터를 가져오는데 실패했습니다", require_websocket=True)
                 return False
                 
             success_count = 0
@@ -198,9 +276,14 @@ class MetasploitCrawlerService(BaseCrawlerService):
                     error_count += 1
                     
             self.log_info(f"Metasploit crawling completed - Success: {success_count}, Errors: {error_count}")
+            await self.report_progress("완료", 100, f"Metasploit 크롤링 완료 - 성공: {success_count}, 오류: {error_count}", require_websocket=True)
+            
             return True
         except Exception as e:
-            self.log_error("Error in crawl", e)
+            try:
+                await self.report_progress("오류", 0, f"크롤링 중 오류 발생: {str(e)}", require_websocket=True)
+            except:
+                self.log_error(f"크롤러 오류 및 웹소켓 메시지 전송 실패: {str(e)}")
             return False
             
     async def crawl_single_cve(self, cve_id: str) -> bool:

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useDispatch } from 'react-redux';
 import { useSnackbar } from 'notistack';
 import { 
@@ -42,7 +42,7 @@ import { formatDistance } from 'date-fns';
 import { ko } from 'date-fns/locale';
 
 // 웹소켓 이벤트 타입
-const WS_EVENT_TYPE = {
+const WS_EVENT = {
   CRAWLER_UPDATE_PROGRESS: 'crawler_update_progress'
 };
 
@@ -127,6 +127,10 @@ const CrawlerUpdateButton = () => {
   const [pollTimer, setPollTimer] = useState(null);
   const [lastWebSocketUpdate, setLastWebSocketUpdate] = useState(null);
 
+  // 다이얼로그 외부 요소 참조 추가
+  const buttonRef = useRef(null);
+  const dialogRef = useRef(null);
+
   // 크롤러 옵션
   const CRAWLERS = [
     { id: 'nuclei', name: 'Nuclei Templates' },
@@ -159,17 +163,85 @@ const CrawlerUpdateButton = () => {
   // 초기 상태 로드
   useEffect(() => {
     loadCrawlerStatus();
-  }, [loadCrawlerStatus]);
 
-  // 컴포넌트 언마운트 시 폴링 중지
-  useEffect(() => {
-    return () => stopPolling();
-  }, [stopPolling]);
+    // 크롤러 진행 상태 전용 이벤트 리스너 추가
+    const handleCrawlerProgress = (event) => {
+      console.log('[CrawlerUpdateButton] 커스텀 이벤트 감지:', event.detail);
+      
+      if (event.detail && event.detail.data) {
+        const data = event.detail.data;
+        
+        // 진행 상태 업데이트
+        setProgress({
+          stage: data.stage || '진행 중',
+          percent: data.percent || 0,
+          message: data.message || ''
+        });
+        
+        // 단계 업데이트
+        const stageIndex = getStageIndex(data.stage);
+        if (stageIndex >= 0) {
+          setActiveStep(stageIndex);
+          setHasError(false);
+        }
+        
+        // 상태 설정
+        setIsRunning(data.isRunning !== false);
+        
+        // 완료 또는 오류 상태 처리
+        if (data.stage === '완료' || data.stage === '오류') {
+          setIsRunning(false);
+          stopPolling();
+          
+          if (data.stage === '완료') {
+            dispatch(fetchCVEList());
+            
+            // 완료 알림 표시
+            enqueueSnackbar(`크롤러 업데이트가 완료되었습니다.`, {
+              variant: 'success',
+              autoHideDuration: 5000
+            });
+            
+            if (process.env.NODE_ENV === 'development') {
+              console.log('[크롤러] 업데이트 완료');
+            }
+          }
+        }
+      }
+    };
+    
+    // 이벤트 리스너 등록
+    window.addEventListener('websocket:crawler_progress', handleCrawlerProgress);
+    
+    return () => {
+      stopPolling();
+      window.removeEventListener('websocket:crawler_progress', handleCrawlerProgress);
+    };
+  }, [loadCrawlerStatus, stopPolling, dispatch, enqueueSnackbar]);
 
   // 웹소켓 메시지 처리
-  useWebSocketMessage((message) => {
-    if (message?.type === WS_EVENT_TYPE.CRAWLER_UPDATE_PROGRESS) {
+  useWebSocketMessage('message', (message) => {
+    // 크롤러 업데이트 메시지 확인
+    const isCrawlerProgressMessage = 
+      typeof message?.type === 'string' && 
+      (message.type === 'crawler_update_progress' ||
+       message.type === WS_EVENT.CRAWLER_UPDATE_PROGRESS ||
+       (message.type.toLowerCase().includes('crawler') && 
+        message.type.toLowerCase().includes('progress')));
+    
+    if (isCrawlerProgressMessage) {
+      // 실제 크롤러 업데이트 메시지인 경우에만 로그 출력
+      console.log('[크롤러] 진행 상황 업데이트:', {
+        단계: message.data?.stage,
+        진행률: message.data?.percent + '%',
+        메시지: message.data?.message
+      });
+      
       const data = message.data;
+      if (!data) {
+        console.warn('[크롤러] 데이터가 없는 메시지 수신');
+        return;
+      }
       
       // 웹소켓 상태 업데이트 시간 기록
       setLastWebSocketUpdate(new Date());
@@ -228,36 +300,66 @@ const CrawlerUpdateButton = () => {
     }
   });
 
-  // 폴링 시작 함수 개선
+  // 폴링 시작 함수
   const startPolling = () => {
-    if (pollTimer) clearInterval(pollTimer);
-    
-    const isWebSocketConnected = !!window.webSocket && window.webSocket.readyState === WebSocket.OPEN;
-    if (isWebSocketConnected) {
-      console.log('웹소켓이 연결되어 있어 폴링을 시작하지 않습니다.');
-      return;
+    // 이미 폴링 중이라면 중지
+    if (pollTimer) {
+      clearInterval(pollTimer);
     }
     
     console.log('웹소켓 백업으로 폴링을 시작합니다.');
     
-    const timer = setInterval(async () => {
-      try {
-        const status = await crawlerService.getCrawlerStatus();
-        if (!lastWebSocketUpdate) {
-          setIsRunning(status.isRunning);
-          setLastUpdate(status.lastUpdate || {});
+    // 폴링 시작
+    try {
+      const timer = setInterval(async () => {
+        try {
+          if (!isRunning) {
+            stopPolling();
+            return;
+          }
+          
+          const status = await crawlerService.getCrawlerStatus();
+          console.log('[폴링] 크롤러 상태:', status);
+          
+          // 상태 업데이트
+          if (status && status.currentStatus) {
+            const currentStatus = status.currentStatus;
+            
+            // 진행 상태 업데이트
+            setProgress({
+              stage: currentStatus.stage || '준비 중',
+              percent: currentStatus.percent || 0,
+              message: currentStatus.message || '진행 중...'
+            });
+            
+            // 스테이지 업데이트
+            const stageIndex = getStageIndex(currentStatus.stage);
+            if (stageIndex >= 0) {
+              setActiveStep(stageIndex);
+              setHasError(false);
+            }
+            
+            // 완료 또는 오류 상태 처리
+            if (currentStatus.stage === '완료' || currentStatus.stage === '오류') {
+              stopPolling();
+              setIsRunning(false);
+              
+              if (currentStatus.stage === '완료') {
+                dispatch(fetchCVEList());
+              }
+            }
+          } else {
+            console.log('[폴링] 크롤러 현재 상태 정보 없음');
+          }
+        } catch (error) {
+          console.error('[폴링] 오류 발생:', error);
         }
-        
-        if (!lastWebSocketUpdate && !status.isRunning) {
-          console.log('크롤러가 실행 중이 아니어서 폴링을 중지합니다.');
-          stopPolling();
-        }
-      } catch (error) {
-        console.error('상태 폴링 중 오류:', error);
-      }
-    }, 5000);
-    
-    setPollTimer(timer);
+      }, 5000); // 5초 간격으로 폴링
+      
+      setPollTimer(timer);
+    } catch (error) {
+      console.error('폴링 시작 중 오류:', error);
+    }
   };
 
   // 메뉴 열기
@@ -316,6 +418,35 @@ const CrawlerUpdateButton = () => {
     }
   };
 
+  // 다이얼로그 닫기 함수 개선
+  const handleCloseDialog = useCallback(() => {
+    // 실행 중이면 닫지 않음
+    if (isRunning) return;
+    
+    // 포커스를 다이얼로그 외부로 이동시킨 후 다이얼로그 닫기
+    if (buttonRef.current) {
+      buttonRef.current.focus();
+    }
+    // 약간의 지연 후 다이얼로그 닫기 (포커스 이동 후)
+    setTimeout(() => {
+      setProgressOpen(false);
+    }, 10);
+  }, [isRunning]);
+  
+  // 이스케이프 키로 닫기 처리
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && progressOpen && !isRunning) {
+        handleCloseDialog();
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [progressOpen, isRunning, handleCloseDialog]);
+
   return (
     <>
       <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -331,6 +462,7 @@ const CrawlerUpdateButton = () => {
             background: 'linear-gradient(45deg, #3f51b5 30%, #2196f3 90%)',
             boxShadow: '0 3px 5px 2px rgba(33, 150, 243, .3)'
           }}
+          ref={buttonRef}
         >
           크롤러 업데이트
         </Button>
@@ -364,23 +496,35 @@ const CrawlerUpdateButton = () => {
 
       <Dialog 
         open={progressOpen} 
-        onClose={() => !isRunning && setProgressOpen(false)}
+        onClose={handleCloseDialog}
         maxWidth="md"
         fullWidth
         PaperProps={{
-          sx: { borderRadius: 2 }
+          sx: { borderRadius: 2 },
+          ref: dialogRef
         }}
+        aria-labelledby="crawler-progress-dialog-title"
+        disableRestoreFocus={true}
+        keepMounted
       >
-        <DialogTitle>
+        <DialogTitle id="crawler-progress-dialog-title">
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Typography variant="h6">
               {selectedCrawler?.name || '크롤러'} 업데이트 진행 상황
             </Typography>
             {!isRunning && (
               <IconButton
-                onClick={() => setProgressOpen(false)}
+                onClick={handleCloseDialog}
                 size="small"
                 aria-label="닫기"
+                edge="end"
+                tabIndex={0}
+                sx={{
+                  '&:focus': {
+                    outline: '2px solid #3f51b5',
+                    outlineOffset: '2px',
+                  },
+                }}
               >
                 <CloseIcon />
               </IconButton>
@@ -523,15 +667,21 @@ const CrawlerUpdateButton = () => {
         </DialogContent>
         <Box sx={{ display: 'flex', justifyContent: 'flex-end', p: 2 }}>
           <Button 
-            onClick={() => setProgressOpen(false)}
+            onClick={handleCloseDialog}
             disabled={isRunning}
             color="primary"
             variant="contained"
             startIcon={<CloseIcon />}
+            aria-label="다이얼로그 닫기"
+            tabIndex={0}
             sx={{
               '&.Mui-disabled': {
                 bgcolor: 'rgba(0, 0, 0, 0.12)',
                 color: 'rgba(0, 0, 0, 0.26)'
+              },
+              '&:focus': {
+                outline: '2px solid #3f51b5',
+                outlineOffset: '2px',
               }
             }}
           >

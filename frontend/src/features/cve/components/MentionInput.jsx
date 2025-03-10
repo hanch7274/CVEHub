@@ -7,8 +7,6 @@ import {
   ListItem,
   ListItemText,
   CircularProgress,
-  Box,
-  Button,
   ClickAwayListener
 } from '@mui/material';
 import { api } from '../../../utils/auth';
@@ -40,7 +38,7 @@ const MentionInput = ({
   variant = "outlined",
   size = "small"
 }) => {
-  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
   const [anchorEl, setAnchorEl] = useState(null);
   const [cursorPosition, setCursorPosition] = useState(0);
   const [suggestions, setSuggestions] = useState([]);
@@ -62,14 +60,14 @@ const MentionInput = ({
         setAnchorEl(el);
       }
     }, 150),
-    []
+    [setAnchorEl]
   );
 
   // 멘션 검색 디바운스 처리 (300ms)
   const searchUsers = useCallback(
-    debounce(async (query) => {
+    debounce(async (searchQuery) => {
       try {
-        const cleanQuery = query.trim();
+        const cleanQuery = searchQuery.trim();
         if (!cleanQuery) {
           setSuggestions([]);
           return;
@@ -92,11 +90,11 @@ const MentionInput = ({
           setSuggestions([]);
         }
       } catch (error) {
-        console.error('사용자 검색 중 오류 발생:', error);
+        console.error('Error searching users:', error);
         setSuggestions([]);
       }
     }, 300),
-    []
+    [setSuggestions]
   );
 
   // 입력 요소의 너비를 측정하여 Popper 너비 설정
@@ -129,7 +127,7 @@ const MentionInput = ({
       const validSearchPattern = /^[가-힣a-zA-Z0-9\s]*$/;
       
       if (validSearchPattern.test(searchText)) {
-        setSearch(searchText);
+        setQuery(searchText);
         setMentionSearchActive(true);
         searchUsers(searchText);
         
@@ -196,6 +194,7 @@ const MentionInput = ({
   // 컴포넌트 언마운트 시 타이머 정리
   useEffect(() => {
     return () => {
+      // searchTimeoutRef.current를 로컬 변수에 저장하지 않고 직접 참조해도 됨
       if (searchTimeoutRef.current) {
         clearTimeout(searchTimeoutRef.current);
       }

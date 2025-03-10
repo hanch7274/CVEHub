@@ -113,7 +113,7 @@ class BaseCrawlerService(ABC, LoggingMixin):
         self.quiet_mode = quiet
         self.log_info(f"조용한 모드 {'활성화' if quiet else '비활성화'}")
 
-    async def report_progress(self, stage: str, percent: int, message: str, updated_cves=None) -> None:
+    async def report_progress(self, stage: str, percent: int, message: str, updated_cves=None, require_websocket: bool = False) -> None:
         """진행 상황 보고 - 로깅 및 웹소켓 전송"""
         self.log_info(f"[{stage}] {percent}% - {message}")
         
@@ -124,7 +124,22 @@ class BaseCrawlerService(ABC, LoggingMixin):
         
         try:
             from app.core.websocket import manager
-            self.log_info(f"웹소켓 메시지 전송 시작: {stage}, {percent}%")
+            
+            # 웹소켓 연결 상태 확인 및 로깅
+            active_connections = len(manager.active_connections)
+            has_active = manager.has_active_connections()
+            
+            self.log_info(f"웹소켓 메시지 전송 시작: {stage}, {percent}%, 활성 연결: {active_connections}개, 연결 상태: {'있음' if has_active else '없음'}")
+            
+            # 웹소켓 연결 확인이 필요한 경우
+            if require_websocket and not has_active:
+                error_msg = "활성화된 웹소켓 연결이 없어 크롤러 작업을 중단합니다"
+                self.log_error(error_msg)
+                # 활성 연결이 없을 때 추가 정보 로깅
+                self.log_debug(f"활성 사용자 목록: {list(manager.user_connections.keys())}")
+                self.log_debug(f"총 웹소켓 연결 수: {len(manager.active_connections)}")
+                self.log_debug(f"연결 요청 사용자: {self.requester_id or '없음'}")
+                raise Exception(error_msg)
             
             # 단계 이름 표준화 (UI 표시용)
             ui_stage = stage
@@ -197,10 +212,25 @@ class BaseCrawlerService(ABC, LoggingMixin):
             # 요청자 ID가 있으면 해당 사용자에게만 전송, 없으면 전체 브로드캐스트
             if self.requester_id:
                 self.log_info(f"사용자 {self.requester_id}에게 진행 상황 전송")
-                sent_count = await manager.send_to_specific_user(self.requester_id, message_data)
+                # 전송 전 웹소켓 연결 상태 확인
+                user_connections = manager.user_connections.get(self.requester_id, [])
+                self.log_debug(f"사용자 {self.requester_id}의 연결 수: {len(user_connections)}")
+                
+                sent_count = await manager.send_to_specific_user(self.requester_id, message_data, raise_exception=require_websocket)
+                if sent_count == 0:
+                    self.log_warning(f"사용자 {self.requester_id}에게 메시지 전송 실패: 연결된 웹소켓 없음")
+                    # 전체 연결 상태 디버깅
+                    self.log_debug(f"모든 활성 사용자: {list(manager.user_connections.keys())}")
+                    self.log_debug(f"총 활성 연결 수: {len(manager.active_connections)}")
             else:
                 self.log_info("모든 사용자에게 진행 상황 브로드캐스트")
-                sent_count = await manager.broadcast_json(message_data)
+                # 브로드캐스트 전 웹소켓 연결 상태 확인
+                self.log_debug(f"활성 사용자 수: {len(manager.user_connections)}")
+                self.log_debug(f"총 웹소켓 연결 수: {len(manager.active_connections)}")
+                
+                sent_count = await manager.broadcast_json(message_data, critical=True, raise_exception=require_websocket)
+                if sent_count == 0:
+                    self.log_warning("브로드캐스트 실패: 활성화된 웹소켓 연결 없음")
             
             self.log_info(f"웹소켓 메시지 전송 완료: {stage}, {percent}%, {sent_count}개 클라이언트에 전송됨")
             
@@ -214,7 +244,16 @@ class BaseCrawlerService(ABC, LoggingMixin):
             
         except Exception as e:
             self.log_error(f"웹소켓 메시지 전송 실패: {e}")
-            self.log_error(f"보내려던 메시지: {message_data}")
+            # 자세한 예외 정보 로깅
+            error_type = e.__class__.__name__
+            error_msg = str(e)
+            self.log_error(f"오류 유형: {error_type}, 메시지: {error_msg}")
+            # 전송하려던 메시지 로깅 (일부만)
+            if 'message_data' in locals():
+                msg_type = message_data.get('type', 'unknown')
+                msg_stage = message_data.get('data', {}).get('stage', 'unknown')
+                msg_percent = message_data.get('data', {}).get('percent', 'unknown')
+                self.log_error(f"보내려던 메시지: 타입={msg_type}, 단계={msg_stage}, 퍼센트={msg_percent}")
             self.log_error(traceback.format_exc())
         
         # 콜백 호출 (기존 로직)

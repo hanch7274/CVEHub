@@ -32,7 +32,7 @@ class EmergingThreatsCrawlerService(BaseCrawlerService):
         # 디렉토리 생성
         os.makedirs(self.download_path, exist_ok=True)
     
-    async def fetch_data(self) -> bool:
+    async def fetch_data(self) -> bool: 
         """원격 저장소에서 룰 파일 다운로드"""
         try:
             await self.report_progress("준비", 0, "EmergingThreats 룰 파일 다운로드 준비 중...")
@@ -217,6 +217,25 @@ class EmergingThreatsCrawlerService(BaseCrawlerService):
                 
                 if not cve:
                     # 새 CVE 생성
+                    self.log_info(f"새 CVE 생성: {cve_id}")
+                    
+                    # 변경 사항 기록 
+                    changes = [
+                        {"field": "cve", "old_value": None, "new_value": cve_id},
+                        {"field": "status", "old_value": None, "new_value": "신규등록"}
+                    ]
+                    
+                    # 변경 이력에 snort_rules가 추가될 것을 표시
+                    if rule_data["rule_content"]:
+                        changes.append({"field": "snort_rules", "old_value": None, "new_value": "Emerging-Threats Rule"})
+                    
+                    # 수정 이력 생성
+                    modification_history = [{
+                        "username": "EmergingThreats-Crawler",
+                        "timestamp": datetime.now(ZoneInfo("Asia/Seoul")),
+                        "changes": changes
+                    }]
+                    
                     cve = CVEModel(
                         cve_id=cve_id,
                         title=cve_id,  # title을 CVE ID로 설정
@@ -224,7 +243,9 @@ class EmergingThreatsCrawlerService(BaseCrawlerService):
                         status="신규등록",
                         severity="unassigned",  # 기본값
                         created_at=datetime.now(ZoneInfo("Asia/Seoul")),
-                        updated_at=datetime.now(ZoneInfo("Asia/Seoul"))
+                        updated_at=datetime.now(ZoneInfo("Asia/Seoul")),
+                        created_by="EmergingThreats-Crawler",  # 크롤러 이름으로 설정
+                        modification_history=modification_history  # 수정 이력 추가
                     )
                     is_new = True
                     new_count += 1
@@ -307,31 +328,41 @@ class EmergingThreatsCrawlerService(BaseCrawlerService):
             return False
     
     async def crawl(self) -> bool:
-        """전체 크롤링 프로세스 실행"""
+        """전체 크롤링 프로세스"""
+        self.log_info("크롤링 시작")
         try:
-            self.log_info("EmergingThreats 크롤링 시작")
-            self.updated_cves = []  # 결과 초기화
+            # 웹소켓 연결 필수로 진행 상태 보고
+            await self.report_progress("준비", 0, "Emerging Threats 크롤링을 시작합니다", require_websocket=True)
             
-            # 1. 데이터 다운로드
-            fetch_success = await self.fetch_data()
-            if not fetch_success:
+            # 데이터 가져오기
+            if not await self.fetch_data():
+                await self.report_progress("오류", 0, "Emerging Threats 데이터를 가져오는데 실패했습니다", require_websocket=True)
                 return False
+                
+            # 데이터 파싱 (로컬 파일에서)
+            await self.report_progress("데이터 처리", 30, "Emerging Threats 규칙 파싱 중...", require_websocket=True)
+            cve_data = await self.parse_data(self.rule_file_path)
             
-            # 2. 데이터 파싱
-            parsed_data = await self.parse_data(self.rule_file_path)
-            if not parsed_data or not parsed_data.get("rules"):
-                await self.report_progress("완료", 100, "파싱된 CVE 룰이 없습니다.")
-                return True  # 오류는 아니므로 True 반환
-            
-            # 3. 데이터 처리 및 저장
-            process_success = await self.process_data(parsed_data)
-            if not process_success:
+            if not cve_data or not cve_data.get("rules"):
+                await self.report_progress("오류", 0, "파싱된 규칙이 없습니다", require_websocket=True)
                 return False
+                
+            total_rules = len(cve_data.get("rules", []))
+            await self.report_progress("데이터 처리", 60, f"총 {total_rules}개 규칙 파싱 완료", require_websocket=True)
             
-            self.log_info("EmergingThreats 크롤링 완료")
+            # 데이터베이스 업데이트
+            await self.report_progress("데이터베이스 업데이트", 80, "데이터베이스 업데이트 중...", require_websocket=True)
+            if not await self.process_data(cve_data):
+                await self.report_progress("오류", 0, "데이터베이스 업데이트 실패", require_websocket=True)
+                return False
+                
+            # 완료
+            await self.report_progress("완료", 100, "Emerging Threats 크롤링 완료", require_websocket=True)
             return True
             
         except Exception as e:
-            self.log_error(f"크롤링 중 오류 발생: {str(e)}")
-            await self.report_progress("오류", 0, f"크롤링 중 오류 발생: {str(e)}")
+            try:
+                await self.report_progress("오류", 0, f"크롤링 중 오류 발생: {str(e)}", require_websocket=True)
+            except:
+                self.log_error(f"크롤러 오류 및 웹소켓 메시지 전송 실패: {str(e)}")
             return False 

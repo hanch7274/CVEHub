@@ -81,3 +81,13 @@ class DatabaseError(CVEHubException):
 class WebSocketError(CVEHubException):
     def __init__(self, detail: str = "WebSocket 연결 오류가 발생했습니다.", error_code: str = "WEBSOCKET_ERROR"):
         super().__init__(status_code=500, detail=detail, error_code=error_code)
+
+class WebSocketConnectionError(Exception):
+    """
+    WebSocket 연결 관련 오류를 나타내는 예외 클래스입니다.
+    
+    이 예외는 WebSocket 연결이 필요한 작업을 수행할 때 활성 연결이 없는 경우 발생합니다.
+    """
+    def __init__(self, message="WebSocket 연결이 없거나 비활성 상태입니다"):
+        self.message = message
+        super().__init__(self.message)

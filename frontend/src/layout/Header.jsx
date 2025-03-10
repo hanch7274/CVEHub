@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   AppBar,
   Toolbar,
@@ -10,13 +10,16 @@ import {
   Box,
   Tooltip,
   Divider,
+  Badge,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import LogoutIcon from '@mui/icons-material/Logout';
 import SettingsIcon from '@mui/icons-material/Settings';
 import PersonIcon from '@mui/icons-material/Person';
-import SignalWifiStatusbar4BarIcon from '@mui/icons-material/SignalWifiStatusbar4Bar';
-import SignalWifiConnectedNoInternet4Icon from '@mui/icons-material/SignalWifiConnectedNoInternet4';
+import SignalWifi4BarIcon from '@mui/icons-material/SignalWifi4Bar';
+import SignalWifi3BarIcon from '@mui/icons-material/SignalWifi3Bar';
+import SignalWifiOffIcon from '@mui/icons-material/SignalWifiOff';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { useAuth } from '../contexts/AuthContext';
 import { getAnimalEmoji } from '../utils/avatarUtils';
 import NotificationBell from '../features/notification/NotificationBell';
@@ -35,11 +38,30 @@ const Header = ({ onOpenCVEDetail }) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
-
-  // WebSocket 상태 변경 모니터링
+  
+  // 웹소켓 상태 모니터링을 위한 로컬 상태
+  const [localConnected, setLocalConnected] = useState(isConnected);
+  const [localReady, setLocalReady] = useState(isReady);
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const lastConnectionAttemptRef = useRef(0);
+  
+  // WebSocket 상태 변경 즉시 감지 및 로컬 상태 동기화
   useEffect(() => {
     console.log(`[Header] WebSocket 상태 변경: isConnected=${isConnected}, isReady=${isReady}`);
-  }, [isConnected, isReady]);
+    
+    // 상태 변경을 로컬 상태에 즉시 반영
+    setLocalConnected(isConnected);
+    setLocalReady(isReady);
+    
+    // 재연결 시도 중 상태 관리
+    if (isReconnecting && isConnected) {
+      setIsReconnecting(false);
+      enqueueSnackbar('서버와 성공적으로 재연결되었습니다', { 
+        variant: 'success',
+        anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+      });
+    }
+  }, [isConnected, isReady, isReconnecting, enqueueSnackbar]);
 
   const handleMenu = (event) => {
     setAnchorEl(event.currentTarget);
@@ -98,52 +120,85 @@ const Header = ({ onOpenCVEDetail }) => {
   const renderConnectionStatus = () => {
     if (!user) return null;  // 로그인하지 않은 경우 표시하지 않음
     
+    // 수동 재연결 처리 함수
+    const handleReconnect = () => {
+      // 재연결 요청 간격 제한 (3초)
+      const now = Date.now();
+      if (now - lastConnectionAttemptRef.current < 3000) {
+        enqueueSnackbar('잠시 후 다시 시도해주세요', { 
+          variant: 'info',
+          anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+        });
+        return;
+      }
+      
+      console.log('[Header] 수동 재연결 시도');
+      lastConnectionAttemptRef.current = now;
+      setIsReconnecting(true);
+      
+      // 연결 시도 전 상태 초기화를 위해 먼저 연결 해제
+      webSocketInstance.disconnect();
+      
+      // 잠시 후 연결 시도
+      setTimeout(() => {
+        if (!localConnected) {
+          webSocketInstance.connect();
+          enqueueSnackbar('서버와 재연결을 시도합니다', { 
+            variant: 'info',
+            anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+          });
+        }
+      }, 300);
+    };
+    
     // 연결 상태에 따른 아이콘 표시
     return (
       <Tooltip title={
-        isConnected 
-          ? (isReady ? "서버와 연결됨 (준비 완료)" : "서버와 연결됨 (준비 중...)")
-          : "서버와 연결 끊김 (클릭하여 재연결 시도)"
+        isReconnecting 
+          ? "서버와 재연결 시도 중..."
+          : (localConnected 
+              ? "서버와 연결됨"
+              : "서버와 연결 끊김 (클릭하여 재연결 시도)")
       }>
-        <IconButton 
-          size="small" 
-          sx={{ ml: 2 }}
-          onClick={() => {
-            if (!isConnected) {
-              console.log('[Header] 수동 재연결 시도');
-              webSocketInstance.connect();
-              enqueueSnackbar('WebSocket 재연결을 시도합니다.', { 
-                variant: 'info', 
-                anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-              });
-            }
-          }}
+        <Badge
+          overlap="circular"
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          badgeContent={
+            isReconnecting ? (
+              <RefreshIcon sx={{ fontSize: 10, color: theme.palette.warning.main }} />
+            ) : null
+          }
         >
-          {isConnected ? (
-            isReady ? (
-              <SignalWifiStatusbar4BarIcon 
+          <IconButton 
+            size="small" 
+            sx={{ ml: 2 }}
+            onClick={!localConnected || isReconnecting ? handleReconnect : undefined}
+            disabled={isReconnecting}
+          >
+            {isReconnecting ? (
+              <SignalWifi3BarIcon 
+                sx={{ 
+                  color: theme.palette.warning.main,
+                  animation: 'pulse 0.8s infinite'
+                }} 
+              />
+            ) : localConnected ? (
+              <SignalWifi4BarIcon 
                 sx={{ 
                   color: theme.palette.success.main,
-                  animation: 'readyPulse 2s infinite'
+                  animation: 'none'
                 }} 
               />
             ) : (
-              <SignalWifiStatusbar4BarIcon 
+              <SignalWifiOffIcon 
                 sx={{ 
-                  color: theme.palette.info.main,
-                  animation: 'pulse 1.5s infinite'
-                }} 
+                  color: theme.palette.error.main,
+                  animation: 'errorPulse 1.2s infinite'
+                }}
               />
-            )
-          ) : (
-            <SignalWifiConnectedNoInternet4Icon 
-              sx={{ 
-                color: theme.palette.error.main,
-                animation: 'errorPulse 1.2s infinite'
-              }} 
-            />
-          )}
-        </IconButton>
+            )}
+          </IconButton>
+        </Badge>
       </Tooltip>
     );
   };
@@ -224,3 +279,20 @@ const Header = ({ onOpenCVEDetail }) => {
 };
 
 export default Header;
+
+// 글로벌 스타일 요소 추가
+const style = document.createElement('style');
+style.textContent = `
+  @keyframes pulse {
+    0% { opacity: 0.6; }
+    50% { opacity: 1; }
+    100% { opacity: 0.6; }
+  }
+  
+  @keyframes errorPulse {
+    0% { opacity: 0.7; }
+    50% { opacity: 1; }
+    100% { opacity: 0.7; }
+  }
+`;
+document.head.appendChild(style);

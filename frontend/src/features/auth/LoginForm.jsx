@@ -16,7 +16,7 @@ const LoginForm = () => {
             
             // 로그인 성공 후 WebSocket 연결이 완료될 때까지 대기
             const checkConnection = () => {
-                if (WebSocketService.isConnected()) {
+                if (WebSocketService.checkConnection()) {
                     navigate('/cves');
                 } else {
                     setTimeout(checkConnection, 100);

@@ -8,12 +8,6 @@ import {
   DialogActions,
   Tooltip,
   Fade,
-  Chip,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  TextField,
   Button
 } from '@mui/material';
 import {
@@ -27,7 +21,6 @@ import {
   ActionButton,
   ActionIconButton,
   ListHeader,
-  ChipLabel,
   EmptyState
 } from './CommonStyles';
 import { useDispatch } from 'react-redux';
@@ -35,7 +28,7 @@ import {
   updateCVEDetail,
   fetchCVEDetail
 } from '../../../store/slices/cveSlice';
-import { WS_EVENT_TYPE } from '../../../services/websocket';
+import { WS_EVENT } from '../../../services/websocket/index';
 import { useSnackbar } from 'notistack';
 
 /**
@@ -169,7 +162,7 @@ const GenericDataTab = memo(({
       if (response) {
         // WebSocket 메시지 전송 - 필드 정보 추가
         await sendMessage(
-          WS_EVENT_TYPE.CVE_UPDATED,
+          WS_EVENT.CVE_UPDATED,
           {
             cveId: cve.cveId,
             field: tabConfig.wsFieldName,
@@ -212,7 +205,7 @@ const GenericDataTab = memo(({
       if (response) {
         // WebSocket 메시지 전송 - 필드 정보 추가
         await sendMessage(
-          WS_EVENT_TYPE.CVE_UPDATED,
+          WS_EVENT.CVE_UPDATED,
           {
             cveId: cve.cveId,
             field: tabConfig.wsFieldName,
@@ -273,7 +266,7 @@ const GenericDataTab = memo(({
       if (response) {
         // WebSocket 메시지 전송 - 필드 정보 추가
         await sendMessage(
-          WS_EVENT_TYPE.CVE_UPDATED,
+          WS_EVENT.CVE_UPDATED,
           {
             cveId: cve.cveId,
             field: tabConfig.wsFieldName,

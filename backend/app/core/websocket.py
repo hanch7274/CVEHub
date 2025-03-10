@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketState, WebSocketDisconnect as Starlett
 from bson import ObjectId
 from ..models.user import User
 from .cache import handle_websocket_event
+import uuid
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -58,6 +59,12 @@ class ConnectionManager:
         self.last_activity: Dict[str, Dict[WebSocket, datetime]] = {}
         self.ping_timers: Dict[str, Dict[WebSocket, asyncio.Task]] = {}
         
+        # 세션별 구독 정보 추적을 위한 데이터 구조 추가
+        # 형식: {session_id: {user_id: [cve_id1, cve_id2, ...]}}
+        self.session_subscriptions: Dict[str, Dict[str, List[str]]] = {}
+        # 사용자별 세션 구독 목록: {user_id: {cve_id: [session_id1, session_id2]}}
+        self.user_session_subscriptions: Dict[str, Dict[str, List[str]]] = {}
+        
         self.KEEP_ALIVE_TIMEOUT = 120
         self.PING_INTERVAL = 45
         self.PONG_TIMEOUT = 15
@@ -68,50 +75,111 @@ class ConnectionManager:
         # 메시지 크기 제한
         self.MAX_WS_MESSAGE_SIZE = 1024 * 50  # 50KB 제한
 
+    def has_active_connections(self, user_id=None) -> bool:
+        """
+        사용자 ID에 대한 활성 WebSocket 연결이 있는지 확인합니다.
+        user_id가 None이면 모든 사용자에 대해 확인합니다.
+        
+        Args:
+            user_id: 확인할 사용자 ID (선택 사항)
+            
+        Returns:
+            bool: 활성 연결이 있으면 True, 없으면 False
+        """
+        try:
+            # 사용자 ID 정규화 (문자열 형식으로 변환)
+            normalized_user_id = str(user_id) if user_id else None
+            
+            if normalized_user_id:
+                # 특정 사용자에 대한 연결 확인
+                connections = self.user_connections.get(normalized_user_id, [])
+                has_connections = len(connections) > 0
+                
+                # 연결 상태 로깅
+                if has_connections:
+                    logger.info(f"사용자 {normalized_user_id}에 대한 활성 WebSocket 연결 {len(connections)}개 확인")
+                else:
+                    logger.warning(f"사용자 {normalized_user_id}에 대한 활성 WebSocket 연결 없음")
+                    
+                    # 디버깅을 위한 추가 정보 로깅
+                    if self.user_connections:
+                        logger.debug(f"현재 활성 연결 사용자 목록: {list(self.user_connections.keys())}")
+                        
+                        # MongoDB ObjectId와 문자열 형식 불일치 확인
+                        for existing_id in self.user_connections.keys():
+                            if normalized_user_id in existing_id or existing_id in normalized_user_id:
+                                logger.warning(f"ID 형식 불일치 가능성: 요청된 ID '{normalized_user_id}'와 저장된 ID '{existing_id}'가 유사함")
+                
+                return has_connections
+            else:
+                # 모든 사용자에 대한 연결 확인
+                total_connections = sum(len(conns) for conns in self.user_connections.values())
+                
+                if total_connections > 0:
+                    logger.info(f"총 {len(self.user_connections)}명의 사용자에 대한 {total_connections}개의 활성 WebSocket 연결 확인")
+                else:
+                    logger.warning("활성 WebSocket 연결이 없음")
+                    
+                return total_connections > 0
+        except Exception as e:
+            logger.error(f"WebSocket 연결 확인 중 오류 발생: {str(e)}")
+            return False
+
     async def connect(self, websocket: WebSocket, user_id: str) -> bool:
         """웹소켓 연결 활성화"""
         try:
             # 웹소켓 연결 수락 - 이미 수락된 상태라면 무시
             if websocket.client_state != WebSocketState.CONNECTED:
                 await websocket.accept()
+                logger.debug(f"웹소켓 연결 수락됨 - 사용자: {user_id}, IP: {websocket.client.host}")
+            else:
+                logger.debug(f"이미 연결된 웹소켓 - 사용자: {user_id}, IP: {websocket.client.host}")
             
-            # 전체 연결 목록에 추가
+            # 전체 연결 목록에 추가 (active_connections는 리스트)
             self.active_connections.append(websocket)
             
-            # 사용자별 연결 관리
+            # 사용자별 연결 관리 (user_connections는 딕셔너리)
             if user_id not in self.user_connections:
                 self.user_connections[user_id] = []
             self.user_connections[user_id].append(websocket)
+            
+            # 연결 상태 로깅
+            total_connections = len(self.active_connections)
+            active_users = len(self.user_connections)
+            user_connection_count = len(self.user_connections.get(user_id, []))
+            
+            logger.info(f"새 웹소켓 연결 성공 - 사용자: {user_id}, IP: {websocket.client.host}")
+            logger.info(f"연결 상태 - 총 연결: {total_connections}, 활성 사용자: {active_users}, 사용자 {user_id}의 연결 수: {user_connection_count}")
+            logger.debug(f"활성 사용자 목록: {list(self.user_connections.keys())}")
             
             # 마지막 활동 시간 초기화
             if user_id not in self.last_activity:
                 self.last_activity[user_id] = {}
             self.last_activity[user_id][websocket] = datetime.now(ZoneInfo("Asia/Seoul"))
             
-            # ping 타이머 초기화
-            if user_id not in self.ping_timers:
-                self.ping_timers[user_id] = {}
+            # 핑 타이머 설정
+            await self.start_ping_timer(user_id, websocket)
             
-            # 연결 확인 메시지 전송 - Starlette의 send_json 활용
-            await websocket.send_json({
-                "type": WSMessageType.CONNECTED,
-                "data": {
-                    "user_id": user_id,
-                    "timestamp": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S')
+            # 명시적으로 연결 확인 메시지 전송
+            try:
+                connect_ack_message = {
+                    "type": "connect_ack",
+                    "data": {
+                        "user_id": user_id,
+                        "timestamp": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S'),
+                        "connection_info": {
+                            "total_connections": total_connections,
+                            "user_connections": user_connection_count
+                        },
+                        "message": "서버 연결이 성공적으로 수락되었습니다."
+                    }
                 }
-            })
+                await websocket.send_json(connect_ack_message)
+                logger.debug(f"connect_ack 메시지 전송 - 사용자: {user_id}")
+            except Exception as e:
+                logger.error(f"connect_ack 메시지 전송 중 오류 발생: {str(e)}")
+                logger.error(traceback.format_exc())
             
-            # ping 타이머 시작
-            self.ping_timers[user_id][websocket] = asyncio.create_task(
-                self.start_ping_timer(user_id, websocket)
-            )
-            
-            logger.info(f"새 웹소켓 연결 성공 - 사용자: {user_id}, IP: {websocket.client.host}")
-            
-            # 클린업 태스크 시작
-            if not self.cleanup_task or self.cleanup_task.done():
-                self.cleanup_task = asyncio.create_task(self.start_cleanup_task())
-                
             return True
         except Exception as e:
             logger.error(f"연결 중 오류: {str(e)}")
@@ -121,25 +189,55 @@ class ConnectionManager:
     async def disconnect(self, user_id: str, websocket: WebSocket):
         """사용자 웹소켓 연결 해제"""
         try:
+            # 연결 상태 로깅 (연결 해제 전)
+            total_connections_before = len(self.active_connections)
+            active_users_before = len(self.user_connections)
+            user_connection_count_before = len(self.user_connections.get(user_id, []))
+            
+            logger.debug(f"웹소켓 연결 해제 시작 - 사용자: {user_id}")
+            logger.debug(f"연결 해제 전 상태 - 총 연결: {total_connections_before}, 활성 사용자: {active_users_before}, 사용자 {user_id}의 연결 수: {user_connection_count_before}")
+            
             # 전체 연결 목록에서 제거
             if websocket in self.active_connections:
                 self.active_connections.remove(websocket)
-                
+                logger.debug(f"전체 연결 목록에서 웹소켓 제거됨 - 사용자: {user_id}")
+            else:
+                logger.warning(f"전체 연결 목록에 존재하지 않는 웹소켓 - 사용자: {user_id}")
+            
             # 사용자별 연결에서 제거
             if user_id in self.user_connections:
                 if websocket in self.user_connections[user_id]:
                     self.user_connections[user_id].remove(websocket)
+                    logger.debug(f"사용자 {user_id}의 연결 목록에서 웹소켓 제거됨")
+                else:
+                    logger.warning(f"사용자 {user_id}의 연결 목록에 존재하지 않는 웹소켓")
+                
+                # 사용자의 모든 연결이 끊어진 경우 딕셔너리에서 사용자 제거
+                if not self.user_connections[user_id]:
+                    del self.user_connections[user_id]
+                    logger.debug(f"사용자 {user_id}의 모든 연결이 끊어져 사용자 항목 제거됨")
                 
                 # 사용자의 ping 타이머 취소
                 if user_id in self.ping_timers and websocket in self.ping_timers[user_id]:
                     self.ping_timers[user_id][websocket].cancel()
                     del self.ping_timers[user_id][websocket]
+                    logger.debug(f"사용자 {user_id}의 ping 타이머 취소됨")
                 
                 # 사용자의 마지막 활동 시간 제거
                 if user_id in self.last_activity and websocket in self.last_activity[user_id]:
                     del self.last_activity[user_id][websocket]
+                    logger.debug(f"사용자 {user_id}의 마지막 활동 시간 제거됨")
+            else:
+                logger.warning(f"연결 해제 중 - 사용자 {user_id}가 연결 목록에 존재하지 않음")
             
-            logger.info(f"웹소켓 연결 해제 - 사용자: {user_id}")
+            # 연결 상태 로깅 (연결 해제 후)
+            total_connections_after = len(self.active_connections)
+            active_users_after = len(self.user_connections)
+            user_connection_count_after = len(self.user_connections.get(user_id, []))
+            
+            logger.info(f"웹소켓 연결 해제 완료 - 사용자: {user_id}")
+            logger.info(f"연결 해제 후 상태 - 총 연결: {total_connections_after}, 활성 사용자: {active_users_after}, 사용자 {user_id}의 연결 수: {user_connection_count_after}")
+            logger.debug(f"활성 사용자 목록: {list(self.user_connections.keys())}")
         except Exception as e:
             logger.error(f"연결 해제 중 오류: {str(e)}")
             logger.error(traceback.format_exc())
@@ -191,9 +289,9 @@ class ConnectionManager:
             message_data = message.get("data", {})
 
             if message_type not in ["ping", "pong"]:
-                logger.info(f"[WebSocket] Message received from user {user_id}:")
-                logger.info(f"[WebSocket] Message type: {message_type}")
-                logger.info(f"[WebSocket] Message data: {json.dumps(message_data, indent=2)}")
+                logger.info(f"[웹소켓] Message received from user {user_id}:")
+                logger.info(f"[웹소켓] Message type: {message_type}")
+                logger.info(f"[웹소켓] Message data: {json.dumps(message_data, indent=2)}")
             
             if message_type == "subscribe_cve":
                 cve_id = message_data.get("cveId")
@@ -212,7 +310,7 @@ class ConnectionManager:
             elif message_type == "unsubscribe_cve":
                 cve_id = message_data.get("cveId")
                 if cve_id:
-                    logger.info(f"[WebSocket] Processing unsubscribe_cve request for {cve_id}")
+                    logger.info(f"[웹소켓] Processing unsubscribe_cve request for {cve_id}")
                     subscribers = await self.unsubscribe_cve(user_id, cve_id)
                     response = {
                         "type": "unsubscribe_cve",
@@ -221,58 +319,181 @@ class ConnectionManager:
                             "subscribers": subscribers
                         }
                     }
-                    logger.info(f"[WebSocket] Sending unsubscribe response: {response}")
                     await websocket.send_json(response)
                     return
-            
+            elif message_type == "cleanup_connections":
+                # 다중 연결 정리 메시지 처리
+                cleanup_response = await self.handle_cleanup_connections(websocket, user_id, message_data)
+                await websocket.send_json(cleanup_response)
+                return
+            elif message_type == "session_info":
+                # 세션 정보 메시지 처리
+                session_id = message_data.get("sessionId")
+                client_info = message_data.get("clientInfo", {})
+                needs_ack = message_data.get("needsAck", False)
+                priority = message_data.get("priority", "normal")
+                
+                if session_id:
+                    logger.info(f"세션 정보 수신 - 사용자: {user_id}, 세션: {session_id}")
+                    
+                    # 세션 정보 저장
+                    if user_id not in self.session_subscriptions:
+                        self.session_subscriptions[user_id] = {}
+                    
+                    # connect_ack 응답 전송 (session_info_ack 대신)
+                    # 클라이언트의 웹소켓 초기화와 일관성을 유지하기 위해
+                    connection_info = await self.get_connection_info(user_id)
+                    
+                    response = {
+                        "type": "connect_ack",  # session_info_ack 대신 connect_ack 사용
+                        "data": {
+                            "user_id": user_id,
+                            "session_id": session_id,
+                            "timestamp": current_time.strftime('%Y-%m-%d %H:%M:%S'),
+                            "connection_info": connection_info,
+                            "message": "서버 연결이 성공적으로 수락되었습니다."
+                        }
+                    }
+                    
+                    # 우선순위가 높은 메시지는 즉시 응답
+                    if priority == "high" or needs_ack:
+                        await websocket.send_json(response)
+                    else:
+                        # 일반 우선순위 메시지는 약간의 지연 허용 (백그라운드 태스크로 전송)
+                        asyncio.create_task(websocket.send_json(response))
+                
+            # 기타 메시지 타입 핸들링
+            # ...
+
         except Exception as e:
-            logger.error(f"[WebSocket] Error handling message: {str(e)}")
-            logger.error(f"[WebSocket] Message that caused error: {json.dumps(message, indent=2)}")
-            logger.error(f"[WebSocket] Traceback: {traceback.format_exc()}")
-            await self.disconnect(user_id, websocket)
+            logger.error(f"메시지 처리 중 오류 발생: {str(e)}")
+            logger.error(traceback.format_exc())
+            
+    async def handle_cleanup_connections(self, websocket: WebSocket, user_id: str, data: dict):
+        """
+        사용자의 다중 연결을 정리합니다.
+        
+        Args:
+            websocket (WebSocket): 현재 웹소켓 연결
+            user_id (str): 사용자 ID
+            data (dict): 요청 데이터
+        """
+        try:
+            # 요청 데이터 확인
+            keep_current = data.get("keepCurrent", True)
+            session_id = data.get("sessionId")
+            current_count = data.get("currentCount", 0)
+            
+            if not session_id:
+                logger.warning(f"연결 정리 요청에 세션 ID가 없음 - 사용자: {user_id}")
+                return {
+                    "success": False,
+                    "message": "세션 ID가 필요합니다.",
+                    "type": "cleanup_response"
+                }
+            
+            # 세션 ID 로깅
+            logger.info(f"연결 정리 요청 - 사용자: {user_id}, 세션: {session_id}, 현재 연결 수: {current_count}")
+            
+            # 사용자 연결 목록 확인
+            user_websockets = self.user_connections.get(user_id, [])
+            if not user_websockets:
+                logger.info(f"정리할 연결 없음 - 사용자: {user_id}")
+                return {
+                    "success": True,
+                    "message": "정리할 연결이 없습니다.",
+                    "count": 0,
+                    "type": "cleanup_response"
+                }
+            
+            # 현재 연결 제외하고 정리
+            to_disconnect = []
+            current_ws_key = id(websocket)
+            
+            for ws in user_websockets:
+                # 현재 웹소켓과 다른 연결만 정리
+                if keep_current and id(ws) == current_ws_key:
+                    continue
+                
+                # 정리 대상 추가
+                to_disconnect.append(ws)
+            
+            # 연결 정리
+            disconnect_count = 0
+            for ws in to_disconnect:
+                try:
+                    if ws.client_state == WebSocketState.CONNECTED:
+                        await ws.close(code=1000, reason="다른 세션에서 새로운 연결 감지")
+                        disconnect_count += 1
+                        logger.info(f"중복 연결 정리됨 - 사용자: {user_id}")
+                except Exception as e:
+                    logger.error(f"연결 종료 중 오류: {str(e)}")
+            
+            # 응답 생성
+            return {
+                "success": True,
+                "message": f"{disconnect_count}개 연결이 정리되었습니다.",
+                "count": disconnect_count,
+                "type": "cleanup_response"
+            }
+        except Exception as e:
+            logger.error(f"연결 정리 처리 중 오류: {str(e)}")
+            logger.error(traceback.format_exc())
+            return {
+                "success": False,
+                "message": f"연결 정리 중 오류 발생: {str(e)}",
+                "type": "cleanup_response"
+            }
 
     async def start_ping_timer(self, user_id: str, websocket: WebSocket):
         try:
             while True:
                 await asyncio.sleep(self.PING_INTERVAL)
                 if user_id not in self.active_connections:
+                    logger.debug(f"Ping 타이머 종료: 사용자 {user_id}가 더 이상, active_connections에 존재하지 않음")
                     break
-
+                
+                if websocket.client_state != WebSocketState.CONNECTED:
+                    logger.debug(f"Ping 타이머 종료: 사용자 {user_id}의 웹소켓이 연결 상태가 아님")
+                    await self.disconnect(user_id, websocket)
+                    break
+                
                 try:
-                    ping_time = datetime.now(ZoneInfo("Asia/Seoul"))
-                    try:
-                        await websocket.send_json({
-                            "type": WSMessageType.PING,
-                            "timestamp": ping_time.strftime('%Y-%m-%d %H:%M:%S')
-                        })
-                    except Exception as send_error:
-                        logger.error(f"Error sending ping: {str(send_error)}")
+                    logger.debug(f"사용자 {user_id}에게 ping 메시지 전송")
+                    await websocket.send_json({
+                        "type": WSMessageType.PING,
+                        "data": {
+                            "timestamp": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S')
+                        }
+                    })
+                    
+                    # Ping 응답 타임아웃 타이머
+                    start_time = datetime.now()
+                    while datetime.now() - start_time < timedelta(seconds=self.PONG_TIMEOUT):
+                        # 최근 활동 시간 확인
+                        if user_id in self.last_activity and websocket in self.last_activity[user_id]:
+                            last_activity = self.last_activity[user_id][websocket]
+                            if (datetime.now(ZoneInfo("Asia/Seoul")) - last_activity) < timedelta(seconds=self.PONG_TIMEOUT):
+                                logger.debug(f"사용자 {user_id}의 Pong 응답 또는 최근 활동 확인됨")
+                                break
+                        
+                        await asyncio.sleep(1)
+                    else:
+                        # Pong 응답이 없으면 연결 종료
+                        logger.warning(f"사용자 {user_id}의 Pong 응답 없음 - 연결 종료")
                         await self.disconnect(user_id, websocket)
                         break
                     
-                    pong_received = False
-                    for _ in range(self.PONG_TIMEOUT):
-                        if websocket not in self.last_activity[user_id]:
-                            break
-                        last_activity = self.last_activity[user_id][websocket]
-                        if last_activity > ping_time:
-                            pong_received = True
-                            break
-                        await asyncio.sleep(1)
-                    
-                    if not pong_received:
-                        logger.warning(f"No pong response from user {user_id} - Closing connection")
-                        await self.handle_connection_error(user_id, websocket)
-                        break
-
                 except Exception as e:
-                    if "close message has been sent" not in str(e):
-                        logger.error(f"Error in ping timer for user {user_id}: {str(e)}")
-                    await self.handle_connection_error(user_id, websocket)
+                    logger.error(f"Ping 전송 중 오류: {str(e)}")
+                    await self.disconnect(user_id, websocket)
                     break
-
+                
+        except asyncio.CancelledError:
+            logger.debug(f"Ping 타이머 취소됨: 사용자 {user_id}")
         except Exception as e:
-            logger.error(f"Error in ping timer for user {user_id}: {str(e)}")
+            logger.error(f"Ping 타이머 오류: {str(e)}")
+            logger.error(traceback.format_exc())
 
     async def handle_connection_error(self, user_id: str, websocket: WebSocket):
         try:
@@ -287,21 +508,44 @@ class ConnectionManager:
         except Exception as e:
             logger.error(f"Error in handle_connection_error: {str(e)}")
 
-    async def subscribe_cve(self, user_id: str, cve_id: str):
+    async def subscribe_cve(self, user_id: str, cve_id: str, session_id: str = None):
         try:
+            # 세션 ID가 없으면 UUID 생성
+            if not session_id:
+                logger.warning(f"세션 ID 없이 구독 요청됨, 임시 ID 생성 - 사용자: {user_id}, CVE: {cve_id}")
+                session_id = f"temp_{str(uuid.uuid4())}"
+
+            # 기존 구독 목록 관리 (하위 호환성 유지)
             if user_id not in self.subscriptions:
                 self.subscriptions[user_id] = []
             if cve_id not in self.subscriptions[user_id]:
                 self.subscriptions[user_id].append(cve_id)
-                logger.info(f"[WebSocket] Added subscription:")
+                logger.info(f"[웹소켓] Added subscription:")
                 logger.info(f"  - CVE: {cve_id}")
                 logger.info(f"  - User: {user_id}")
+                logger.info(f"  - Session: {session_id}")
             
-            # cve_subscribers로 통일
+            # cve_subscribers 통일
             if cve_id not in self.cve_subscribers:
                 self.cve_subscribers[cve_id] = set()
             self.cve_subscribers[cve_id].add(user_id)
             
+            # 세션별 구독 정보 추가
+            if session_id not in self.session_subscriptions:
+                self.session_subscriptions[session_id] = {}
+            if user_id not in self.session_subscriptions[session_id]:
+                self.session_subscriptions[session_id][user_id] = []
+            if cve_id not in self.session_subscriptions[session_id][user_id]:
+                self.session_subscriptions[session_id][user_id].append(cve_id)
+            
+            # 사용자별 세션 구독 정보 추가
+            if user_id not in self.user_session_subscriptions:
+                self.user_session_subscriptions[user_id] = {}
+            if cve_id not in self.user_session_subscriptions[user_id]:
+                self.user_session_subscriptions[user_id][cve_id] = []
+            if session_id not in self.user_session_subscriptions[user_id][cve_id]:
+                self.user_session_subscriptions[user_id][cve_id].append(session_id)
+                
             # 구독자 정보 조회
             subscriber_details = []
             for subscriber_id in self.cve_subscribers[cve_id]:
@@ -334,7 +578,7 @@ class ConnectionManager:
             await self.send_message(user_id, message)
 
             # 로깅
-            logger.info(f"[WebSocket] Broadcast subscribe message:")
+            logger.info(f"[웹소켓] Broadcast subscribe message:")
             logger.info(f"  - CVE: {cve_id}")
             logger.info(f"  - New subscriber: {user_id}")
             logger.info(f"  - Total subscribers: {len(subscriber_details)}")
@@ -344,27 +588,83 @@ class ConnectionManager:
 
             return subscriber_details
         except Exception as e:
-            logger.error(f"[WebSocket] Error in subscribe_cve: {str(e)}")
+            logger.error(f"[웹소켓] Error in subscribe_cve: {str(e)}")
             logger.error(traceback.format_exc())
             return []
 
-    async def unsubscribe_cve(self, user_id: str, cve_id: str):
+    async def unsubscribe_cve(self, user_id: str, cve_id: str, session_id: str = None):
         try:
-            logger.info(f"[WebSocket] Processing unsubscribe request:")
+            logger.info(f"[웹소켓] Processing unsubscribe request:")
             logger.info(f"  - CVE: {cve_id}")
             logger.info(f"  - User: {user_id}")
+            if session_id:
+                logger.info(f"  - Session: {session_id}")
 
+            # 기존 구독 목록에서 제거 (하위 호환성 유지)
             if user_id in self.subscriptions and cve_id in self.subscriptions[user_id]:
-                self.subscriptions[user_id] = [id for id in self.subscriptions[user_id] if id != cve_id]
-                logger.info(f"[WebSocket] Removed subscription:")
-                logger.info(f"  - CVE: {cve_id}")
-                logger.info(f"  - User: {user_id}")
+                # 특정 세션만 제거하는 경우, 다른 세션에서도 구독 중인지 확인
+                if session_id and user_id in self.user_session_subscriptions and cve_id in self.user_session_subscriptions[user_id]:
+                    other_sessions = [s for s in self.user_session_subscriptions[user_id][cve_id] if s != session_id]
+                    # 다른 세션에서도 구독 중이면 전체 구독 목록에서는 제거하지 않음
+                    if other_sessions:
+                        logger.info(f"[웹소켓] 다른 세션에서도 구독 중 - 전체 구독 목록 유지:")
+                        logger.info(f"  - CVE: {cve_id}")
+                        logger.info(f"  - User: {user_id}")
+                        logger.info(f"  - Other sessions: {len(other_sessions)}")
+                    else:
+                        # 다른 세션에서 구독 중이 아니면 전체 구독 목록에서 제거
+                        self.subscriptions[user_id] = [id for id in self.subscriptions[user_id] if id != cve_id]
+                        # cve_subscribers에서도 제거
+                        if cve_id in self.cve_subscribers:
+                            self.cve_subscribers[cve_id].discard(user_id)
+                            if not self.cve_subscribers[cve_id]:
+                                del self.cve_subscribers[cve_id]
+                        logger.info(f"[웹소켓] 모든 세션에서 구독 해제됨:")
+                        logger.info(f"  - CVE: {cve_id}")
+                        logger.info(f"  - User: {user_id}")
+                else:
+                    # 세션 ID가 없거나 세션별 구독 정보가 없는 경우 전체 구독 해제
+                    self.subscriptions[user_id] = [id for id in self.subscriptions[user_id] if id != cve_id]
+                    # cve_subscribers에서도 제거
+                    if cve_id in self.cve_subscribers:
+                        self.cve_subscribers[cve_id].discard(user_id)
+                        if not self.cve_subscribers[cve_id]:
+                            del self.cve_subscribers[cve_id]
+                    logger.info(f"[웹소켓] 구독 해제 완료:")
+                    logger.info(f"  - CVE: {cve_id}")
+                    logger.info(f"  - User: {user_id}")
             
-            # cve_subscribers로 통일
-            if cve_id in self.cve_subscribers:
-                self.cve_subscribers[cve_id].discard(user_id)
-                if not self.cve_subscribers[cve_id]:
-                    del self.cve_subscribers[cve_id]
+            # 세션별 구독 정보 업데이트
+            if session_id:
+                # 세션 구독 정보에서 제거
+                if session_id in self.session_subscriptions and user_id in self.session_subscriptions[session_id]:
+                    if cve_id in self.session_subscriptions[session_id][user_id]:
+                        self.session_subscriptions[session_id][user_id].remove(cve_id)
+                        logger.info(f"[웹소켓] 세션별 구독 정보 업데이트:")
+                        logger.info(f"  - CVE: {cve_id}")
+                        logger.info(f"  - User: {user_id}")
+                        logger.info(f"  - Session: {session_id}")
+                    
+                    # 해당 사용자의 구독이 없으면 사용자 정보도 제거
+                    if not self.session_subscriptions[session_id][user_id]:
+                        del self.session_subscriptions[session_id][user_id]
+                    
+                    # 해당 세션의 구독이 없으면 세션 정보도 제거
+                    if not self.session_subscriptions[session_id]:
+                        del self.session_subscriptions[session_id]
+                
+                # 사용자별 세션 구독 정보에서 제거
+                if user_id in self.user_session_subscriptions and cve_id in self.user_session_subscriptions[user_id]:
+                    if session_id in self.user_session_subscriptions[user_id][cve_id]:
+                        self.user_session_subscriptions[user_id][cve_id].remove(session_id)
+                    
+                    # 해당 CVE의 세션이 없으면 CVE 정보도 제거
+                    if not self.user_session_subscriptions[user_id][cve_id]:
+                        del self.user_session_subscriptions[user_id][cve_id]
+                    
+                    # 해당 사용자의 구독이 없으면 사용자 정보도 제거
+                    if not self.user_session_subscriptions[user_id]:
+                        del self.user_session_subscriptions[user_id]
             
             # 남은 구독자 정보 조회
             subscriber_details = []
@@ -382,14 +682,12 @@ class ConnectionManager:
             unsubscribed_user = await User.find_one({"_id": ObjectId(user_id)})
             username = unsubscribed_user.username if unsubscribed_user else "알 수 없는 사용자"
             
-            logger.info(f"[WebSocket] Current subscription state for {cve_id}:")
+            logger.info(f"[웹소켓] Current subscription state for {cve_id}:")
             logger.info(f"  - Total remaining subscribers: {len(subscriber_details)}")
             if subscriber_details:
                 logger.info("  - Active subscribers:")
                 for sub in subscriber_details:
-                    logger.info(f"    • {sub['username']} (ID: {sub['id']}, Display: {sub['displayName']})")
-            else:
-                logger.info("  - No active subscribers remaining")
+                    logger.info(f"    • {sub['username']} (ID: {sub['id']}, Display: {sub.get('displayName', sub['username'])})")
             
             # 구독 해제 메시지를 모든 구독자에게 브로드캐스트
             message = {
@@ -411,7 +709,7 @@ class ConnectionManager:
             
             return subscriber_details
         except Exception as e:
-            logger.error(f"[WebSocket] Error in unsubscribe_cve: {str(e)}")
+            logger.error(f"[웹소켓] Error in unsubscribe_cve: {str(e)}")
             logger.error(traceback.format_exc())
             return []
 
@@ -433,7 +731,7 @@ class ConnectionManager:
                     })
 
             # 로깅 추가
-            logger.info(f"[WebSocket] Subscriber details: {subscriber_details}")
+            logger.info(f"[웹소켓] Subscriber details: {subscriber_details}")
 
             # 기본 데이터 구성
             message_data = {
@@ -448,7 +746,7 @@ class ConnectionManager:
                     message_data.update(data)
                 else:
                     # 딕셔너리가 아닌 경우 안전하게 처리
-                    logger.warning(f"[WebSocket] Non-dictionary data provided to broadcast_to_cve: {data}")
+                    logger.warning(f"[웹소켓] Non-dictionary data provided to broadcast_to_cve: {data}")
                     message_data["additional_data"] = data
 
             message = {
@@ -460,33 +758,42 @@ class ConnectionManager:
             for user_id in subscribers:
                 await self.send_message(user_id, message)
             
-            logger.info(f"[WebSocket] Broadcasting message for {cve_id}:")
+            logger.info(f"[웹소켓] Broadcasting message for {cve_id}:")
             logger.info(f"  - Message type: {message_type}")
             logger.info(f"  - Subscribers count: {len(subscribers)}")
             logger.info(f"  - Active subscribers: {', '.join(subscribers)}")
 
         except Exception as e:
-            logger.error(f"[WebSocket] Error in broadcast_to_cve: {str(e)}")
+            logger.error(f"[웹소켓] Error in broadcast_to_cve: {str(e)}")
             logger.error(traceback.format_exc())
 
     async def send_message(self, user_id: str, message: dict):
-        if user_id in self.active_connections:
+        """
+        특정 사용자에게 메시지 전송하는 단순화된 메서드
+        
+        Args:
+            user_id: 메시지를 받을 사용자 ID
+            message: 전송할 메시지 (dict)
+        """
+        if user_id in self.user_connections:
             message["timestamp"] = datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S')
-            for websocket in self.active_connections:
+            for websocket in self.user_connections[user_id]:
                 try:
                     await websocket.send_json(message)
                 except Exception as e:
-                    logger.error(f"Error sending message to user {user_id}: {str(e)}")
-                    await self.disconnect(user_id, websocket)
-
+                    logger.error(f"메시지 전송 중 오류: {str(e)}")
+    
     async def send_personal_message(self, message: dict, user_id: str):
-        if user_id in self.active_connections:
-            for websocket in self.active_connections:
+        """
+        send_message의 별칭 (이전 코드와의 호환성 유지)
+        """
+        if user_id in self.user_connections:
+            for websocket in self.user_connections[user_id]:
                 try:
                     await websocket.send_json(message)
                 except Exception as e:
-                    logger.error(f"Error sending personal message: {str(e)}")
-                    await self.disconnect(user_id, websocket)
+                    logger.error(f"개인 메시지 전송 중 오류: {str(e)}")
+                    logger.error(traceback.format_exc())
 
     async def start_cleanup_task(self):
         """주기적으로 비활성 구독자 정리"""
@@ -495,142 +802,134 @@ class ConnectionManager:
                 await asyncio.sleep(self.CLEANUP_INTERVAL)
                 await self.cleanup_inactive_subscriptions()
             except Exception as e:
-                logger.error(f"[WebSocket] Error in cleanup task: {str(e)}")
+                logger.error(f"[웹소켓] Error in cleanup task: {str(e)}")
                 logger.error(traceback.format_exc())
 
     async def cleanup_inactive_subscriptions(self):
-        """비활성 구독자 정리"""
+        """
+        비활성 상태인 구독 정리
+        """
         try:
-            logger.info("[WebSocket] Starting inactive subscriptions cleanup")
-            
-            # 모든 CVE의 구독자 확인
-            for cve_id, subscribers in self.cve_subscribers.copy().items():
+            # 각 CVE에 대한 구독자 목록 확인
+            for cve_id, subscribers in self.cve_subscribers.items():
                 for user_id in subscribers.copy():
                     # 사용자가 연결되어 있지 않으면 구독 해제
-                    if user_id not in self.active_connections or not self.active_connections[user_id]:
+                    if user_id not in self.user_connections or not self.user_connections[user_id]:
                         # 마지막 활동 시간 확인 (15분 이상 비활성 상태인 경우에만 정리)
                         current_time = datetime.now(ZoneInfo("Asia/Seoul"))
-                        last_active = None
+                        last_activity_time = None
                         
-                        # 사용자의 모든 연결에 대한 마지막 활동 시간 확인
                         if user_id in self.last_activity:
-                            for ws, last_time in self.last_activity[user_id].items():
-                                if last_active is None or last_time > last_active:
-                                    last_active = last_time
+                            # 사용자의 모든 연결에 대한 마지막 활동 시간 중 가장 최근 시간 확인
+                            if self.last_activity[user_id]:
+                                last_activity_time = max(self.last_activity[user_id].values())
                         
-                        # 마지막 활동이 없거나 15분 이상 지난 경우에만 구독 해제
-                        if last_active is None or (current_time - last_active).total_seconds() > 900:  # 15분 = 900초
+                        # 마지막 활동 시간이 없거나 15분 이상 경과한 경우 구독 해제
+                        if not last_activity_time or (current_time - last_activity_time).total_seconds() > 900:  # 15분 = 900초
+                            logger.info(f"비활성 사용자 {user_id}의 {cve_id} 구독 자동 해제")
                             await self.unsubscribe_cve(user_id, cve_id)
-                            logger.info(f"[WebSocket] Cleaned up inactive subscription: User {user_id} from {cve_id}")
-                        else:
-                            logger.info(f"[WebSocket] Keeping subscription for recently active user: {user_id} on {cve_id}")
-
-            logger.info("[WebSocket] Completed inactive subscriptions cleanup")
         except Exception as e:
-            logger.error(f"[WebSocket] Error during subscription cleanup: {str(e)}")
+            logger.error(f"비활성 구독 정리 중 오류: {str(e)}")
             logger.error(traceback.format_exc())
 
-    async def broadcast_json(self, data: Dict[str, Any]):
-        """모든 활성화된 웹소켓 연결에 JSON 데이터 브로드캐스트"""
+    async def broadcast_json(self, message: dict, exclude_user_id: str = None, raise_exception: bool = False) -> bool:
+        """
+        모든 연결된 클라이언트에게 JSON 메시지를 브로드캐스트합니다.
+        
+        Args:
+            message: 전송할 메시지 (dict)
+            exclude_user_id: 제외할 사용자 ID (선택 사항)
+            raise_exception: 연결이 없을 때 예외를 발생시킬지 여부
+            
+        Returns:
+            bool: 메시지 전송 성공 여부
+            
+        Raises:
+            WebSocketConnectionError: raise_exception이 True이고 연결이 없을 때 발생
+        """
+        # 활성 연결 확인 (user_connections 사용)
+        if not self.user_connections:
+            warning_msg = "브로드캐스트할 활성 WebSocket 연결이 없음"
+            logger.warning(warning_msg)
+            
+            # 예외 발생 여부에 따라 처리
+            if raise_exception:
+                from app.core.exceptions import WebSocketConnectionError
+                raise WebSocketConnectionError(warning_msg)
+            return False
+        
+        # 제외할 사용자 ID 정규화
+        normalized_exclude_id = str(exclude_user_id) if exclude_user_id else None
+        
+        # 메시지 전송
+        success = False
+        for user_id, connections in self.user_connections.items():
+            # 제외할 사용자 건너뛰기
+            if normalized_exclude_id and (user_id == normalized_exclude_id or normalized_exclude_id in user_id or user_id in normalized_exclude_id):
+                continue
+            
+            if connections:
+                await self._send_message_to_connections(connections, message)
+                success = True
+        
+        return success
+        
+    async def _send_message_to_connections(self, connections: List[WebSocket], message: dict) -> bool:
+        """
+        주어진 WebSocket 연결 목록에 메시지를 전송합니다.
+        
+        Args:
+            connections: WebSocket 연결 목록
+            message: 전송할 메시지 (dict)
+            
+        Returns:
+            bool: 성공적으로 메시지를 전송했는지 여부
+        """
+        if not connections:
+            logger.debug("전송할 WebSocket 연결이 없음")
+            return False
+        
+        # 메시지 크기 계산 및 로깅
         try:
-            # 메시지 크기 확인 및 로깅
-            message_size = _calculate_message_size(data)
-            logger.debug(f"웹소켓 메시지 크기: {message_size} 바이트")
-            
-            # 메시지 크기가 너무 크면 경고
-            if message_size > self.MAX_WS_MESSAGE_SIZE:
-                logger.warning(f"대용량 웹소켓 메시지 감지 ({message_size} 바이트): {data.get('type', 'unknown')} 타입")
-                
-                # 크롤러 업데이트 진행 메시지인 경우 updated_cves 필드 제거
-                if data.get("type") == "crawler_update_progress" and "data" in data:
-                    if "updated_cves" in data["data"]:
-                        # 카운트만 유지하고 항목 목록은 제거
-                        if isinstance(data["data"]["updated_cves"], dict) and "count" in data["data"]["updated_cves"]:
-                            count = data["data"]["updated_cves"]["count"]
-                            data["data"]["updated_count"] = count
-                        # updated_cves 필드 제거
-                        data["data"].pop("updated_cves", None)
-                        
-                        # 메시지 크기 다시 계산
-                        message_size = _calculate_message_size(data)
-                        logger.debug(f"필터링 후 웹소켓 메시지 크기: {message_size} 바이트")
-            
-            # 메시지 타입과 단계 로깅
-            if "type" in data and data["type"] == "crawler_update_progress" and "data" in data:
-                stage = data["data"].get("stage", "")
-                percent = data["data"].get("percent", 0)
-                logger.info(f"크롤러 진행 상황 전송: {stage}, {percent}% (메시지 크기: {message_size} 바이트)")
-            
-            # 전송 지연 증가 (메시지 간 간격 확보) - 100ms로 증가
-            await asyncio.sleep(0.1)
-            
-            # 활성 연결 목록 로깅
-            logger.debug(f"활성 웹소켓 연결 수: {len(self.active_connections)}")
-            
-            # 활성화된 웹소켓 연결이 없으면 일찍 종료
-            if not self.active_connections:
-                logger.info("활성화된 웹소켓 연결이 없습니다. 브로드캐스트를 건너뜁니다.")
-                return 0
-            
-            # 중요 메시지인 경우 전송 보장을 위해 재시도 로직 추가
-            is_important = False
-            if "type" in data and data["type"] == "crawler_update_progress" and "data" in data:
-                stage = data["data"].get("stage", "")
-                if stage in ["준비", "데이터 수집", "데이터 처리", "데이터베이스 업데이트", "완료"]:
-                    is_important = True
-            
-            # 재시도 횟수 설정 (중요 메시지는 최대 3회)
-            max_retries = 3 if is_important else 1
-            
-            for attempt in range(max_retries):
-                # 직접 모든 연결에 전송
-                sent_count = 0
-                disconnected = []  # 연결이 끊어진 웹소켓 목록
-                
-                for connection in self.active_connections:
-                    try:
-                        if connection.client_state == WebSocketState.CONNECTED:
-                            # 메시지 전송 전 로깅
-                            logger.debug(f"웹소켓 메시지 전송 시도: {connection.client}")
-                            
-                            # 메시지 전송
-                            await connection.send_json(data)
-                            
-                            # 전송 후 적은 지연 추가 (과부하 방지)
-                            await asyncio.sleep(0.01)
-                            
-                            sent_count += 1
-                        else:
-                            # 연결 상태 로깅
-                            logger.debug(f"비활성 웹소켓 연결: {connection.client}, 상태: {connection.client_state}")
-                            disconnected.append(connection)
-                    except Exception as e:
-                        logger.warning(f"메시지 전송 실패: {str(e)}")
-                        logger.debug(traceback.format_exc())
-                        disconnected.append(connection)
-                
-                # 연결이 끊어진 웹소켓 정리
-                for conn in disconnected:
-                    if conn in self.active_connections:
-                        self.active_connections.remove(conn)
-                        logger.info("오래된 연결 제거됨")
-                
-                if sent_count > 0 or attempt == max_retries - 1:
-                    break
-                
-                # 재시도 전 대기
-                if attempt < max_retries - 1:
-                    logger.warning(f"중요 메시지 전송 재시도 ({attempt+2}/{max_retries}): {data.get('type')}")
-                    await asyncio.sleep(0.5)
-                
-            if sent_count > 0:
-                logger.info(f"총 {sent_count}개 연결에 성공적으로 메시지 브로드캐스트")
-                
-            return sent_count
+            message_size = _calculate_message_size(message)
+            if message_size > 65536:  # 64KB 제한
+                logger.warning(f"메시지 크기가 제한을 초과함: {message_size} 바이트 (최대: 65536 바이트)")
         except Exception as e:
-            logger.error(f"브로드캐스트 중 오류: {str(e)}")
-            logger.error(traceback.format_exc())
-            return 0
+            logger.warning(f"메시지 크기 계산 중 오류: {str(e)}")
+        
+        # 메시지 전송
+        sent_count = 0
+        disconnected = []
+        
+        for connection in connections:
+            try:
+                # 연결 상태 확인
+                if connection.client_state == WebSocketState.CONNECTED:
+                    # 메시지 전송
+                    await self.send_json(connection, message)
+                    sent_count += 1
+                else:
+                    logger.warning(f"WebSocket이 연결 상태가 아님: {connection.client_state}")
+                    disconnected.append(connection)
+            except WebSocketDisconnect:
+                logger.warning("WebSocket 연결이 끊어짐")
+                disconnected.append(connection)
+            except Exception as e:
+                logger.warning(f"메시지 전송 중 오류 발생: {str(e)}")
+                disconnected.append(connection)
+        
+        # 끊어진 연결 정리
+        for conn in disconnected:
+            if conn in connections:
+                connections.remove(conn)
+        
+        # 결과 로깅
+        if sent_count > 0:
+            logger.debug(f"{sent_count}개 연결에 메시지 전송 성공")
+            return True
+        else:
+            logger.warning("메시지 전송 실패: 모든 연결이 비활성 상태")
+            return False
 
     def _serialize_datetime(self, data):
         """datetime 객체를 ISO 형식 문자열로 변환"""
@@ -643,45 +942,135 @@ class ConnectionManager:
         else:
             return data
 
-    async def send_to_specific_user(self, user_id: str, data: Dict[str, Any]):
-        """특정 사용자에게만 메시지 전송"""
+    async def send_to_specific_user(self, user_id: str, message: dict, raise_exception: bool = False) -> bool:
+        """
+        특정 사용자에게 메시지를 전송합니다.
+        
+        Args:
+            user_id: 메시지를 받을 사용자 ID
+            message: 전송할 메시지 (dict)
+            raise_exception: 연결이 없을 때 예외를 발생시킬지 여부
+            
+        Returns:
+            bool: 메시지 전송 성공 여부
+            
+        Raises:
+            WebSocketConnectionError: raise_exception이 True이고 연결이 없을 때 발생
+        """
+        # 사용자 ID 정규화 (문자열 형식으로 변환)
+        normalized_user_id = str(user_id)
+        
+        # 사용자 연결 확인 (user_connections 사용)
+        if normalized_user_id not in self.user_connections or not self.user_connections[normalized_user_id]:
+            warning_msg = f"사용자 {normalized_user_id}에게 메시지를 보낼 수 없음: 연결된 웹소켓 없음"
+            logger.warning(warning_msg)
+            
+            # 디버깅을 위한 추가 정보 로깅
+            if self.user_connections:
+                logger.debug(f"현재 활성 연결 사용자 목록: {list(self.user_connections.keys())}")
+                
+                # MongoDB ObjectId와 문자열 형식 불일치 확인
+                for existing_id in self.user_connections.keys():
+                    if normalized_user_id in existing_id or existing_id in normalized_user_id:
+                        logger.warning(f"ID 형식 불일치 가능성: 요청된 ID '{normalized_user_id}'와 저장된 ID '{existing_id}'가 유사함")
+                        
+                        # 유사한 ID가 있으면 해당 ID로 메시지 전송 시도
+                        logger.info(f"유사한 ID '{existing_id}'로 메시지 전송 시도")
+                        return await self.send_to_specific_user(existing_id, message, raise_exception)
+                
+            if raise_exception:
+                from app.core.exceptions import WebSocketConnectionError
+                raise WebSocketConnectionError(warning_msg)
+            return False
+        
+        # 메시지 전송
+        connections = self.user_connections[normalized_user_id]
+        success = await self._send_message_to_connections(connections, message)
+        return success
+
+    async def unsubscribe_session_cves(self, session_id: str, user_id: str = None):
+        """특정 세션의 모든 CVE 구독 해제
+        
+        세션 ID에 해당하는 모든 구독을 해제합니다.
+        user_id가 지정된 경우, 해당 사용자의 구독만 해제합니다.
+        """
         try:
-            # 사용자별 연결 확인
-            user_connections = self.user_connections.get(user_id, [])
+            if session_id not in self.session_subscriptions:
+                logger.info(f"세션 {session_id}의 구독 정보가 없습니다.")
+                return False
             
-            if not user_connections:
-                logger.warning(f"사용자 {user_id}에게 메시지를 보낼 수 없음: 연결된 웹소켓 없음")
-                return 0
+            logger.info(f"세션 {session_id}의 구독 정리 시작")
             
-            # 사용자의 모든 연결에 메시지 전송
-            sent_count = 0
-            disconnected = []
+            # 세션에 등록된 모든 사용자 ID 목록
+            users_to_process = []
             
-            for connection in user_connections:
-                try:
-                    if connection.client_state == WebSocketState.CONNECTED:
-                        await connection.send_json(data)
-                        sent_count += 1
-                    else:
-                        disconnected.append(connection)
-                except Exception as e:
-                    logger.warning(f"사용자 {user_id}에게 메시지 전송 실패: {str(e)}")
-                    disconnected.append(connection)
+            if user_id:
+                # 특정 사용자만 처리
+                if user_id in self.session_subscriptions[session_id]:
+                    users_to_process.append(user_id)
+            else:
+                # 세션에 등록된 모든 사용자 처리
+                users_to_process = list(self.session_subscriptions[session_id].keys())
             
-            # 끊어진 연결 정리
-            for conn in disconnected:
-                if conn in user_connections:
-                    user_connections.remove(conn)
-                    if conn in self.active_connections:
-                        self.active_connections.remove(conn)
+            total_unsubscribed = 0
             
-            if sent_count > 0:
-                logger.info(f"사용자 {user_id}에게 {sent_count}개 연결로 메시지 전송 성공")
+            for uid in users_to_process:
+                # 세션 내 해당 사용자의 모든 CVE 목록
+                cve_ids = self.session_subscriptions[session_id][uid].copy()
+                
+                for cve_id in cve_ids:
+                    await self.unsubscribe_cve(uid, cve_id, session_id)
+                    total_unsubscribed += 1
+                    logger.info(f"세션 {session_id}의 사용자 {uid}가 구독한 {cve_id} 구독 해제")
             
-            return sent_count
+            # 정리 완료 후 세션 정보가 남아있는지 확인
+            if session_id in self.session_subscriptions:
+                logger.warning(f"세션 {session_id}의 구독 정보가 완전히 제거되지 않았습니다. 수동으로 제거합니다.")
+                del self.session_subscriptions[session_id]
+            
+            logger.info(f"세션 {session_id}의 구독 정리 완료: {total_unsubscribed}개 구독 해제")
+            return {"success": True, "count": total_unsubscribed}
         except Exception as e:
-            logger.error(f"사용자 메시지 전송 중 오류: {str(e)}")
-            return 0
+            logger.error(f"세션 {session_id}의 구독 정리 중 오류 발생: {str(e)}")
+            logger.error(traceback.format_exc())
+            return {"success": False, "error": str(e)}
+
+    async def get_connection_info(self, user_id=None):
+        """
+        현재 연결 상태 정보를 반환합니다.
+        
+        Args:
+            user_id (str, optional): 특정 사용자 ID. 지정하지 않으면 전체 통계 반환
+            
+        Returns:
+            dict: 연결 상태 정보
+        """
+        try:
+            # 전체 연결 수
+            total_connections = len(self.active_connections)
+            
+            # 활성 사용자 수
+            active_users = len(self.user_connections)
+            
+            # 특정 사용자 연결 수
+            user_connections = 0
+            if user_id and user_id in self.user_connections:
+                user_connections = len(self.user_connections[user_id])
+            
+            return {
+                "totalConnections": total_connections,
+                "activeUsers": active_users,
+                "userConnections": user_connections,
+                "timestamp": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S')
+            }
+        except Exception as e:
+            logger.error(f"연결 정보 조회 중 오류: {str(e)}")
+            return {
+                "totalConnections": 0,
+                "activeUsers": 0,
+                "userConnections": 0,
+                "error": "정보 조회 중 오류 발생"
+            }
 
 manager = ConnectionManager()
 
@@ -757,7 +1146,7 @@ async def authenticated_websocket(websocket: WebSocket, token: str):
         except:
             pass
 
-@router.websocket("/ws")
+@router.websocket("/ws/crawler")
 async def websocket_endpoint(websocket: WebSocket):
     """인증 없이 크롤러 업데이트 진행 상황을 받기 위한 웹소켓 연결"""
     try:

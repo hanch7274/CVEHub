@@ -7,7 +7,8 @@ const initialState = {
     reconnectAttempts: 0,
     connectionStatus: 'disconnected', // 'disconnected' | 'connecting' | 'connected' | 'error'
     ready: false, // 웹소켓이 메시지 전송 준비가 되었는지 여부
-    activeSubscriptions: [] // 현재 활성화된 구독 목록
+    activeSubscriptions: [], // 현재 활성화된 구독 목록
+    lastConnectionStateChange: null // 마지막 연결 상태 변경 시간
 };
 
 const websocketSlice = createSlice({
@@ -36,6 +37,20 @@ const websocketSlice = createSlice({
             state.connectionStatus = 'error';
             state.error = action.payload;
             state.ready = false;
+        },
+        wsConnectionStateChanged: (state, action) => {
+            const { isConnected, error, timestamp } = action.payload;
+            state.connected = isConnected;
+            state.connectionStatus = isConnected ? 'connected' : (error ? 'error' : 'disconnected');
+            state.error = error;
+            state.ready = isConnected;
+            state.lastConnectionStateChange = timestamp || Date.now();
+            
+            if (!isConnected) {
+                state.reconnectAttempts += 1;
+            } else {
+                state.reconnectAttempts = 0;
+            }
         },
         wsMessageReceived: (state, action) => {
             state.lastMessage = action.payload;
@@ -81,6 +96,7 @@ export const {
     wsConnected,
     wsDisconnected,
     wsError,
+    wsConnectionStateChanged,
     wsMessageReceived,
     clearError,
     resetReconnectAttempts,

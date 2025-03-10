@@ -87,15 +87,29 @@ const CVEList = () => {
   const [forceUpdate, setForceUpdate] = useState(false);
   const [showConnectingScreen, setShowConnectingScreen] = useState(false);
 
-  console.log('[CVE] Current state:', {
-    cves,
-    loading,
-    error,
-    page,
-    rowsPerPage,
-    searchQuery,
-    statusFilter
-  });
+  // 데이터 로드 시 WebSocket 상태 확인
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[CVEList] 컴포넌트 상태:', {
+        연결: isConnected,
+        준비: isReady
+      });
+    }
+  }, [isConnected, isReady]);
+  
+  // 개발 모드에서만 CVE 상태 로그 출력
+  useEffect(() => {
+    // 개발 모드에서만 로그 출력
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[CVE] 현재 상태:', {
+        cves: cves ? `${cves.length}개 항목` : '없음',
+        loading,
+        error: error ? '있음' : '없음',
+        page,
+        rowsPerPage
+      });
+    }
+  }, [cves, loading, error, page, rowsPerPage]);
 
   useEffect(() => {
     if (selectedCVE?.id) {
@@ -243,17 +257,12 @@ const CVEList = () => {
   };
 
   // WebSocket 메시지 처리
-  useWebSocketMessage((message) => {
+  useWebSocketMessage('message', (message) => {
     if (message && message.type === 'cve_update') {
       console.log('[CVEList] WebSocket 메시지 수신: CVE 업데이트', message);
       dispatch(refreshCVEList());
     }
   });
-  
-  // 데이터 로드 시 WebSocket 상태 확인
-  useEffect(() => {
-    console.log(`[CVEList] 컴포넌트 마운트, WebSocket 상태: 연결=${isConnected}, 준비=${isReady}`);
-  }, [isConnected, isReady]);
   
   // CVE 행 클릭 처리
   const handleRowClick = useCallback((params) => {

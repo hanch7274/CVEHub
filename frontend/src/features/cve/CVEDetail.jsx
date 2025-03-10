@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
+import webSocketService from '../../services/websocket';
 import {
   Dialog,
   DialogContent,
@@ -41,7 +42,6 @@ import {
   selectCVEDetail,
   setCVEDetail
 } from '../../store/slices/cveSlice';
-import TabPanel from './components/TabPanel';
 import GenericDataTab from './components/GenericDataTab';
 import { pocTabConfig, snortRulesTabConfig, referencesTabConfig } from './components/tabConfigs';
 import CommentsTab from './components/CommentsTab';
@@ -49,7 +49,7 @@ import HistoryTab from './components/HistoryTab';
 import InlineEditText from './components/InlineEditText';
 import { useSnackbar } from 'notistack';
 import PropTypes from 'prop-types';
-import { useSubscription } from '../../hooks/useSubscription';
+import { useSubscription } from '../../services/websocket/hooks/useSubscription';
 import { useCVEWebSocketUpdate } from '../../contexts/WebSocketContext';
 
 const countActiveComments = (comments) => {
@@ -135,71 +135,79 @@ const statusCardStyle = {
   }
 };
 
-const SubscriberCount = memo(({ subscribers }) => (
-  <Box 
-    sx={{ 
-      display: 'flex', 
-      alignItems: 'center', 
-      gap: 1,
-      bgcolor: 'action.hover',
-      borderRadius: 2,
-      py: 0.5,
-      px: 1.5
-    }}
-  >
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-      <VisibilityIcon 
-        sx={{ 
-          fontSize: 16, 
-          color: 'text.secondary' 
-        }} 
-      />
-      <Typography variant="body2" color="text.secondary">
-        {subscribers.length}명이 보는 중
-      </Typography>
-    </Box>
-    <AvatarGroup
-      max={5}
-      sx={{
-        '& .MuiAvatar-root': {
-          width: 24,
-          height: 24,
-          fontSize: '0.75rem',
-          border: '2px solid #fff',
-          cursor: 'pointer',
-          transition: 'all 0.2s ease-in-out',
-          '&:hover': {
-            transform: 'scale(1.1)',
-            zIndex: 1
-          }
-        }
+const SubscriberCount = memo(({ subscribers = [] }) => {
+  // 구독자가 없거나 빈 배열인 경우에도 UI를 표시
+  const hasSubscribers = Array.isArray(subscribers) && subscribers.length > 0;
+  
+  return (
+    <Box 
+      sx={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: 1,
+        bgcolor: 'action.hover',
+        borderRadius: 2,
+        py: 0.5,
+        px: 1.5
       }}
     >
-      {subscribers.map((subscriber) => (
-        <Tooltip
-          key={subscriber.id}
-          title={subscriber.displayName || subscriber.username}
-          placement="bottom"
-          arrow
-          enterDelay={200}
-          leaveDelay={0}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <VisibilityIcon 
+          sx={{ 
+            fontSize: 16, 
+            color: 'text.secondary' 
+          }} 
+        />
+        <Typography variant="body2" color="text.secondary">
+          {hasSubscribers ? `${subscribers.length}명이 보는 중` : '보는 중'}
+        </Typography>
+      </Box>
+      {hasSubscribers && (
+        <AvatarGroup
+          max={5}
+          sx={{
+            '& .MuiAvatar-root': {
+              width: 24,
+              height: 24,
+              fontSize: '0.75rem',
+              border: '2px solid #fff',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease-in-out',
+              '&:hover': {
+                transform: 'scale(1.1)',
+                zIndex: 1
+              }
+            }
+          }}
         >
-          <Avatar
-            alt={subscriber.username}
-            src={subscriber.profile_image}
-            sx={{
-              bgcolor: !subscriber.profile_image ? 
-                `hsl(${subscriber.username.length * 30}, 70%, 50%)` : 
-                undefined
-            }}
-          >
-            {!subscriber.profile_image && subscriber.username.charAt(0).toUpperCase()}
-          </Avatar>
-        </Tooltip>
-      ))}
-    </AvatarGroup>
-  </Box>
-));
+          {subscribers.map((subscriber) => (
+            <Tooltip
+              key={subscriber.id || subscriber.userId || Math.random().toString()}
+              title={subscriber.displayName || subscriber.username || '사용자'}
+              placement="bottom"
+              arrow
+              enterDelay={200}
+              leaveDelay={0}
+            >
+              <Avatar
+                alt={subscriber.username || '사용자'}
+                src={subscriber.profile_image || subscriber.profileImage}
+                sx={{
+                  bgcolor: !subscriber.profile_image && !subscriber.profileImage ? 
+                    `hsl(${(subscriber.username || 'User').length * 30}, 70%, 50%)` : 
+                    undefined
+                }}
+              >
+                {(!subscriber.profile_image && !subscriber.profileImage) && 
+                  (subscriber.username || 'U').charAt(0).toUpperCase()}
+              </Avatar>
+            </Tooltip>
+          ))}
+        </AvatarGroup>
+      )}
+    </Box>
+  );
+});
 
 
 const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
@@ -210,6 +218,96 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
   
   // WebSocket context는 최상위에서 호출
   const { isConnected, isReady, invalidateCVECache: wsInvalidateCache } = useWebSocketContext();
+  
+  // useSubscription 훅 사용하여 구독 관리
+  const { isSubscribed, subscribers, subscribe } = useSubscription(cveId, 'cve');
+  
+  // 로컬 캐시용 구독자 상태 - 백엔드 응답 전에도 사용자 피드백 제공
+  const [localSubscribers, setLocalSubscribers] = useState([]);
+  
+  // 구독자 정보가 업데이트될 때 로컬 캐시도 업데이트
+  useEffect(() => {
+    if (subscribers && subscribers.length > 0) {
+      setLocalSubscribers(subscribers);
+    }
+  }, [subscribers]);
+  
+  // 현재 사용자를 구독자에 포함시켜 즉시 피드백 제공
+  useEffect(() => {
+    if (isSubscribed && currentUser && localSubscribers.length === 0) {
+      // 현재 사용자 정보로 임시 구독자 생성
+      setLocalSubscribers([{
+        id: currentUser.id,
+        username: currentUser.username,
+        displayName: currentUser.displayName || currentUser.username,
+        profile_image: currentUser.profileImage
+      }]);
+    }
+  }, [isSubscribed, currentUser, localSubscribers.length]);
+  
+  // 상태 관리
+  const [loading, setLoading] = useState(false);
+  const [tabValue, setTabValue] = useState(0);
+  const [isCached, setIsCached] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
+  const [updateCounter, setUpdateCounter] = useState(0); // 리렌더링 강제 트리거
+  
+  // Redux 상태
+  const cacheState = useSelector(state => state.cve.cveCache[cveId]);
+  
+  // cveId가 유효하면 자동으로 구독
+  useEffect(() => {
+    if (cveId && open && isConnected && subscribe) {
+      console.log(`[CVEDetail] ${cveId} 자동 구독 시도`);
+      subscribe();
+    }
+  }, [cveId, open, isConnected, subscribe]);
+  
+  // 직접 구독 이벤트 수신을 위한 효과
+  useEffect(() => {
+    if (!cveId || !open) return;
+    
+    console.log(`[CVEDetail] 구독 이벤트 직접 수신 대기 설정: ${cveId}`);
+    
+    // 구독 핸들러 함수
+    const handleSubscriptionEvent = (data) => {
+      console.log(`[CVEDetail] 구독 이벤트 직접 수신:`, data);
+      
+      if (data && data.cveId === cveId && data.subscribers) {
+        console.log(`[CVEDetail] 구독자 정보 직접 업데이트:`, data.subscribers.length);
+        // 로컬 구독자 정보 업데이트
+        setLocalSubscribers(data.subscribers);
+        // 리렌더링 트리거
+        setUpdateCounter(prev => prev + 1);
+      }
+    };
+    
+    // 구독 이벤트에 대한 명시적 이벤트 유형 지정
+    const unsubscribe1 = webSocketService.on('subscribe_cve', handleSubscriptionEvent);
+    
+    // 이벤트 정리 함수
+    return () => {
+      if (typeof unsubscribe1 === 'function') {
+        unsubscribe1();
+      }
+    };
+  }, [cveId, open]);
+  
+  // 디버깅용 로그 
+  useEffect(() => {
+    console.log(`[CVEDetail] 구독 상태 업데이트:`, {
+      isSubscribed,
+      subscribersCount: subscribers?.length || 0,
+      subscribers: subscribers,
+      cveId
+    });
+    
+    if (subscribers && subscribers.length > 0) {
+      console.log(`[CVEDetail] 구독자 정보 업데이트됨:`, subscribers.length);
+      // 구독자 정보가 업데이트되면 리렌더링 트리거
+      setUpdateCounter(prev => prev + 1);
+    }
+  }, [isSubscribed, subscribers, cveId]);
   
   // invalidateCVECache를 useCallback으로 래핑하여 고정된 참조를 유지
   const invalidateCVECache = useCallback(
@@ -225,58 +323,6 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
   );
   
   // 모달이 처음 열릴 때에만 true로 설정해서 로딩 인디케이터가 나타나게 함
-  const [loading, setLoading] = useState(false);
-  const [tabValue, setTabValue] = useState(0);
-  
-  // open이 변경될 때마다 로딩 상태를 초기화
-  useEffect(() => {
-    if (open) {
-      console.log(`[CVEDetail] 모달 열림, cveId: ${cveId}, WebSocket 상태: 연결=${isConnected}, 준비=${isReady}`);
-      setLoading(true);
-      
-      // WebSocket 연결 상태 확인
-      if (!isConnected || !isReady) {
-        console.warn('[CVEDetail] WebSocket이 연결되지 않았거나 준비되지 않았습니다.');
-        enqueueSnackbar('서버 연결 상태를 확인해주세요.', { 
-          variant: 'warning',
-          anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-        });
-      }
-      
-      // 캐시 확인 및 데이터 로드
-      if (cve && cve._cachedAt) {
-        console.log(`[CVEDetail] 캐시된 데이터 사용: ${cveId}`);
-        setLoading(false);
-      } else {
-        console.log(`[CVEDetail] 데이터 로드 시작: ${cveId}`);
-        dispatch(fetchCVEDetail(cveId))
-          .unwrap()
-          .then(() => {
-            setLoading(false);
-          })
-          .catch((error) => {
-            setLoading(false);
-            console.error('CVEDetail: Error loading data:', error);
-            enqueueSnackbar('데이터 로딩 실패', { variant: 'error' });
-          });
-      }
-    }
-  }, [open, cveId, isConnected, isReady]);
-  
-  // Cache 상태 관리
-  const [isCached, setIsCached] = useState(false);
-  const cacheState = useSelector(state => state.cve.cveCache[cveId]);
-  
-  const timeAgo = useCallback((timestamp) => {
-    const seconds = Math.floor((Date.now() - timestamp) / 1000);
-    if (seconds < 60) return `${seconds}초`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}분`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}시간`;
-    return `${Math.floor(seconds / 86400)}일`;
-  }, []);
-  
-  const [descExpanded, setDescExpanded] = useState(false);
-  
   const [refreshTriggers, setRefreshTriggers] = useState({
     poc: 0,
     snortRules: 0,
@@ -290,8 +336,6 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
     references: 0,
     comments: 0
   });
-  
-  const [subscribers, setSubscribers] = useState([]);
   
   const currentUserRef = useRef();
   useEffect(() => {
@@ -330,32 +374,16 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
     });
   }, []);
   
-  const handleSubscribersChange = useCallback((newSubscribers) => {
-    if (Array.isArray(newSubscribers)) {
-      setSubscribers(newSubscribers);
-    }
-  }, []);
-  
   const handleUpdateReceived = useCallback((data) => {
     if (data.field) {
       handleRefreshTrigger(data.field);
     }
   }, [handleRefreshTrigger]);
   
-  // useSubscription에서 반환된 unsubscribe는 사용하지 않더라도 반환만 받아둠
-  const { unsubscribe } = useSubscription(
-    cveId,
-    handleUpdateReceived,
-    handleSubscribersChange
-  );
-
-  // 웹소켓을 통해 메시지를 보낼 수 있는 함수를 가져옵니다.
-  // 이 함수는 자식 컴포넌트에 props로 전달하여 중앙에서 관리되는 구독을 통해 메시지를 보낼 수 있게 합니다.
+  // CVE 웹소켓 업데이트를 처리하는 훅 사용
   const { sendCustomMessage } = useCVEWebSocketUpdate(
     cveId,
-    handleUpdateReceived,
-    handleRefreshTrigger,
-    handleSubscribersChange
+    handleUpdateReceived
   );
 
   // 이 함수를 각 탭 컴포넌트에 전달하여 중복 구독을 방지합니다
@@ -439,9 +467,10 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
     }
   }, [cacheState]);
   
+  // 탭 변경 핸들러, 외부 의존성 없이 단순히 상태 업데이트만 수행
   const handleTabChange = useCallback((event, newValue) => {
     setTabValue(newValue);
-  }, []);
+  }, []); // 의존성 배열에서 불필요한 의존성 제거
   
   useEffect(() => {
     if (cve) {
@@ -554,15 +583,72 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
     if (open && cveId) {
       console.log(`[CVEDetail] 데이터 로딩 useEffect 실행: cveId=${cveId}, isReady=${isReady}`);
       fetchData();
+      
+      // WebSocket 연결 상태 확인
+      if (!isConnected || !isReady) {
+        console.warn('[CVEDetail] WebSocket이 연결되지 않았거나 준비되지 않았습니다.');
+      } else {
+        console.log(`[CVEDetail] WebSocket 연결됨, 구독 시작: ${cveId}`);
+      }
     }
-  }, [open, cveId, isReady, fetchData]);
+  }, [cveId, open, isReady, fetchData, isConnected]);
+  
+  // open이 변경될 때마다 로딩 상태를 초기화
+  useEffect(() => {
+    if (open) {
+      console.log(`[CVEDetail] 모달 열림, cveId: ${cveId}, WebSocket 상태: 연결=${isConnected}, 준비=${isReady}`);
+      setLoading(true);
+      
+      // WebSocket 연결 상태 확인
+      if (!isConnected || !isReady) {
+        console.warn('[CVEDetail] WebSocket이 연결되지 않았거나 준비되지 않았습니다.');
+        enqueueSnackbar('서버 연결 상태를 확인해주세요.', { 
+          variant: 'warning',
+          anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+        });
+      }
+      
+      // 캐시 확인 및 데이터 로드
+      if (cve && cve._cachedAt) {
+        console.log(`[CVEDetail] 캐시된 데이터 사용: ${cveId}`);
+        setLoading(false);
+      } else {
+        console.log(`[CVEDetail] 데이터 로드 시작: ${cveId}`);
+        dispatch(fetchCVEDetail(cveId))
+          .unwrap()
+          .then(() => {
+            setLoading(false);
+          })
+          .catch((error) => {
+            setLoading(false);
+            console.error('CVEDetail: Error loading data:', error);
+            enqueueSnackbar('데이터 로딩 실패', { variant: 'error' });
+          });
+      }
+    }
+  }, [open, cveId, isConnected, isReady, cve, dispatch, enqueueSnackbar]);
+  
+  const timeAgo = useCallback((timestamp) => {
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    if (seconds < 60) return `${seconds}초`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}분`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}시간`;
+    return `${Math.floor(seconds / 86400)}일`;
+  }, []);
   
   if (loading) {
     return <CircularProgress />;
   }
   if (!cve) return null;
   
-  console.log('CVEDetail: Rendering dialog with props:', { open, cveId });
+  console.log('CVEDetail: Rendering dialog with props:', { 
+    open, 
+    cveId, 
+    isSubscribed,
+    backendSubscribers: subscribers?.length || 0,
+    localSubscribers: localSubscribers?.length || 0,
+    updateCounter // 리렌더링 트리거 값 로깅
+  });
   
   return (
     <Dialog
@@ -583,8 +669,8 @@ const CVEDetail = ({ open = false, onClose = () => {}, cveId = null }) => {
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <Typography variant="h6">{cve.cveId} 상세 정보</Typography>
-            {Array.isArray(subscribers) && subscribers.length > 0 && (
-              <SubscriberCount subscribers={subscribers} />
+            {isSubscribed && (
+              <SubscriberCount subscribers={localSubscribers} />
             )}
           </Box>
           <Box>
