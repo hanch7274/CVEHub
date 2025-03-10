@@ -61,6 +61,8 @@ function webSocketReducer(state, action) {
     case WS_CONTEXT_ACTIONS.CONNECTING:
       return {
         ...state,
+        isConnected: true,  // 물리적 연결은 수립됨
+        isReady: false,     // 논리적 연결(connect_ack)은 아직 안됨
         connectionStatus: 'connecting',
         lastActivity: Date.now()
       };
@@ -168,6 +170,7 @@ export const WebSocketProvider = ({ children }) => {
   // 웹소켓 이벤트 구독
   useEffect(() => {
     let connectionTimer = null;
+    let reconnectTimer = null;
     
     // 구독 설정 함수
     const setupSubscriptions = () => {
@@ -186,11 +189,19 @@ export const WebSocketProvider = ({ children }) => {
       eventSubscriptions.current = {};
       
       // 연결 이벤트
-      eventSubscriptions.current.connected = webSocketService.on(WS_EVENT.CONNECTED, () => {
-        console.log('[WebSocketContext] 연결됨 이벤트 수신');
-        dispatch({ type: WS_CONTEXT_ACTIONS.CONNECTED });
-        reduxDispatch(wsConnected());
-        reduxDispatch(setReady(true));
+      eventSubscriptions.current.connected = webSocketService.on(WS_EVENT.CONNECTED, (data) => {
+        console.log('[WebSocketContext] 연결됨 이벤트 수신', data);
+        
+        // 물리적 연결만 설정 (isConnected = true, isReady = false)
+        // connect_ack를 기다리는 중간 상태로 설정
+        dispatch({ type: WS_CONTEXT_ACTIONS.CONNECTING });
+        reduxDispatch(wsConnecting());
+        
+        // 물리적 연결이 수립된 상태임을 로그
+        if (data && data.isPhysicalConnection) {
+          console.log('[WebSocketContext] 물리적 연결 수립 (connect_ack 대기 중)');
+        }
+        
         clearNotification();
       });
       
@@ -198,16 +209,21 @@ export const WebSocketProvider = ({ children }) => {
       eventSubscriptions.current.connectAck = webSocketService.on(WS_EVENT.CONNECT_ACK, (data) => {
         console.log('[WebSocketContext] 연결 확인(connect_ack) 이벤트 수신', data);
         
-        // 이미 연결 상태인 경우는 무시
+        // 이미 완전히 연결된 상태인 경우는 무시
         if (state.isConnected && state.isReady) {
-          console.log('[WebSocketContext] 이미 연결된 상태, connect_ack 무시');
+          console.log('[WebSocketContext] 이미 완전히 연결된 상태, connect_ack 무시');
           return;
         }
         
-        // 연결 상태 업데이트
+        // 이제 완전한 연결 상태로 업데이트 (isConnected = true, isReady = true)
         dispatch({ type: WS_CONTEXT_ACTIONS.CONNECTED });
         reduxDispatch(wsConnected());
         reduxDispatch(setReady(true));
+        
+        // 연결 시간 로깅
+        if (data && data.connectionTime) {
+          console.log(`[WebSocketContext] 전체 연결 수립 완료 (${data.connectionTime}ms)`);
+        }
       });
       
       // 연결 끊김 이벤트
@@ -234,6 +250,12 @@ export const WebSocketProvider = ({ children }) => {
             </Button>
           )
         });
+        
+        // 자동 재연결 시도 (3초 후)
+        reconnectTimer = setTimeout(() => {
+          console.log('[WebSocketContext] 자동 재연결 시도');
+          reconnect();
+        }, 3000);
       });
       
       // 오류 이벤트
@@ -241,11 +263,12 @@ export const WebSocketProvider = ({ children }) => {
         console.log('[WebSocketContext] 오류 이벤트 수신', error);
         dispatch({ 
           type: WS_CONTEXT_ACTIONS.ERROR, 
-          payload: error.message || '알 수 없는 오류'
+          payload: error.error || error.message || '알 수 없는 오류'
         });
         
         // 오류 알림
-        showNotification(`웹소켓 오류: ${error.message || '알 수 없는 오류'}`, {
+        const errorMessage = error.error || error.message || '알 수 없는 오류';
+        showNotification(`웹소켓 오류: ${errorMessage}`, {
           variant: 'error',
           autoHideDuration: 5000,
           action: (key) => (
@@ -266,20 +289,32 @@ export const WebSocketProvider = ({ children }) => {
         return;
       }
       
+      dispatch({ type: WS_CONTEXT_ACTIONS.CONNECTING });
+      reduxDispatch(wsConnecting());
+      
       console.log('[WebSocketContext] 웹소켓 연결 시작');
-      connect();
+      webSocketService.connect()
+        .catch(error => {
+          console.error('[WebSocketContext] 연결 시도 중 오류', error);
+          
+          // 연결 실패 시 재시도 (5초 후)
+          reconnectTimer = setTimeout(() => {
+            console.log('[WebSocketContext] 연결 실패 후 재시도');
+            reconnect();
+          }, 5000);
+        });
     };
     
     // 최초 마운트 시에만 구독 설정
-    // useRef 호출을 컴포넌트 최상위 레벨로 이동했으므로 여기서는 참조만 함
+    // useRef를 사용하여 구독을 한 번만 설정하도록 함
     if (isFirstMount.current) {
       console.log('[WebSocketContext] 최초 마운트 - 이벤트 구독 설정');
       setupSubscriptions();
       isFirstMount.current = false;
       
       // 초기 연결 시도 - 약간의 지연 추가 (페이지 로드 우선순위)
-      console.log('[WebSocketContext] 웹소켓 연결 시작 예약 (250ms 지연)');
-      connectionTimer = setTimeout(initConnection, 250); // 250ms 지연으로 페이지 로딩 완료 후 연결 시작
+      console.log('[WebSocketContext] 웹소켓 연결 시작 예약 (500ms 지연)');
+      connectionTimer = setTimeout(initConnection, 500); // 500ms 지연으로 페이지 로딩 완료 후 연결 시작
     }
     
     // 컴포넌트 언마운트 시 정리
@@ -287,6 +322,10 @@ export const WebSocketProvider = ({ children }) => {
       // 타이머 정리
       if (connectionTimer) {
         clearTimeout(connectionTimer);
+      }
+      
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
       }
       
       // 구독 해제는 컨텍스트 프로바이더가 완전히 언마운트될 때만 수행

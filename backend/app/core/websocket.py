@@ -65,6 +65,11 @@ class ConnectionManager:
         # 사용자별 세션 구독 목록: {user_id: {cve_id: [session_id1, session_id2]}}
         self.user_session_subscriptions: Dict[str, Dict[str, List[str]]] = {}
         
+        # 사용자별 세션 ID 맵핑: {user_id: {websocket: session_id}}
+        self.user_session_map: Dict[str, Dict[WebSocket, str]] = {}
+        # 세션별 CVE 구독 정보: {session_id: set(cve_id1, cve_id2, ...)}
+        self.session_cve_subscriptions: Dict[str, Set[str]] = {}
+        
         self.KEEP_ALIVE_TIMEOUT = 120
         self.PING_INTERVAL = 45
         self.PONG_TIMEOUT = 15
@@ -171,13 +176,36 @@ class ConnectionManager:
                             "total_connections": total_connections,
                             "user_connections": user_connection_count
                         },
-                        "message": "서버 연결이 성공적으로 수락되었습니다."
+                        "message": "서버 연결이 성공적으로 수락되었습니다.",
+                        "from_manager": True  # ConnectionManager에서 보낸 메시지임을 표시
                     }
                 }
-                await websocket.send_json(connect_ack_message)
-                logger.debug(f"connect_ack 메시지 전송 - 사용자: {user_id}")
+                
+                # 여러 번 시도하여 메시지가 전송되도록 보장
+                max_retries = 3
+                retry_count = 0
+                success = False
+                
+                while retry_count < max_retries and not success:
+                    if websocket.client_state == WebSocketState.CONNECTED:
+                        try:
+                            await websocket.send_json(connect_ack_message)
+                            logger.debug(f"connect_ack 메시지 전송 성공 (시도 {retry_count+1}) - 사용자: {user_id}")
+                            success = True
+                        except Exception as e:
+                            retry_count += 1
+                            logger.warning(f"connect_ack 메시지 전송 실패 (시도 {retry_count}/{max_retries}) - 사용자: {user_id}, 오류: {str(e)}")
+                            if retry_count < max_retries:
+                                await asyncio.sleep(0.5)  # 재시도 전 잠시 대기
+                    else:
+                        logger.warning(f"connect_ack 메시지 전송 건너뜀 - 연결 끊김 - 사용자: {user_id}")
+                        break
+                
+                if not success:
+                    logger.error(f"connect_ack 메시지 전송 최종 실패 - 사용자: {user_id}")
+                    # 실패해도 연결은 유지
             except Exception as e:
-                logger.error(f"connect_ack 메시지 전송 중 오류 발생: {str(e)}")
+                logger.error(f"connect_ack 메시지 생성 중 오류 발생: {str(e)}")
                 logger.error(traceback.format_exc())
             
             return True
@@ -268,11 +296,92 @@ class ConnectionManager:
                         await self.disconnect(user_id, websocket)
 
     async def handle_message(self, websocket: WebSocket, user_id: str, message: dict):
+        """클라이언트 메시지 처리"""
         try:
+            # 데이터 검증
+            if not isinstance(message, dict):
+                logger.warning(f"잘못된 메시지 형식: {message}, 사용자: {user_id}")
+                await self.send_json(websocket, {"type": "error", "detail": "Invalid message format"})
+                return
+            
+            # 메시지 타입 확인
+            message_type = message.get("type")
+            data = message.get("data", {})
+            
+            # 메시지 타입 없음
+            if not message_type:
+                logger.warning(f"메시지 타입 누락: {message}, 사용자: {user_id}")
+                await self.send_json(websocket, {"type": "error", "detail": "Message type missing"})
+                return
+                
+            # 특별 처리: session_info 메시지 처리 및 connect_ack 응답
+            if message_type == "session_info":
+                logger.info(f"세션 정보 수신 - 사용자: {user_id}")
+                
+                # 세션 정보 추출
+                session_id = data.get("session_id")
+                if session_id:
+                    # 세션 ID 매핑 저장
+                    if user_id not in self.user_session_map:
+                        self.user_session_map[user_id] = {}
+                    self.user_session_map[user_id][websocket] = session_id
+                    
+                    # 세션별 CVE 구독 저장소 초기화
+                    if session_id not in self.session_cve_subscriptions:
+                        self.session_cve_subscriptions[session_id] = set()
+                        
+                    logger.debug(f"세션 ID 매핑 업데이트 - 사용자: {user_id}, 세션: {session_id}")
+                
+                # connect_ack 응답 전송 (세션 정보 수신 응답)
+                try:
+                    connection_info = await self.get_connection_info(user_id)
+                    
+                    # connect_ack 메시지 구성
+                    connect_ack_message = {
+                        "type": "connect_ack",  # session_info_ack 대신 connect_ack 사용
+                        "data": {
+                            "user_id": user_id,
+                            "session_id": session_id,
+                            "timestamp": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S'),
+                            "connection_info": connection_info,
+                            "in_response_to": "session_info",
+                            "message": "세션 정보가 성공적으로 처리되었습니다."
+                        }
+                    }
+                    
+                    # 응답 메시지 전송 (안정적인 전송을 위해 여러 번 시도)
+                    max_retries = 3
+                    retry_count = 0
+                    success = False
+                    
+                    while retry_count < max_retries and not success:
+                        if websocket.client_state == WebSocketState.CONNECTED:
+                            try:
+                                await websocket.send_json(connect_ack_message)
+                                logger.info(f"session_info에 대한 connect_ack 응답 전송 성공 - 사용자: {user_id}, 세션: {session_id}")
+                                success = True
+                            except Exception as e:
+                                retry_count += 1
+                                logger.warning(f"connect_ack 응답 전송 실패 (시도 {retry_count}/{max_retries}) - 사용자: {user_id}, 오류: {str(e)}")
+                                if retry_count < max_retries:
+                                    await asyncio.sleep(0.5)
+                        else:
+                            logger.warning(f"connect_ack 응답 전송 불가 - 연결 끊김 - 사용자: {user_id}")
+                            break
+                    
+                    if not success:
+                        logger.error(f"connect_ack 응답 전송 최종 실패 - 사용자: {user_id}")
+                
+                except Exception as e:
+                    logger.error(f"connect_ack 응답 처리 중 오류: {str(e)}")
+                    logger.error(traceback.format_exc())
+                
+                return  # session_info 처리 완료
+
+            # 기존 메시지 처리 로직 복원
             current_time = datetime.now(ZoneInfo("Asia/Seoul"))
             self.last_activity[user_id][websocket] = current_time
             
-            message_type = message.get("type")
             if message_type == WSMessageType.PING:
                 # 자동으로 pong 응답 전송
                 await self.send_json(websocket, {
@@ -286,15 +395,13 @@ class ConnectionManager:
                 self.last_activity[user_id][websocket] = current_time
                 return
 
-            message_data = message.get("data", {})
-
             if message_type not in ["ping", "pong"]:
                 logger.info(f"[웹소켓] Message received from user {user_id}:")
                 logger.info(f"[웹소켓] Message type: {message_type}")
-                logger.info(f"[웹소켓] Message data: {json.dumps(message_data, indent=2)}")
+                logger.info(f"[웹소켓] Message data: {json.dumps(data, indent=2)}")
             
             if message_type == "subscribe_cve":
-                cve_id = message_data.get("cveId")
+                cve_id = data.get("cveId")
                 if cve_id:
                     subscribers = await self.subscribe_cve(user_id, cve_id)
                     response = {
@@ -306,9 +413,9 @@ class ConnectionManager:
                         }
                     }
                     await websocket.send_json(response)
-                    return
+                return
             elif message_type == "unsubscribe_cve":
-                cve_id = message_data.get("cveId")
+                cve_id = data.get("cveId")
                 if cve_id:
                     logger.info(f"[웹소켓] Processing unsubscribe_cve request for {cve_id}")
                     subscribers = await self.unsubscribe_cve(user_id, cve_id)
@@ -323,47 +430,9 @@ class ConnectionManager:
                     return
             elif message_type == "cleanup_connections":
                 # 다중 연결 정리 메시지 처리
-                cleanup_response = await self.handle_cleanup_connections(websocket, user_id, message_data)
+                cleanup_response = await self.handle_cleanup_connections(websocket, user_id, data)
                 await websocket.send_json(cleanup_response)
                 return
-            elif message_type == "session_info":
-                # 세션 정보 메시지 처리
-                session_id = message_data.get("sessionId")
-                client_info = message_data.get("clientInfo", {})
-                needs_ack = message_data.get("needsAck", False)
-                priority = message_data.get("priority", "normal")
-                
-                if session_id:
-                    logger.info(f"세션 정보 수신 - 사용자: {user_id}, 세션: {session_id}")
-                    
-                    # 세션 정보 저장
-                    if user_id not in self.session_subscriptions:
-                        self.session_subscriptions[user_id] = {}
-                    
-                    # connect_ack 응답 전송 (session_info_ack 대신)
-                    # 클라이언트의 웹소켓 초기화와 일관성을 유지하기 위해
-                    connection_info = await self.get_connection_info(user_id)
-                    
-                    response = {
-                        "type": "connect_ack",  # session_info_ack 대신 connect_ack 사용
-                        "data": {
-                            "user_id": user_id,
-                            "session_id": session_id,
-                            "timestamp": current_time.strftime('%Y-%m-%d %H:%M:%S'),
-                            "connection_info": connection_info,
-                            "message": "서버 연결이 성공적으로 수락되었습니다."
-                        }
-                    }
-                    
-                    # 우선순위가 높은 메시지는 즉시 응답
-                    if priority == "high" or needs_ack:
-                        await websocket.send_json(response)
-                    else:
-                        # 일반 우선순위 메시지는 약간의 지연 허용 (백그라운드 태스크로 전송)
-                        asyncio.create_task(websocket.send_json(response))
-                
-            # 기타 메시지 타입 핸들링
-            # ...
 
         except Exception as e:
             logger.error(f"메시지 처리 중 오류 발생: {str(e)}")

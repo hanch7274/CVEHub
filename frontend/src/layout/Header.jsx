@@ -11,6 +11,7 @@ import {
   Tooltip,
   Divider,
   Badge,
+  CircularProgress,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import LogoutIcon from '@mui/icons-material/Logout';
@@ -29,11 +30,12 @@ import { logout } from '../store/slices/authSlice';
 import webSocketInstance from '../services/websocket';
 import { useSnackbar } from 'notistack';
 import { useNavigate } from 'react-router-dom';
+import { SignalWifiStatusbar4Bar, SignalWifiStatusbarConnectedNoInternet4, SignalWifiOff } from '@mui/icons-material';
 
 const Header = ({ onOpenCVEDetail }) => {
   const theme = useTheme();
   const { user } = useAuth();
-  const { isConnected, isReady } = useWebSocketContext();
+  const { isConnected, isReady, connectionState } = useWebSocketContext();
   const [anchorEl, setAnchorEl] = useState(null);
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -42,26 +44,44 @@ const Header = ({ onOpenCVEDetail }) => {
   // 웹소켓 상태 모니터링을 위한 로컬 상태
   const [localConnected, setLocalConnected] = useState(isConnected);
   const [localReady, setLocalReady] = useState(isReady);
+  const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [isReconnecting, setIsReconnecting] = useState(false);
   const lastConnectionAttemptRef = useRef(0);
   
   // WebSocket 상태 변경 즉시 감지 및 로컬 상태 동기화
   useEffect(() => {
-    console.log(`[Header] WebSocket 상태 변경: isConnected=${isConnected}, isReady=${isReady}`);
+    console.log(`[Header] WebSocket 상태 변경: isConnected=${isConnected}, isReady=${isReady}, state=${connectionState}`);
     
     // 상태 변경을 로컬 상태에 즉시 반영
     setLocalConnected(isConnected);
     setLocalReady(isReady);
     
+    // 연결 상태 판단 로직
+    let status = 'disconnected';
+    
+    if (isConnected && isReady) {
+      // 물리적 연결 + connect_ack = 완전 연결
+      status = 'connected';
+    } else if (isConnected && !isReady) {
+      // 물리적 연결만 됐고 connect_ack 대기 중 = 연결 중
+      status = 'connecting';
+    } else if (!isConnected) {
+      // 연결되지 않음
+      status = 'disconnected';
+    }
+    
+    setConnectionStatus(status);
+    
     // 재연결 시도 중 상태 관리
-    if (isReconnecting && isConnected) {
+    if (isReconnecting && isConnected && isReady) {
+      // 완전히 연결되었을 때만 재연결 성공으로 처리
       setIsReconnecting(false);
       enqueueSnackbar('서버와 성공적으로 재연결되었습니다', { 
         variant: 'success',
         anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
       });
     }
-  }, [isConnected, isReady, isReconnecting, enqueueSnackbar]);
+  }, [isConnected, isReady, connectionState, isReconnecting, enqueueSnackbar]);
 
   const handleMenu = (event) => {
     setAnchorEl(event.currentTarget);
@@ -141,64 +161,64 @@ const Header = ({ onOpenCVEDetail }) => {
       
       // 잠시 후 연결 시도
       setTimeout(() => {
-        if (!localConnected) {
+        if (!localConnected || !localReady) {
           webSocketInstance.connect();
           enqueueSnackbar('서버와 재연결을 시도합니다', { 
             variant: 'info',
             anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
           });
         }
-      }, 300);
+        
+        // 30초 후에도 재연결 시도 중 상태가 계속되면 리셋
+        setTimeout(() => {
+          if (isReconnecting) {
+            setIsReconnecting(false);
+          }
+        }, 30000);
+      }, 500);
     };
     
-    // 연결 상태에 따른 아이콘 표시
+    // 연결 상태에 따른 아이콘 및 텍스트 결정
+    let icon, color, tooltip, action;
+    
+    switch(connectionStatus) {
+      case 'connected':
+        icon = <SignalWifiStatusbar4Bar />;
+        color = 'success';
+        tooltip = '서버와 연결되어 있습니다';
+        action = null;
+        break;
+        
+      case 'connecting':
+        icon = <SignalWifiStatusbarConnectedNoInternet4 />;
+        color = 'warning';
+        tooltip = '서버 연결 중입니다...';
+        action = null;
+        break;
+        
+      case 'disconnected':
+      default:
+        icon = <SignalWifiOff />;
+        color = 'error';
+        tooltip = '서버와 연결이 끊어졌습니다. 클릭하여 재연결';
+        action = handleReconnect;
+        break;
+    }
+    
     return (
-      <Tooltip title={
-        isReconnecting 
-          ? "서버와 재연결 시도 중..."
-          : (localConnected 
-              ? "서버와 연결됨"
-              : "서버와 연결 끊김 (클릭하여 재연결 시도)")
-      }>
-        <Badge
-          overlap="circular"
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-          badgeContent={
-            isReconnecting ? (
-              <RefreshIcon sx={{ fontSize: 10, color: theme.palette.warning.main }} />
-            ) : null
-          }
+      <Tooltip title={tooltip}>
+        <IconButton
+          size="small"
+          aria-label="connection status"
+          onClick={action}
+          disabled={!action || isReconnecting}
+          color={color}
+          sx={{ mr: 0.5 }}
         >
-          <IconButton 
-            size="small" 
-            sx={{ ml: 2 }}
-            onClick={!localConnected || isReconnecting ? handleReconnect : undefined}
-            disabled={isReconnecting}
-          >
-            {isReconnecting ? (
-              <SignalWifi3BarIcon 
-                sx={{ 
-                  color: theme.palette.warning.main,
-                  animation: 'pulse 0.8s infinite'
-                }} 
-              />
-            ) : localConnected ? (
-              <SignalWifi4BarIcon 
-                sx={{ 
-                  color: theme.palette.success.main,
-                  animation: 'none'
-                }} 
-              />
-            ) : (
-              <SignalWifiOffIcon 
-                sx={{ 
-                  color: theme.palette.error.main,
-                  animation: 'errorPulse 1.2s infinite'
-                }}
-              />
-            )}
-          </IconButton>
-        </Badge>
+          {isReconnecting ? (
+            <CircularProgress size={24} color="inherit" />
+          ) : icon}
+        </IconButton>
       </Tooltip>
     );
   };

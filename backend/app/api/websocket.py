@@ -67,20 +67,33 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
                     "user_id": user_id,
                     "timestamp": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S'),
                     "connection_info": connection_info,
-                    "message": "서버 연결이 성공적으로 수락되었습니다."
+                    "message": "서버 연결이 성공적으로 수락되었습니다.",
+                    "from_endpoint": True  # 엔드포인트에서 보낸 메시지임을 표시
                 }
             }
             
-            # 연결 상태 확인 후 즉시 메시지 전송 (asyncio.create_task 사용하지 않음)
-            if websocket.client_state == WebSocketState.CONNECTED:
-                try:
-                    await websocket.send_json(connect_ack_message)
-                    logger.info(f"connect_ack 메시지 전송 성공 - 사용자: {user_id}")
-                except Exception as send_error:
-                    # 메시지 전송 실패해도 연결 자체는 계속 유지
-                    logger.error(f"connect_ack 메시지 전송 중 오류 (무시됨) - 사용자: {user_id}, 오류: {str(send_error)}")
-            else:
-                logger.warning(f"connect_ack 메시지 전송 건너뜀 - 연결 상태: {websocket.client_state}, 사용자: {user_id}")
+            # 연결 상태 확인 후 즉시 메시지 전송 (여러 번 시도)
+            max_retries = 3
+            retry_count = 0
+            success = False
+            
+            while retry_count < max_retries and not success:
+                if websocket.client_state == WebSocketState.CONNECTED:
+                    try:
+                        await websocket.send_json(connect_ack_message)
+                        logger.info(f"connect_ack 메시지 전송 성공 (시도 {retry_count+1}) - 사용자: {user_id}")
+                        success = True
+                    except Exception as send_error:
+                        retry_count += 1
+                        logger.warning(f"connect_ack 메시지 전송 실패 (시도 {retry_count}/{max_retries}) - 사용자: {user_id}, 오류: {str(send_error)}")
+                        if retry_count < max_retries:
+                            await asyncio.sleep(0.5)  # 재시도 전 잠시 대기
+                else:
+                    logger.warning(f"connect_ack 메시지 전송 건너뜀 - 연결 상태: {websocket.client_state}, 사용자: {user_id}")
+                    break
+            
+            if not success:
+                logger.error(f"connect_ack 메시지 전송 최종 실패 - 사용자: {user_id}, 최대 시도 횟수 초과")
         except Exception as e:
             logger.error(f"connect_ack 메시지 처리 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())

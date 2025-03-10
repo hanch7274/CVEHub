@@ -37,7 +37,7 @@ export const CRAWLER = {
 
 // WebSocket endpoints
 export const WEBSOCKET = {
-  BASE_URL: process.env.REACT_APP_WS_URL || 'ws://localhost:8000',
+  BASE_URL: process.env.REACT_APP_WS_URL,
   getWebSocketURL: (token) => {
     if (!token) {
       console.error('[WEBSOCKET.CONNECT] 토큰이 제공되지 않았습니다.');
@@ -46,7 +46,7 @@ export const WEBSOCKET = {
     
     try {
       // 기본 WebSocket URL 설정
-      const wsUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:8000';
+      const wsUrl = process.env.REACT_APP_WS_URL;
       
       // URL 검증
       if (!wsUrl) {
