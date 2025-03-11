@@ -123,11 +123,11 @@ async def run_crawler(
         }
     
     # 초기 진행 상황을 WebSocket으로 즉시 브로드캐스트
-    from ..core.websocket import manager as ws_manager
+    from ..core.socketio_manager import socketio_manager, WSMessageType
     
     # 진행 메시지 준비
     init_message = {
-        "type": "crawler_update_progress",
+        "type": WSMessageType.CRAWLER_UPDATE_PROGRESS,
         "data": {
             "crawler": crawler_type,
             "stage": "준비",
@@ -140,7 +140,7 @@ async def run_crawler(
     
     # 요청한 사용자에게만 메시지 전송
     user_id = str(current_user.id)
-    await ws_manager.send_to_specific_user(user_id, init_message)
+    await socketio_manager.send_to_user(user_id, init_message)
     
     # 사용자 ID를 포함하여 백그라운드에서 크롤러 시작 (조용한 모드 비활성화)
     # 사용자 요청이므로 웹소켓 메시지가 전송되어야 함

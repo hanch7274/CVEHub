@@ -1,4 +1,5 @@
-import { WS_BASE_URL } from '../../config';
+import { WS_BASE_URL, SOCKET_IO_PATH } from '../../config';
+import logger from '../../services/socketio/loggingService';
 
 // Auth endpoints
 export const AUTH = {
@@ -12,7 +13,7 @@ export const AUTH = {
 // CVE endpoints
 export const CVE = {
   BASE: '/cves',
-DETAIL: (id) => `/cves/${id}`,
+  DETAIL: (id) => `/cves/${id}`,
   SEARCH: '/cves/search',
   COMMENTS: (id) => `/cves/${id}/comments`,
   COMMENT: (cveId, commentId) => `/cves/${cveId}/comments/${commentId}`,
@@ -37,50 +38,38 @@ export const CRAWLER = {
 
 // WebSocket endpoints
 export const WEBSOCKET = {
-  BASE_URL: process.env.REACT_APP_WS_URL,
+  BASE_URL: WS_BASE_URL || 'http://localhost:8000',
   getWebSocketURL: (token) => {
     if (!token) {
-      console.error('[WEBSOCKET.CONNECT] 토큰이 제공되지 않았습니다.');
+      logger.error('WEBSOCKET.CONNECT', '토큰이 제공되지 않았습니다.');
       return null;
     }
     
     try {
-      // 기본 WebSocket URL 설정
-      const wsUrl = process.env.REACT_APP_WS_URL;
+      // 기본 URL 설정 (config.js에서 가져옴)
+      const baseUrl = WS_BASE_URL || 'http://localhost:8000';
       
-      // URL 검증
-      if (!wsUrl) {
-        console.error('[WEBSOCKET.CONNECT] WebSocket URL이 설정되지 않았습니다.');
-        return null;
-      }
-      
-      // 경로 검증 및 로깅 (개발 환경에서만)
-      const isDebug = process.env.NODE_ENV === 'development';
-      if (isDebug) {
-        console.log('[WEBSOCKET.CONNECT] WebSocket URL 구성:');
-        console.log(`- 기본 URL: ${wsUrl}`);
-        console.log(`- 토큰 길이: ${token ? token.length : 0}`);
+      // 개발 환경에서만 로깅
+      if (process.env.NODE_ENV === 'development') {
+        logger.debug('WEBSOCKET.CONNECT', 'WebSocket URL 구성:', {
+          baseUrl,
+          socketIOPath: SOCKET_IO_PATH,
+          tokenLength: token.length
+        });
       }
       
       // URL 끝에 슬래시가 있는지 확인하고 적절히 처리
-      const baseUrl = wsUrl.endsWith('/') ? wsUrl.slice(0, -1) : wsUrl;
+      const normalizedUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
       
-      // 토큰에 특수 문자가 있는지 확인하고 인코딩
+      // 토큰 인코딩
       const encodedToken = encodeURIComponent(token);
       
-      // 최종 WebSocket URL 구성
-      const finalUrl = `${baseUrl}/ws?token=${encodedToken}`;
-      
-      // 개발 환경에서만 최종 URL 로깅
-      if (isDebug) {
-        // 토큰 일부만 표시하여 보안 유지
-        const maskedToken = token.substring(0, 20) + '...' + token.substring(token.length - 10);
-        console.log(`- 최종 URL: ${baseUrl}/ws?token=${maskedToken}`);
-      }
-      
-      return finalUrl;
+      // Socket.IO 프로토콜에 맞게 URL 구성
+      // 참고: Socket.IO 클라이언트는 자동으로 '/socket.io' 경로를 추가하므로
+      // 여기서는 baseUrl만 반환하고 path 옵션은 socketio.js에서 설정
+      return normalizedUrl;
     } catch (error) {
-      console.error('[WEBSOCKET.CONNECT] WebSocket URL 생성 중 오류:', error);
+      logger.error('WEBSOCKET.CONNECT', 'WebSocket URL 생성 중 오류:', error);
       return null;
     }
   }

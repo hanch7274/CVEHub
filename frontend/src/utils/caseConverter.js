@@ -1,61 +1,148 @@
+import { CASE_CONVERSION } from '../config';
+
 /**
  * 스네이크 케이스에서 카멜 케이스로 변환
  * @param {*} data 변환할 데이터
- * @param {boolean} isTopLevel 최상위 레벨 호출 여부 (재귀 호출 시 false)
+ * @param {Object} options 변환 옵션
+ * @param {boolean} options.isTopLevel 최상위 레벨 호출 여부 (재귀 호출 시 false)
+ * @param {Array<string>} options.excludeFields 변환에서 제외할 필드 이름 목록
  * @returns {*} 변환된 데이터
  */
-export const snakeToCamel = (data, isTopLevel = true) => {
-  const isDebug = process.env.NODE_ENV === 'development';
+export const snakeToCamel = (data, options = {}) => {
+  const { 
+    isTopLevel = true, 
+    excludeFields = CASE_CONVERSION.EXCLUDED_FIELDS || []
+  } = typeof options === 'boolean' ? { isTopLevel: options } : options;
   
-  // 디버깅용 변환 전 데이터 로깅 - 최상위 레벨의 유의미한 객체만 로깅
-  if (isDebug && isTopLevel && data !== null && typeof data === 'object' && Object.keys(data).length > 0) {
-    // 200자 제한으로 로그 길이 제한
-    const stringData = JSON.stringify(data);
-    const truncatedData = stringData.length > 200 
-      ? stringData.substring(0, 197) + '...' 
-      : stringData;
-    
-    // 웹소켓 메시지와 같은 특정 유형의 데이터만 로깅
-    if (data.type && (data.type.includes('crawler') || data.type === 'ping' || data.type === 'pong')) {
-      console.log('[변환] 스네이크->카멜 입력 (메시지):', truncatedData);
+  // 로깅 함수 - 디버깅 목적
+  const logDebug = (message, data) => {
+    if (isTopLevel) {
+      console.log(`[CaseConverter] ${message}`, data);
     }
-  }
+  };
   
-  // null이나 기본 타입은 그대로 반환
-  if (data === null || data === undefined || typeof data !== 'object') {
+  logDebug('변환 시작 (snake_case -> camelCase)', {
+    dataType: data === null ? 'null' : typeof data,
+    isArray: Array.isArray(data),
+    hasData: data !== null && data !== undefined,
+    excludeFields
+  });
+  
+  // null이나 undefined인 경우 그대로 반환
+  if (data === null || data === undefined) {
+    logDebug('null 또는 undefined 데이터 반환', data);
     return data;
   }
 
-  // 배열인 경우 각 요소를 재귀적으로 변환 (최상위 레벨 아님)
+  // 배열인 경우 각 항목에 대해 재귀적으로 변환
   if (Array.isArray(data)) {
-    return data.map(item => snakeToCamel(item, false));
+    const result = data.map(item => snakeToCamel(item, { isTopLevel: false, excludeFields }));
+    logDebug('배열 변환 완료', { length: result.length, sample: result.slice(0, 2) });
+    return result;
   }
 
-  // 객체인 경우 각 키를 변환하고 값을 재귀적으로 변환
-  return Object.keys(data).reduce((result, key) => {
-    const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
-    result[camelKey] = snakeToCamel(data[key], false);
-    return result;
-  }, {});
+  // 객체가 아닌 경우 그대로 반환
+  if (typeof data !== 'object') {
+    logDebug('객체가 아닌 데이터 반환', { type: typeof data, value: data });
+    return data;
+  }
+
+  // 객체인 경우 각 키를 변환
+  const result = {};
+  
+  Object.entries(data).forEach(([key, value]) => {
+    // 제외 필드 목록에 있는 경우 변환하지 않음
+    const shouldConvert = !excludeFields.includes(key);
+    
+    // 키 변환 (snake_case -> camelCase)
+    const convertedKey = shouldConvert ? key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase()) : key;
+    
+    // 값이 객체나 배열인 경우 재귀적으로 변환
+    result[convertedKey] = typeof value === 'object' && value !== null
+      ? snakeToCamel(value, { isTopLevel: false, excludeFields })
+      : value;
+  });
+  
+  if (isTopLevel) {
+    logDebug('변환 완료', {
+      originalKeys: Object.keys(data),
+      convertedKeys: Object.keys(result),
+      sample: result
+    });
+  }
+  
+  return result;
 };
 
-// 카멜 케이스를 스네이크 케이스로 변환
-export const camelToSnake = (obj) => {
-  if (obj === null || obj === undefined) {
-    return obj;
+/**
+ * 카멜 케이스를 스네이크 케이스로 변환
+ * @param {*} data 변환할 데이터
+ * @param {Object} options 변환 옵션
+ * @param {boolean} options.isTopLevel 최상위 레벨 호출 여부 (재귀 호출 시 false)
+ * @param {Array<string>} options.excludeFields 변환에서 제외할 필드 이름 목록
+ * @returns {*} 변환된 데이터
+ */
+export const camelToSnake = (data, options = {}) => {
+  const { isTopLevel = true, excludeFields = [] } = options;
+  
+  // 로깅 함수 - 디버깅 목적
+  const logDebug = (message, data) => {
+    if (isTopLevel) {
+      console.log(`[CaseConverter] ${message}`, data);
+    }
+  };
+  
+  logDebug('변환 시작 (camelCase -> snake_case)', {
+    dataType: data === null ? 'null' : typeof data,
+    isArray: Array.isArray(data),
+    hasData: data !== null && data !== undefined,
+    excludeFields
+  });
+  
+  // null이나 undefined인 경우 그대로 반환
+  if (data === null || data === undefined) {
+    logDebug('null 또는 undefined 데이터 반환', data);
+    return data;
   }
 
-  if (Array.isArray(obj)) {
-    return obj.map(camelToSnake);
+  // 배열인 경우 각 항목에 대해 재귀적으로 변환
+  if (Array.isArray(data)) {
+    const result = data.map(item => camelToSnake(item, { isTopLevel: false, excludeFields }));
+    logDebug('배열 변환 완료', { length: result.length, sample: result.slice(0, 2) });
+    return result;
   }
 
-  if (typeof obj !== 'object') {
-    return obj;
+  // 객체가 아닌 경우 그대로 반환
+  if (typeof data !== 'object') {
+    logDebug('객체가 아닌 데이터 반환', { type: typeof data, value: data });
+    return data;
   }
 
-  return Object.keys(obj).reduce((acc, key) => {
-    const snakeKey = key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
-    acc[snakeKey] = camelToSnake(obj[key]);
-    return acc;
-  }, {});
-}; 
+  // 객체인 경우 각 키를 변환
+  const result = {};
+  
+  Object.entries(data).forEach(([key, value]) => {
+    // 제외 필드 목록에 있는 경우 변환하지 않음
+    const shouldConvert = !excludeFields.includes(key);
+    
+    // 키 변환 (camelCase -> snake_case)
+    const convertedKey = shouldConvert 
+      ? key.replace(/([A-Z])/g, '_$1').toLowerCase() 
+      : key;
+    
+    // 값이 객체나 배열인 경우 재귀적으로 변환
+    result[convertedKey] = typeof value === 'object' && value !== null
+      ? camelToSnake(value, { isTopLevel: false, excludeFields })
+      : value;
+  });
+  
+  if (isTopLevel) {
+    logDebug('변환 완료', {
+      originalKeys: Object.keys(data),
+      convertedKeys: Object.keys(result),
+      sample: result
+    });
+  }
+  
+  return result;
+};

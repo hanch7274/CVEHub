@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useDispatch } from 'react-redux';
 import { useSnackbar } from 'notistack';
 import { 
   Button, 
@@ -19,25 +18,33 @@ import {
   Stepper,
   Step,
   StepLabel,
+  DialogActions,
+  Alert,
   Card,
   Grid,
   Avatar
 } from '@mui/material';
 import { 
-  Update as UpdateIcon, 
-  KeyboardArrowDown as ArrowDownIcon,
+  CloudDownload as CloudDownloadIcon,
   Close as CloseIcon,
-  InfoOutlined as InfoIcon,
+  Check as CheckIcon,
+  Error as ErrorIcon,
+  Cancel as CancelIcon,
   Settings as SettingsIcon,
+  Refresh as RefreshIcon,
+  MoreVert as MoreVertIcon,
+  ArrowDropDown as ArrowDropDownIcon,
   Search as SearchIcon,
   DataObject as DataObjectIcon,
   Storage as StorageIcon,
   CheckCircle as CheckCircleIcon,
-  Error as ErrorIcon
+  Update as UpdateIcon,
+  KeyboardArrowDown as ArrowDownIcon,
+  InfoOutlined as InfoIcon
 } from '@mui/icons-material';
-import crawlerService from '../../../api/services/crawlerService';
-import { fetchCVEList } from '../../../store/slices/cveSlice';
-import { useWebSocketMessage } from '../../../contexts/WebSocketContext';
+import { useQueryClient } from '@tanstack/react-query';
+import api from '../../../api/config/axios';
+import useWebSocketHook from '../../../api/hooks/useWebSocketHook';
 import { formatDistance } from 'date-fns';
 import { ko } from 'date-fns/locale';
 
@@ -112,7 +119,6 @@ const getStageIndex = (stage) => {
 };
 
 const CrawlerUpdateButton = () => {
-  const dispatch = useDispatch();
   const { enqueueSnackbar } = useSnackbar();
   const [anchorEl, setAnchorEl] = useState(null);
   const [selectedCrawler, setSelectedCrawler] = useState(null);
@@ -126,6 +132,7 @@ const CrawlerUpdateButton = () => {
   const [hasError, setHasError] = useState(false);
   const [pollTimer, setPollTimer] = useState(null);
   const [lastWebSocketUpdate, setLastWebSocketUpdate] = useState(null);
+  const queryClient = useQueryClient();
 
   // 다이얼로그 외부 요소 참조 추가
   const buttonRef = useRef(null);
@@ -142,9 +149,9 @@ const CrawlerUpdateButton = () => {
   const loadCrawlerStatus = useCallback(async () => {
     try {
       setLoading(true);
-      const status = await crawlerService.getCrawlerStatus();
-      setIsRunning(status.isRunning);
-      setLastUpdate(status.lastUpdate || {});
+      const status = await api.get('/crawler/status');
+      setIsRunning(status.data.isRunning);
+      setLastUpdate(status.data.lastUpdate || {});
     } catch (error) {
       console.error('상태 로드 실패:', error);
     } finally {
@@ -194,17 +201,7 @@ const CrawlerUpdateButton = () => {
           stopPolling();
           
           if (data.stage === '완료') {
-            dispatch(fetchCVEList());
-            
-            // 완료 알림 표시
-            enqueueSnackbar(`크롤러 업데이트가 완료되었습니다.`, {
-              variant: 'success',
-              autoHideDuration: 5000
-            });
-            
-            if (process.env.NODE_ENV === 'development') {
-              console.log('[크롤러] 업데이트 완료');
-            }
+            handleCrawlerComplete();
           }
         }
       }
@@ -217,10 +214,10 @@ const CrawlerUpdateButton = () => {
       stopPolling();
       window.removeEventListener('websocket:crawler_progress', handleCrawlerProgress);
     };
-  }, [loadCrawlerStatus, stopPolling, dispatch, enqueueSnackbar]);
+  }, [loadCrawlerStatus, stopPolling]);
 
   // 웹소켓 메시지 처리
-  useWebSocketMessage('message', (message) => {
+  useWebSocketHook('message', (message) => {
     // 크롤러 업데이트 메시지 확인
     const isCrawlerProgressMessage = 
       typeof message?.type === 'string' && 
@@ -290,11 +287,7 @@ const CrawlerUpdateButton = () => {
           setProgressOpen(true);
         }
         if (data.stage === '완료') {
-          dispatch(fetchCVEList());
-          enqueueSnackbar(`${selectedCrawler.name} 업데이트가 완료되었습니다.`, { 
-            variant: 'success',
-            autoHideDuration: 5000,
-          });
+          handleCrawlerComplete();
         }
       }
     }
@@ -318,12 +311,12 @@ const CrawlerUpdateButton = () => {
             return;
           }
           
-          const status = await crawlerService.getCrawlerStatus();
+          const status = await api.get('/crawler/status');
           console.log('[폴링] 크롤러 상태:', status);
           
           // 상태 업데이트
-          if (status && status.currentStatus) {
-            const currentStatus = status.currentStatus;
+          if (status && status.data.currentStatus) {
+            const currentStatus = status.data.currentStatus;
             
             // 진행 상태 업데이트
             setProgress({
@@ -345,7 +338,7 @@ const CrawlerUpdateButton = () => {
               setIsRunning(false);
               
               if (currentStatus.stage === '완료') {
-                dispatch(fetchCVEList());
+                handleCrawlerComplete();
               }
             }
           } else {
@@ -389,7 +382,7 @@ const CrawlerUpdateButton = () => {
       setHasError(false);
       setUpdatedCVEs(null);
       
-      await crawlerService.runCrawler(crawler.id);
+      await api.post('/crawler/run', { id: crawler.id });
       startPolling();      
     } catch (error) {
       console.error('크롤러 실행 오류:', error);
@@ -446,6 +439,26 @@ const CrawlerUpdateButton = () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [progressOpen, isRunning, handleCloseDialog]);
+
+  // 크롤러 작업이 완료될 때 CVE 목록 갱신
+  const handleCrawlerComplete = () => {
+    console.log('크롤러 작업 완료, CVE 목록 갱신');
+    enqueueSnackbar('크롤러 작업이 완료되었습니다. CVE 목록을 갱신합니다.', { 
+      variant: 'success',
+      autoHideDuration: 4000
+    });
+    
+    // 쿼리 무효화하여 데이터 갱신
+    queryClient.invalidateQueries({ queryKey: ['cves'] });
+    
+    // 크롤러 작업 초기화
+    stopPolling();
+    setIsRunning(false);
+    setProgress({ stage: '준비 중', percent: 0, message: '준비 중...' });
+    setTimeout(() => {
+      setProgressOpen(false);
+    }, 3000);
+  };
 
   return (
     <>

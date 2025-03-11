@@ -9,7 +9,7 @@ from pymongo import DESCENDING
 from ..services.cve_service import CVEService
 from ..core.dependencies import get_cve_service
 from ..core.auth import get_current_user, get_current_admin_user
-from ..core.websocket import manager, DateTimeEncoder
+from ..core.socketio_manager import socketio_manager, WSMessageType, DateTimeEncoder
 import logging
 import json
 import traceback
@@ -363,7 +363,7 @@ async def update_cve(
             },
             "timestamp": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S')
         }
-        await manager.broadcast_to_cve(cve_id, message, str(current_user.id))
+        await socketio_manager.broadcast_to_cve(cve_id, message, str(current_user.id))
         logger.info(f"Successfully updated CVE {cve_id}")
         return cve
     except Exception as e:
@@ -523,7 +523,7 @@ async def send_cve_notification(type: str, cve: Optional[CVEModel] = None, cve_i
         if cve_id:
             data["data"]["cveId"] = cve_id
         logger.info(f"Sending WebSocket notification: {json.dumps(data)}")
-        await manager.broadcast(data)
+        await socketio_manager.broadcast(data)
     except Exception as ws_error:
         logger.error(f"Failed to send WebSocket notification: {ws_error}")
         logger.error(traceback.format_exc())

@@ -5,9 +5,9 @@ import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from ..core.config import get_settings
-from ..core.websocket import manager
+from ..core.socketio_manager import socketio_manager, WSMessageType, DateTimeEncoder
 from fastapi import WebSocket
-from starlette.websockets import WebSocketState
+import json
 import asyncio
 
 settings = get_settings()
@@ -123,11 +123,9 @@ class BaseCrawlerService(ABC, LoggingMixin):
             return
         
         try:
-            from app.core.websocket import manager
-            
             # 웹소켓 연결 상태 확인 및 로깅
-            active_connections = len(manager.active_connections)
-            has_active = manager.has_active_connections()
+            active_connections = len(socketio_manager.get_participants())
+            has_active = active_connections > 0
             
             self.log_info(f"웹소켓 메시지 전송 시작: {stage}, {percent}%, 활성 연결: {active_connections}개, 연결 상태: {'있음' if has_active else '없음'}")
             
@@ -136,8 +134,8 @@ class BaseCrawlerService(ABC, LoggingMixin):
                 error_msg = "활성화된 웹소켓 연결이 없어 크롤러 작업을 중단합니다"
                 self.log_error(error_msg)
                 # 활성 연결이 없을 때 추가 정보 로깅
-                self.log_debug(f"활성 사용자 목록: {list(manager.user_connections.keys())}")
-                self.log_debug(f"총 웹소켓 연결 수: {len(manager.active_connections)}")
+                self.log_debug(f"활성 사용자 목록: {socketio_manager.get_participants()}")
+                self.log_debug(f"총 웹소켓 연결 수: {len(socketio_manager.get_participants())}")
                 self.log_debug(f"연결 요청 사용자: {self.requester_id or '없음'}")
                 raise Exception(error_msg)
             
@@ -213,22 +211,22 @@ class BaseCrawlerService(ABC, LoggingMixin):
             if self.requester_id:
                 self.log_info(f"사용자 {self.requester_id}에게 진행 상황 전송")
                 # 전송 전 웹소켓 연결 상태 확인
-                user_connections = manager.user_connections.get(self.requester_id, [])
+                user_connections = socketio_manager.get_participants()
                 self.log_debug(f"사용자 {self.requester_id}의 연결 수: {len(user_connections)}")
                 
-                sent_count = await manager.send_to_specific_user(self.requester_id, message_data, raise_exception=require_websocket)
+                sent_count = await socketio_manager.emit_to_user(self.requester_id, WSMessageType.CRAWLER_PROGRESS, message_data, raise_exception=require_websocket)
                 if sent_count == 0:
                     self.log_warning(f"사용자 {self.requester_id}에게 메시지 전송 실패: 연결된 웹소켓 없음")
                     # 전체 연결 상태 디버깅
-                    self.log_debug(f"모든 활성 사용자: {list(manager.user_connections.keys())}")
-                    self.log_debug(f"총 활성 연결 수: {len(manager.active_connections)}")
+                    self.log_debug(f"모든 활성 사용자: {socketio_manager.get_participants()}")
+                    self.log_debug(f"총 활성 연결 수: {len(socketio_manager.get_participants())}")
             else:
                 self.log_info("모든 사용자에게 진행 상황 브로드캐스트")
                 # 브로드캐스트 전 웹소켓 연결 상태 확인
-                self.log_debug(f"활성 사용자 수: {len(manager.user_connections)}")
-                self.log_debug(f"총 웹소켓 연결 수: {len(manager.active_connections)}")
+                self.log_debug(f"활성 사용자 수: {len(socketio_manager.get_participants())}")
+                self.log_debug(f"총 웹소켓 연결 수: {len(socketio_manager.get_participants())}")
                 
-                sent_count = await manager.broadcast_json(message_data, critical=True, raise_exception=require_websocket)
+                sent_count = await socketio_manager.emit(WSMessageType.CRAWLER_PROGRESS, message_data, critical=True, raise_exception=require_websocket)
                 if sent_count == 0:
                     self.log_warning("브로드캐스트 실패: 활성화된 웹소켓 연결 없음")
             
@@ -304,4 +302,5 @@ class BaseCrawlerService(ABC, LoggingMixin):
             error_type = e.__class__.__name__
             error_msg = str(e)
             self.log_error(f"업데이트 결과 저장 실패 유형: {error_type}, 메시지: {error_msg}")
+            # updated_cves 타입 및 값 로깅
             self.log_error(f"updated_cves 타입: {type(updated_cves)}, 값: {str(updated_cves)[:100]}...") 

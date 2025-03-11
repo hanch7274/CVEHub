@@ -23,13 +23,10 @@ import {
   ListHeader,
   EmptyState
 } from './CommonStyles';
-import { useDispatch } from 'react-redux';
-import { 
-  updateCVEDetail,
-  fetchCVEDetail
-} from '../../../store/slices/cveSlice';
-import { WS_EVENT } from '../../../services/websocket/index';
+import { useQueryClient } from '@tanstack/react-query';
+import { api } from '../../../utils/auth';
 import { useSnackbar } from 'notistack';
+import { SOCKET_EVENTS } from '../../../services/socketio/constants';
 
 /**
  * 재사용 가능한 데이터 탭 컴포넌트
@@ -45,8 +42,8 @@ const GenericDataTab = memo(({
   // 선택적 속성 (기본값 설정)
   onCountChange = () => {}      // 항목 수가 변경될 때 호출되는 콜백
 }) => {
-  const dispatch = useDispatch();
   const { enqueueSnackbar } = useSnackbar();
+  const queryClient = useQueryClient();
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -69,9 +66,9 @@ const GenericDataTab = memo(({
   // refreshTrigger가 변경될 때마다 데이터 새로고침
   useEffect(() => {
     if (refreshTrigger > 0) {
-      dispatch(fetchCVEDetail(cve.cveId));
+      queryClient.invalidateQueries(['cve', cve.cveId]);
     }
-  }, [refreshTrigger, dispatch, cve?.cveId]);
+  }, [refreshTrigger, queryClient, cve?.cveId]);
 
   // 아이템 수 변경 시 상위 컴포넌트에 알림
   useEffect(() => {
@@ -154,15 +151,15 @@ const GenericDataTab = memo(({
 
       const updatedItems = [...items, finalItem];
       
-      const response = await dispatch(updateCVEDetail({
+      const response = await api.post('/cve', {
         cveId: cve.cveId,
         data: { [tabConfig.dataField]: updatedItems }
-      })).unwrap();
+      });
 
       if (response) {
         // WebSocket 메시지 전송 - 필드 정보 추가
         await sendMessage(
-          WS_EVENT.CVE_UPDATED,
+          SOCKET_EVENTS.DATA_UPDATED,
           {
             cveId: cve.cveId,
             field: tabConfig.wsFieldName,
@@ -197,15 +194,15 @@ const GenericDataTab = memo(({
       // 기존 아이템 배열에서 해당 인덱스만 제외
       const updatedItems = items.filter((_, i) => i !== index);
 
-      const response = await dispatch(updateCVEDetail({
+      const response = await api.post('/cve', {
         cveId: cve.cveId,
         data: { [tabConfig.dataField]: updatedItems }
-      })).unwrap();
+      });
 
       if (response) {
         // WebSocket 메시지 전송 - 필드 정보 추가
         await sendMessage(
-          WS_EVENT.CVE_UPDATED,
+          SOCKET_EVENTS.DATA_UPDATED,
           {
             cveId: cve.cveId,
             field: tabConfig.wsFieldName,
@@ -258,15 +255,15 @@ const GenericDataTab = memo(({
         index === selectedItem.id ? finalItem : item
       );
 
-      const response = await dispatch(updateCVEDetail({
+      const response = await api.post('/cve', {
         cveId: cve.cveId,
         data: { [tabConfig.dataField]: updatedItems }
-      })).unwrap();
+      });
 
       if (response) {
         // WebSocket 메시지 전송 - 필드 정보 추가
         await sendMessage(
-          WS_EVENT.CVE_UPDATED,
+          SOCKET_EVENTS.DATA_UPDATED,
           {
             cveId: cve.cveId,
             field: tabConfig.wsFieldName,

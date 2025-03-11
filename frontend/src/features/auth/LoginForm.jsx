@@ -1,22 +1,27 @@
-import React, { useEffect } from 'react';
-import { useDispatch } from 'react-redux';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { login } from '../../features/auth/authSlice';
-import { WebSocketService } from '../../services/websocket';
+import { useAuth } from '../../contexts/AuthContext';
+import { useSocketIO } from '../../contexts/SocketIOContext';
+import logger from '../../services/socketio/loggingService';
 
-const LoginForm = () => {
-    const dispatch = useDispatch();
+const LoginForm = ({ username, password, setUsername, setPassword }) => {
     const navigate = useNavigate();
+    const { login } = useAuth();
+    const socketIO = useSocketIO();
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleSubmit = async (event) => {
         event.preventDefault();
+        if (isSubmitting) return;
+        
+        setIsSubmitting(true);
         try {
-            const response = await dispatch(login({ username, password })).unwrap();
-            console.log('[Auth] Login successful:', response);
+            await login({ username, password });
+            logger.info('[Auth]', '로그인 성공');
             
             // 로그인 성공 후 WebSocket 연결이 완료될 때까지 대기
             const checkConnection = () => {
-                if (WebSocketService.checkConnection()) {
+                if (socketIO.connected) {
                     navigate('/cves');
                 } else {
                     setTimeout(checkConnection, 100);
@@ -24,7 +29,8 @@ const LoginForm = () => {
             };
             checkConnection();
         } catch (error) {
-            // ... 에러 처리 ...
+            logger.error('[Auth]', '로그인 실패:', error);
+            setIsSubmitting(false);
         }
     };
 
@@ -35,4 +41,4 @@ const LoginForm = () => {
     );
 };
 
-export default LoginForm; 
+export default LoginForm;

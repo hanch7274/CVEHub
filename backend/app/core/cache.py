@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import redis.asyncio as redis_async
 import logging
 from .config import get_settings
+import asyncio
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -105,29 +106,111 @@ async def invalidate_cve_caches(cve_id: str = None) -> bool:
     """
     CVE 관련 캐시 무효화
     - 특정 CVE 캐시만 무효화하거나 모든 CVE 목록 캐시 무효화
+    - 캐시 무효화 시 웹소켓으로 알림 발송 (클라이언트가 캐시 즉시 갱신하도록)
+    
+    Args:
+        cve_id (str, optional): 무효화할 특정 CVE ID. None인 경우 모든 CVE 목록 캐시 무효화
+        
+    Returns:
+        bool: 하나 이상의 캐시가 무효화되었는지 여부
     """
     try:
         redis = await get_redis()
+        invalidated = False
         
         # 특정 CVE 상세 정보 캐시 삭제
         if cve_id:
+            start_time = datetime.now()
+            # 상세 캐시 키 (기본 키 포함)
             detail_key = f"{CACHE_KEY_PREFIXES['cve_detail']}{cve_id}"
-            await redis.delete(detail_key)
+            detail_deleted = await redis.delete(detail_key)
+            
+            # 상세 정보 삭제 결과 로깅
+            if detail_deleted:
+                logger.info(f"캐시 무효화: CVE 상세 정보 ({cve_id}) 삭제됨")
+                invalidated = True
+            else:
+                logger.debug(f"캐시 무효화: CVE 상세 정보 ({cve_id})가 캐시에 없었음")
+            
+            # 파생 캐시 키도 삭제 (다양한 형태로 저장된 관련 캐시 검색)
+            derived_pattern = f"{CACHE_KEY_PREFIXES['cve_detail']}*{cve_id}*"
+            async for derived_key in redis.scan_iter(match=derived_pattern):
+                if derived_key != detail_key:  # 이미 삭제한 기본 키는 제외
+                    deleted = await redis.delete(derived_key)
+                    if deleted:
+                        logger.info(f"캐시 무효화: 파생 CVE 상세 캐시 ({derived_key}) 삭제됨")
+                        invalidated = True
+            
+            # 처리 시간 측정 및 로깅
+            processing_time = (datetime.now() - start_time).total_seconds() * 1000
+            logger.debug(f"CVE 상세 캐시 무효화 처리 시간: {processing_time:.2f}ms")
         
         # CVE 목록 캐시는 패턴 매칭으로 모두 삭제
+        start_time = datetime.now()
         cve_list_pattern = f"{CACHE_KEY_PREFIXES['cve_list']}*"
         
-        # redis.asyncio의 scan_iter 사용
-        keys_to_delete = []
+        # scan_iter로 모든 매칭되는 키 찾기
+        list_keys = []
         async for key in redis.scan_iter(match=cve_list_pattern):
-            keys_to_delete.append(key)
+            list_keys.append(key)
         
-        if keys_to_delete:
-            await redis.delete(*keys_to_delete)
-                
-        return True
+        # 목록 캐시가 있으면 파이프라인으로 일괄 삭제
+        if list_keys:
+            # 로깅을 위한 키 샘플링 (최대 5개)
+            sample_keys = list_keys[:5]
+            logger.info(f"삭제할 목록 캐시 키 샘플: {sample_keys} (총 {len(list_keys)}개)")
+            
+            # 파이프라인으로 효율적으로 삭제
+            pipe = redis.pipeline()
+            for key in list_keys:
+                pipe.delete(key)
+            results = await pipe.execute()
+            
+            # 삭제된 키 수 집계 및 로깅
+            deleted_count = sum(1 for res in results if res)
+            if deleted_count > 0:
+                logger.info(f"캐시 무효화: {deleted_count}개의 CVE 목록 캐시 삭제됨 (총 {len(list_keys)}개 중)")
+                invalidated = True
+            else:
+                logger.warning(f"캐시 무효화: 목록 캐시 키는 {len(list_keys)}개 발견되었으나 삭제된 캐시가 없음")
+        else:
+            logger.debug("캐시 무효화: 삭제할 CVE 목록 캐시가 없음")
+        
+        # 목록 캐시 처리 시간 측정 및 로깅
+        processing_time = (datetime.now() - start_time).total_seconds() * 1000
+        logger.debug(f"CVE 목록 캐시 무효화 처리 시간: {processing_time:.2f}ms")
+        
+        # 캐시 무효화 결과를 웹소켓으로 브로드캐스트
+        if invalidated:
+            event_data = {
+                "event": "cache_invalidated",
+                "data": {
+                    "cve_id": cve_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "invalidated_detail": cve_id is not None,
+                    "invalidated_lists": len(list_keys) > 0
+                }
+            }
+            
+            try:
+                # 비동기로 웹소켓 이벤트 발생 (await 없이)
+                asyncio.create_task(
+                    handle_websocket_event(
+                        "cache_invalidated", 
+                        event_data["data"]
+                    )
+                )
+                logger.info(f"캐시 무효화 웹소켓 이벤트 발생: {cve_id if cve_id else '전체 목록'}")
+            except Exception as e:
+                logger.error(f"웹소켓 이벤트 발생 중 오류: {str(e)}")
+            
+        return invalidated
+        
     except Exception as e:
-        logger.error(f"캐시 무효화 실패: {str(e)}")
+        logger.error(f"캐시 무효화 중 오류 발생: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        # 오류 발생 시에도 계속 진행
         return False
 
 # 웹소켓 이벤트 기반 캐시 무효화 함수

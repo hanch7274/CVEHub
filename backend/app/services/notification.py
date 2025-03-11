@@ -2,7 +2,7 @@ from typing import List, Optional, Dict, Tuple
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from ..models.notification import Notification, NotificationType, NotificationStatus
-from ..core.websocket import manager
+from ..core.socketio_manager import socketio_manager, WSMessageType
 import logging
 
 logger = logging.getLogger(__name__)
@@ -50,16 +50,14 @@ class NotificationService:
     async def _deliver_notification(self, notification: Notification) -> bool:
         """온라인 사용자에게 알림 전송 시도"""
         try:
-            # WebSocket을 통해 실시간 전송
-            await manager.send_message(
-                notification.recipient_id,
+            # Socket.IO를 통해 실시간 전송
+            await socketio_manager.emit(
+                WSMessageType.NOTIFICATION,
                 {
-                    "type": "notification",
-                    "data": {
-                        "notification": notification.dict(),
-                        "unreadCount": await self.get_unread_count(notification.recipient_id)
-                    }
-                }
+                    "notification": notification.dict(),
+                    "unreadCount": await self.get_unread_count(notification.recipient_id)
+                },
+                room=notification.recipient_id
             )
             
             # 전송 성공 시 delivered 상태 업데이트

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useDispatch, useSelector } from 'react-redux';
 import { useSnackbar } from 'notistack';
 import {
   Container,
@@ -18,13 +17,12 @@ import {
   Divider
 } from '@mui/material';
 import { Email, Lock, Visibility, VisibilityOff } from '@mui/icons-material';
-import { loginThunk } from '../../store/slices/authSlice';
+import { useAuth } from '../../contexts/AuthContext';
 
 const Login = () => {
   const navigate = useNavigate();
-  const dispatch = useDispatch();
   const { enqueueSnackbar } = useSnackbar();
-  const { loading: authLoading, error: authError } = useSelector(state => state.auth);
+  const { login, loading: authLoading, error: authError } = useAuth();
   
   const [formData, setFormData] = useState({
     email: '',
@@ -51,102 +49,117 @@ const Login = () => {
       setSaveId(true);
     }
     
-    // 컴포넌트 언마운트 시 정리 작업
     return () => {
       isMounted.current = false;
       window.removeEventListener('beforeunload', cleanupBeforeUnload);
       
-      // 타이머 정리
+      // 타이머가 있으면 정리
       if (timerRef.current) {
         clearTimeout(timerRef.current);
       }
-      
-      // 디버깅 정보
-      console.log('[Login] 컴포넌트 언마운트, 리소스 정리 완료');
     };
   }, []);
 
-  // 페이지 이탈 시 정리 함수
+  // 페이지 언로드 전 정리 함수
   const cleanupBeforeUnload = () => {
     if (timerRef.current) {
       clearTimeout(timerRef.current);
     }
   };
 
-  useEffect(() => {
-    if (authError && isMounted.current) {
-      setError(authError);
-    }
-  }, [authError]);
-
+  // 입력 필드 변경 핸들러
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
       [name]: value
     }));
-    setError('');
+    
+    // 입력 시 에러 메시지 초기화
+    if (error) setError('');
   };
 
+  // 아이디 저장 체크박스 변경 핸들러
   const handleSaveIdChange = (e) => {
-    const checked = e.target.checked;
-    setSaveId(checked);
-    if (!checked) {
-      localStorage.removeItem('savedEmail');
-    } else {
-      localStorage.setItem('savedEmail', formData.email);
-    }
+    setSaveId(e.target.checked);
   };
 
-  const handleClickShowPassword = () => {
-    setShowPassword(!showPassword);
+  // 비밀번호 표시 토글 핸들러
+  const handleTogglePasswordVisibility = () => {
+    setShowPassword(prev => !prev);
   };
 
+  // 폼 제출 핸들러
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!isMounted.current) return;
     
-    setError('');
+    // 입력 검증
+    if (!formData.email || !formData.password) {
+      setError('이메일과 비밀번호를 모두 입력해주세요.');
+      return;
+    }
+    
+    // 이메일 형식 검증
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      setError('유효한 이메일 주소를 입력해주세요.');
+      return;
+    }
+    
     setLoading(true);
-
+    setError('');
+    
     try {
-      const result = await dispatch(loginThunk(formData)).unwrap();
+      // 로그인 요청
+      await login(formData);
       
-      if (!isMounted.current) return;
-      
+      // 아이디 저장 설정에 따라 저장 또는 삭제
       if (saveId) {
         localStorage.setItem('savedEmail', formData.email);
+      } else {
+        localStorage.removeItem('savedEmail');
       }
       
-      enqueueSnackbar('로그인에 성공했습니다.', {
+      // 로그인 성공 메시지 표시
+      enqueueSnackbar('로그인에 성공했습니다.', { 
         variant: 'success',
-        anchorOrigin: {
-          vertical: 'bottom',
-          horizontal: 'center',
-        },
-        autoHideDuration: 2000
+        autoHideDuration: 3000
       });
       
-      // 메시지 채널이 닫히기 전에 비동기 작업을 완료하도록 타이머 설정
+      // 메인 페이지로 이동 (지연 적용)
       timerRef.current = setTimeout(() => {
         if (isMounted.current) {
-          navigate('/', { replace: true });
+          navigate('/');
         }
-      }, 100);
-
-    } catch (err) {
-      if (!isMounted.current) return;
+      }, 1000);
       
-      console.error('Login Error:', err);
-      setError(err || '로그인 중 오류가 발생했습니다. 다시 시도해주세요.');
+    } catch (error) {
+      console.error('로그인 오류:', error);
       
-      enqueueSnackbar(err || '로그인 중 오류가 발생했습니다.', {
+      // 오류 메시지 설정
+      if (error.response) {
+        // 서버 응답이 있는 경우
+        const status = error.response.status;
+        
+        if (status === 401) {
+          setError('이메일 또는 비밀번호가 올바르지 않습니다.');
+        } else if (status === 429) {
+          setError('너무 많은 로그인 시도가 있었습니다. 잠시 후 다시 시도해주세요.');
+        } else {
+          setError(error.response.data?.message || '로그인 중 오류가 발생했습니다.');
+        }
+      } else if (error.request) {
+        // 요청은 보냈지만 응답이 없는 경우
+        setError('서버에 연결할 수 없습니다. 네트워크 연결을 확인해주세요.');
+      } else {
+        // 요청 설정 중 오류 발생
+        setError('로그인 요청을 처리할 수 없습니다.');
+      }
+      
+      // 오류 알림 표시
+      enqueueSnackbar('로그인에 실패했습니다.', { 
         variant: 'error',
-        anchorOrigin: {
-          vertical: 'bottom',
-          horizontal: 'center',
-        },
-        autoHideDuration: 3000
+        autoHideDuration: 5000
       });
     } finally {
       if (isMounted.current) {
@@ -156,130 +169,141 @@ const Login = () => {
   };
 
   return (
-    <Box
-      sx={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        bgcolor: '#F8F9FA',
-        py: 4
-      }}
-    >
-      <Container maxWidth="sm">
-        <Paper
-          elevation={3}
-          sx={{
-            p: 4,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center'
-          }}
-        >
-          <Typography component="h1" variant="h5" sx={{ mb: 3 }}>
+    <Container maxWidth="sm" sx={{ 
+      display: 'flex', 
+      flexDirection: 'column',
+      justifyContent: 'center',
+      minHeight: '100vh',
+      py: 4
+    }}>
+      <Paper 
+        elevation={3} 
+        sx={{ 
+          p: 4, 
+          display: 'flex', 
+          flexDirection: 'column',
+          borderRadius: 2
+        }}
+      >
+        <Box sx={{ mb: 3, textAlign: 'center' }}>
+          <Typography variant="h4" component="h1" gutterBottom>
             로그인
           </Typography>
-
-          {error && (
-            <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
-              {error}
-            </Alert>
-          )}
-
-          <Box component="form" onSubmit={handleSubmit} sx={{ width: '100%' }}>
-            <TextField
-              margin="normal"
-              required
-              fullWidth
-              id="email"
-              label="이메일"
-              name="email"
-              type="email"
-              autoComplete="email"
-              autoFocus
-              value={formData.email}
-              onChange={handleChange}
-              error={!!error}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Email />
-                  </InputAdornment>
-                ),
-              }}
-            />
-            <TextField
-              margin="normal"
-              required
-              fullWidth
-              name="password"
-              label="비밀번호"
-              type={showPassword ? 'text' : 'password'}
-              id="password"
-              autoComplete="current-password"
-              value={formData.password}
-              onChange={handleChange}
-              error={!!error}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Lock />
-                  </InputAdornment>
-                ),
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton
-                      aria-label="toggle password visibility"
-                      onClick={handleClickShowPassword}
-                      edge="end"
-                    >
-                      {showPassword ? <VisibilityOff /> : <Visibility />}
-                    </IconButton>
-                  </InputAdornment>
-                ),
-              }}
-            />
+          <Typography variant="body2" color="text.secondary">
+            CVE Hub에 오신 것을 환영합니다
+          </Typography>
+        </Box>
+        
+        {error && (
+          <Alert severity="error" sx={{ mb: 3 }}>
+            {error}
+          </Alert>
+        )}
+        
+        <Box component="form" onSubmit={handleSubmit} noValidate>
+          <TextField
+            margin="normal"
+            required
+            fullWidth
+            id="email"
+            label="이메일"
+            name="email"
+            autoComplete="email"
+            autoFocus
+            value={formData.email}
+            onChange={handleChange}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Email />
+                </InputAdornment>
+              ),
+            }}
+          />
+          
+          <TextField
+            margin="normal"
+            required
+            fullWidth
+            name="password"
+            label="비밀번호"
+            type={showPassword ? 'text' : 'password'}
+            id="password"
+            autoComplete="current-password"
+            value={formData.password}
+            onChange={handleChange}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Lock />
+                </InputAdornment>
+              ),
+              endAdornment: (
+                <InputAdornment position="end">
+                  <IconButton
+                    aria-label="toggle password visibility"
+                    onClick={handleTogglePasswordVisibility}
+                    edge="end"
+                  >
+                    {showPassword ? <VisibilityOff /> : <Visibility />}
+                  </IconButton>
+                </InputAdornment>
+              )
+            }}
+          />
+          
+          <FormControlLabel
+            control={
+              <Checkbox 
+                value="remember" 
+                color="primary" 
+                checked={saveId}
+                onChange={handleSaveIdChange}
+              />
+            }
+            label="아이디 저장"
+          />
+          
+          <Button
+            type="submit"
+            fullWidth
+            variant="contained"
+            sx={{ mt: 3, mb: 2, py: 1.5 }}
+            disabled={loading || authLoading}
+          >
+            {(loading || authLoading) ? (
+              <CircularProgress size={24} color="inherit" />
+            ) : (
+              '로그인'
+            )}
+          </Button>
+          
+          <Divider sx={{ my: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              또는
+            </Typography>
+          </Divider>
+          
+          <Box sx={{ mt: 1, textAlign: 'center' }}>
+            <Link to="/signup" style={{ textDecoration: 'none' }}>
+              <Button
+                fullWidth
+                variant="outlined"
+                sx={{ mb: 1, py: 1.5 }}
+              >
+                회원가입
+              </Button>
+            </Link>
             
-            <FormControlLabel
-              control={
-                <Checkbox 
-                  checked={saveId}
-                  onChange={handleSaveIdChange}
-                  color="primary"
-                />
-              }
-              label="이메일 저장"
-              sx={{ mt: 1 }}
-            />
-
-            <Button
-              type="submit"
-              fullWidth
-              variant="contained"
-              sx={{ mt: 3, mb: 2 }}
-              disabled={loading || authLoading}
-            >
-              {(loading || authLoading) ? <CircularProgress size={24} /> : '로그인'}
-            </Button>
-
-            <Divider sx={{ my: 2 }}>
-              <Typography color="textSecondary" variant="body2">
-                또는
-              </Typography>
-            </Divider>
-
-            <Button
-              component={Link}
-              to="/signup"
-              fullWidth
-              variant="outlined"
-              sx={{ mt: 1 }}
-            >
-              회원가입
-            </Button>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+              <Link to="/forgot-password" style={{ color: 'inherit' }}>
+                비밀번호를 잊으셨나요?
+              </Link>
+            </Typography>
           </Box>
-        </Paper>
-      </Container>
-    </Box>
+        </Box>
+      </Paper>
+    </Container>
   );
 };
 

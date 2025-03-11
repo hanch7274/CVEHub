@@ -1,7 +1,9 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import { loginThunk, getCurrentUserThunk, logout as logoutAction } from '../store/slices/authSlice';
-import WebSocketService from '../services/websocket';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import { getAccessToken, getRefreshToken } from '../utils/storage/tokenStorage';
+import logger from '../services/socketio/loggingService';
+import socketIOService from '../services/socketio/socketio';
+import { useAuthQuery } from '../api/hooks/useAuthQuery';
+import { TOKEN_REFRESH_THRESHOLD } from '../config';
 
 const AuthContext = createContext(null);
 
@@ -14,69 +16,136 @@ export const useAuth = () => {
 };
 
 export const AuthProvider = ({ children }) => {
-  const dispatch = useDispatch();
-  const { user, loading: reduxLoading, isAuthenticated: reduxIsAuthenticated, error, token } = useSelector(state => state.auth);
+  const { 
+    user, 
+    isAuthenticated, 
+    isLoading, 
+    error, 
+    login, 
+    loginAsync, 
+    logout, 
+    logoutAsync, 
+    refreshToken, 
+    refreshTokenAsync 
+  } = useAuthQuery();
   
   // 로컬 상태 추가
   const [loading, setLoading] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(reduxIsAuthenticated);
-  const [accessToken, setAccessToken] = useState(token);
+  const [accessToken, setAccessToken] = useState(getAccessToken());
 
-  // Redux 상태가 변경될 때 로컬 상태 동기화
+  // 토큰 상태 정기 확인 (1초마다)
   useEffect(() => {
-    setIsAuthenticated(reduxIsAuthenticated);
-    setAccessToken(token);
-  }, [reduxIsAuthenticated, token]);
+    logger.info('AuthContext', '초기화됨');
+    
+    // 초기 토큰 상태 확인
+    const hasAccessToken = !!getAccessToken()?.trim();
+    const hasRefreshToken = !!getRefreshToken()?.trim();
+    
+    // 정기적으로 토큰 상태 확인
+    const tokenCheckInterval = setInterval(() => {
+      const currentAccessToken = getAccessToken();
+      if (currentAccessToken !== accessToken) {
+        logger.info('AuthContext', '토큰 상태 변경 감지');
+        setAccessToken(currentAccessToken);
+      }
+    }, 1000);
+    
+    return () => {
+      clearInterval(tokenCheckInterval);
+    };
+  }, [accessToken]);
 
+  // 토큰 자동 갱신 설정
   useEffect(() => {
-    const initAuth = async () => {
-      if (token && !user) {
-        try {
-          await dispatch(getCurrentUserThunk());
-        } catch (error) {
-          console.error('사용자 정보 초기화 오류:', error);
+    if (!isAuthenticated) return;
+    
+    logger.info('AuthContext', '토큰 자동 갱신 설정');
+    
+    // 토큰 만료 시간 확인 및 갱신 함수
+    const checkTokenExpiration = async () => {
+      try {
+        const token = getAccessToken();
+        if (!token) return;
+        
+        // JWT 토큰에서 만료 시간 추출
+        const tokenData = JSON.parse(atob(token.split('.')[1]));
+        const expirationTime = tokenData.exp * 1000; // 초 -> 밀리초
+        const currentTime = Date.now();
+        const timeUntilExpiration = expirationTime - currentTime;
+        
+        // 만료 임계값(5분) 이내면 토큰 갱신
+        if (timeUntilExpiration < TOKEN_REFRESH_THRESHOLD) {
+          logger.info('AuthContext', '토큰 만료 임박, 갱신 시도', {
+            expiresIn: Math.floor(timeUntilExpiration / 1000)
+          });
+          await refreshTokenAsync();
         }
+      } catch (error) {
+        logger.error('AuthContext', '토큰 갱신 중 오류 발생', error);
       }
     };
+    
+    // 초기 실행 및 주기적 실행 설정 (1분마다)
+    checkTokenExpiration();
+    const refreshInterval = setInterval(checkTokenExpiration, 60 * 1000);
+    
+    return () => {
+      clearInterval(refreshInterval);
+    };
+  }, [isAuthenticated, refreshTokenAsync]);
 
-    initAuth();
-  }, [dispatch, token, user]);
+  // Socket.IO 연결 관리
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      logger.info('AuthContext', 'Socket.IO 연결 시도');
+      socketIOService.connect();
+    } else {
+      logger.info('AuthContext', 'Socket.IO 연결 해제');
+      socketIOService.disconnect();
+    }
+    
+    return () => {
+      socketIOService.disconnect();
+    };
+  }, [isAuthenticated, user]);
 
-  const login = async (email, password) => {
+  // 로그인 핸들러
+  const handleLogin = async (credentials) => {
+    setLoading(true);
     try {
-      setLoading(true);
-      const result = await dispatch(loginThunk({ email, password })).unwrap();
-      
-      // WebSocket 연결 초기화
-      try {
-        await WebSocketService.connect();
-      } catch (error) {
-        console.error('WebSocket 초기 연결 실패:', error);
-        // WebSocket 연결 실패는 로그인 실패로 처리하지 않음
-      }
-      
-      setLoading(false);
+      const result = await loginAsync(credentials);
+      logger.info('AuthContext', '로그인 성공');
       return result;
     } catch (error) {
-      setLoading(false);
-      console.error('로그인 오류:', error);
+      logger.error('AuthContext', '로그인 실패', error);
       throw error;
+    } finally {
+      setLoading(false);
     }
   };
 
-  const logout = () => {
-    WebSocketService.disconnect();  // WebSocket 연결 해제
-    dispatch(logoutAction());
+  // 로그아웃 핸들러
+  const handleLogout = async () => {
+    setLoading(true);
+    try {
+      await logoutAsync();
+      logger.info('AuthContext', '로그아웃 성공');
+    } catch (error) {
+      logger.error('AuthContext', '로그아웃 실패', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
+  // Context 값
   const value = {
     user,
-    loading: loading || reduxLoading,
     isAuthenticated,
+    loading: loading || isLoading,
     error,
-    login,
-    logout,
-    accessToken
+    login: handleLogin,
+    logout: handleLogout,
+    accessToken: getAccessToken()
   };
 
   return (

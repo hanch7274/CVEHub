@@ -8,7 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 from .crawler_manager import CrawlerManager
 from ..core.config import get_settings
 from ..models.system_config import SystemConfig
-from ..core.websocket import manager
+from ..core.socketio_manager import socketio_manager
 from ..models.cve_model import CVEModel
 from .crawler_base import LoggingMixin
 import functools
@@ -250,7 +250,7 @@ class CrawlerScheduler(LoggingMixin):
                 data["data"]["updated_cves"] = updated_cves
             
             # 웹소켓으로 전송
-            await manager.broadcast_json(data)
+            await socketio_manager.broadcast_json(data)
             
             # 로그
             self.log_info(f"진행 상황 [{crawler_type}]: {stage} {percent}% - {message}")
@@ -358,7 +358,7 @@ class CrawlerScheduler(LoggingMixin):
                 
                 # 특정 사용자에게도 메시지 전송
                 if user_id:
-                    await manager.send_to_specific_user(user_id, {
+                    await socketio_manager.send_to_specific_user(user_id, {
                         "type": "crawler_update_error",
                         "data": {
                             "crawler": crawler_type,

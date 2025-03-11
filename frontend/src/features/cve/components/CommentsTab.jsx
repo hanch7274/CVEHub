@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { useDispatch } from 'react-redux';
 import {
   Box,
   Typography,
@@ -7,17 +6,17 @@ import {
 } from '@mui/material';
 import Comment from './Comment';
 import MentionInput from './MentionInput';
-import { fetchCVEDetail } from '../../../store/slices/cveSlice';
 import { api } from '../../../utils/auth';
 import { formatDistanceToNow } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import { useSnackbar } from 'notistack';
-import { WS_EVENT} from '../../../services/websocket/index';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   ListHeader,
   EmptyState
 } from './CommonStyles';
 import { Comment as CommentIcon } from '@mui/icons-material';
+import { SOCKET_EVENTS } from '../../../services/socketio/constants';
 
 // 멘션된 사용자를 추출하는 유틸리티 함수
 const extractMentions = (content) =>
@@ -45,8 +44,8 @@ const CommentsTab = React.memo(({
   open,
   sendMessage
 }) => {
-  const dispatch = useDispatch();
   const { enqueueSnackbar } = useSnackbar();
+  const queryClient = useQueryClient();
   
   // 웹소켓 메시지를 통해 새로운 댓글 알림을 처리하는 콜백 함수
   const handleCommentNotification = useCallback((message) => {
@@ -148,7 +147,7 @@ const CommentsTab = React.memo(({
 
       if (response) {
         await sendMessage(
-          WS_EVENT.CVE_UPDATED,
+          SOCKET_EVENTS.COMMENT_DELETED,
           {
             cveId: cve.cveId,
             field: 'comments',
@@ -186,7 +185,7 @@ const CommentsTab = React.memo(({
       if (response) {
         if (mentions.length > 0) {
           await sendMessage(
-            WS_EVENT.NOTIFICATION,
+            SOCKET_EVENTS.MENTION_ADDED,
             {
               type: 'mention',
               recipients: mentions,
@@ -202,7 +201,7 @@ const CommentsTab = React.memo(({
         
         // WebSocket 메시지 전송 - 필드 정보 추가
         await sendMessage(
-          WS_EVENT.CVE_UPDATED,
+          SOCKET_EVENTS.COMMENT_UPDATED,
           {
             cveId: cve.cveId,
             field: 'comments',
@@ -239,7 +238,7 @@ const CommentsTab = React.memo(({
       if (response) {
         if (mentions.length > 0) {
           await sendMessage(
-            WS_EVENT.NOTIFICATION,
+            SOCKET_EVENTS.MENTION_ADDED,
             {
               type: 'mention',
               recipients: mentions,
@@ -364,7 +363,7 @@ const CommentsTab = React.memo(({
         // 멘션이 있을 경우 알림 전송
         if (mentions.length > 0) {
           await sendMessage(
-            WS_EVENT.NOTIFICATION,
+            SOCKET_EVENTS.MENTION_ADDED,
             {
               type: 'mention',
               recipients: mentions,
@@ -380,7 +379,7 @@ const CommentsTab = React.memo(({
 
         // WebSocket 메시지 전송 - 필드 정보 추가
         await sendMessage(
-          WS_EVENT.CVE_UPDATED,
+          SOCKET_EVENTS.COMMENT_ADDED,
           {
             type: 'comment_added',
             cveId: cve.cveId,
@@ -431,7 +430,7 @@ const CommentsTab = React.memo(({
 
     const handleRefresh = async () => {
       if (refreshTrigger > 0 && isMounted) {
-        await dispatch(fetchCVEDetail(cve.cveId));
+        await queryClient.invalidateQueries(['cve', cve.cveId]);
       }
     };
 
@@ -440,7 +439,7 @@ const CommentsTab = React.memo(({
     return () => {
       isMounted = false;
     };
-  }, [refreshTrigger, dispatch, cve.cveId]);
+  }, [refreshTrigger, queryClient, cve.cveId]);
 
   // 상위 MentionInput
   const MemoizedMentionInput = useMemo(() => (

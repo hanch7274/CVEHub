@@ -3,13 +3,6 @@ import { setAccessToken, setRefreshToken, getRefreshToken, getAccessToken, clear
 import axios from 'axios';
 import { API_BASE_URL, API_ENDPOINTS } from '../config';
 
-// store를 동적으로 주입하기 위한 변수 (필요 시 사용)
-let store = null;
-
-export const injectStore = (_store) => {
-  store = _store;
-};
-
 // 현재 사용자 정보 조회
 export const getCurrentUser = async () => {
   try {
@@ -34,10 +27,12 @@ export const refreshToken = async () => {
     console.log('=== Token Refresh Debug ===');
     console.log('Attempting to refresh token...');
 
+    // 요청 데이터는 백엔드 API 요구사항에 맞춰 스네이크 케이스 사용
+    // (axios 인터셉터에서 자동 변환됨)
     const response = await axios.post(
       `${API_BASE_URL}${API_ENDPOINTS.AUTH.REFRESH}`, 
       {
-        refresh_token: currentRefreshToken  // refresh_token을 body에 포함
+        refreshToken: currentRefreshToken  // 카멜케이스로 변경 (인터셉터에서 스네이크 케이스로 변환됨)
       },
       { 
         headers: {
@@ -49,12 +44,16 @@ export const refreshToken = async () => {
     console.log('=== Token Refresh Response Debug ===');
     console.log('Response Status:', response.status);
     console.log('Response Data:', {
-      hasAccessToken: !!response.data.accessToken,
-      hasRefreshToken: !!response.data.refreshToken,
-      hasUser: !!response.data.user
+      hasAccessToken: !!response.data.accessToken || !!response.data.access_token,
+      hasRefreshToken: !!response.data.refreshToken || !!response.data.refresh_token,
+      hasUser: !!response.data.user,
+      responseKeys: Object.keys(response.data)
     });
 
-    const { accessToken, refreshToken, user } = response.data;
+    // 카멜케이스 필드명 사용 (스네이크 케이스 필드명은 fallback으로 유지)
+    const accessToken = response.data.accessToken || response.data.access_token;
+    const refreshTokenValue = response.data.refreshToken || response.data.refresh_token;
+    const user = response.data.user;
     
     if (!accessToken) {
       console.error('New access token is missing in the response');
@@ -62,8 +61,8 @@ export const refreshToken = async () => {
     }
 
     setAccessToken(accessToken);
-    if (refreshToken) {
-      setRefreshToken(refreshToken);
+    if (refreshTokenValue) {
+      setRefreshToken(refreshTokenValue);
     }
     if (user) {
       setUser(user);
@@ -118,11 +117,20 @@ export const login = async (credentials) => {
     console.log('=== Login Response Debug ===');
     console.log('Response Status:', response.status);
     console.log('Raw Response Data:', response.data);
+    console.log('Response Data Keys:', Object.keys(response.data));
 
-    const { accessToken, refreshToken, user } = response.data;
+    // 카멜케이스 필드명 사용 (스네이크 케이스 필드명은 fallback으로 유지)
+    const accessToken = response.data.accessToken || response.data.access_token;
+    const refreshToken = response.data.refreshToken || response.data.refresh_token;
+    const user = response.data.user;
 
     // 토큰 유효성 검사
     if (!accessToken || !user) {
+      console.error('Invalid response data:', {
+        hasAccessToken: !!accessToken,
+        hasUser: !!user,
+        responseKeys: Object.keys(response.data)
+      });
       throw new Error('Invalid response data: Missing access token or user data');
     }
 

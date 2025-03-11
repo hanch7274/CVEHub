@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { camelToSnake, snakeToCamel } from './caseConverter';
+import { CASE_CONVERSION } from '../config';
 import { 
   getAccessToken, 
   setAccessToken, 
@@ -11,11 +12,10 @@ import {
   removeAccessToken,
   removeRefreshToken
 } from './storage/tokenStorage';
-import WebSocketService from '../services/websocket';
 
-// store를 동적으로 주입하기 위한 변수
-let store = null;
+// 오류 핸들러와 queryClient를 동적으로 주입하기 위한 변수
 let errorHandler = null;
+let queryClient = null;
 let isRefreshing = false;
 let failedQueue = [];
 
@@ -30,14 +30,14 @@ const processQueue = (error, token = null) => {
   failedQueue = [];
 };
 
-export const injectStore = (_store) => {
-  store = _store;
-};
-
 export const injectErrorHandler = (_errorHandler) => {
   errorHandler = _errorHandler;
 };
 
+// React Query의 queryClient 주입
+export const injectQueryClient = (_queryClient) => {
+  queryClient = _queryClient;
+};
 
 // 토큰 갱신
 export const refreshTokenFn = async () => {
@@ -76,12 +76,16 @@ export const refreshTokenFn = async () => {
       setUser(user);
     }
 
+    // queryClient의 invalidateQueries를 호출하여 캐시 무효화
+    if (queryClient) {
+      queryClient.invalidateQueries();
+    }
+
     return newAccessToken;
   } catch (error) {
     console.error('=== Token Refresh Error ===');
     console.error('Error:', error.response?.status, error.response?.data);
     clearAuthStorage();
-    store?.dispatch({ type: 'auth/logout' });
     throw error;
   }
 };
@@ -101,6 +105,25 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    
+    // 요청 데이터를 스네이크 케이스로 변환 (POST, PUT, PATCH 요청)
+    if (config.data && ['post', 'put', 'patch'].includes(config.method)) {
+      console.log('[Axios Interceptor] 요청 데이터 변환 전:', {
+        url: config.url,
+        method: config.method,
+        dataType: typeof config.data,
+        isArray: Array.isArray(config.data),
+        originalKeys: typeof config.data === 'object' ? Object.keys(config.data) : []
+      });
+      
+      config.data = camelToSnake(config.data, { excludeFields: CASE_CONVERSION.EXCLUDED_FIELDS });
+      
+      console.log('[Axios Interceptor] 요청 데이터 변환 후:', {
+        convertedKeys: typeof config.data === 'object' ? Object.keys(config.data) : [],
+        sample: config.data
+      });
+    }
+    
     return config;
   },
   (error) => {
@@ -113,7 +136,20 @@ api.interceptors.response.use(
   (response) => {
     // 응답 데이터를 카멜 케이스로 변환
     if (response.data) {
+      console.log('[Axios Interceptor] 응답 데이터 변환 전:', {
+        url: response.config.url,
+        method: response.config.method,
+        dataType: typeof response.data,
+        isArray: Array.isArray(response.data),
+        originalKeys: typeof response.data === 'object' ? Object.keys(response.data) : []
+      });
+      
       response.data = snakeToCamel(response.data);
+      
+      console.log('[Axios Interceptor] 응답 데이터 변환 후:', {
+        convertedKeys: typeof response.data === 'object' ? Object.keys(response.data) : [],
+        sample: response.data
+      });
     }
     return response;
   },
@@ -212,15 +248,11 @@ export const login = async (email, password) => {
       setUser(user);  // 서버에서 받은 실제 사용자 정보 저장
     }
     
-    // store에 로그인 상태 업데이트
-    store?.dispatch({ 
-      type: 'auth/login', 
-      payload: { 
-        user,
-        isAuthenticated: true
-      } 
-    });
-
+    // queryClient의 invalidateQueries를 호출하여 캐시 무효화
+    if (queryClient) {
+      queryClient.invalidateQueries();
+    }
+    
     return response.data;
   } catch (error) {
     console.error('Login error:', error);
@@ -249,13 +281,13 @@ export const logout = async () => {
   } catch (error) {
     console.error('Logout error:', error);
   } finally {
-    // 로컬 스토리지 데이터 정리
-    removeAccessToken();
-    removeRefreshToken();
-    localStorage.removeItem('user');
+    // 로컬 저장소에서 사용자 정보 및 토큰 삭제
+    clearAuthStorage();
     
-    // WebSocket 연결 종료
-    WebSocketService.disconnect();
+    // queryClient의 invalidateQueries를 호출하여 캐시 무효화
+    if (queryClient) {
+      queryClient.invalidateQueries();
+    }
   }
 };
 
@@ -264,3 +296,7 @@ export const isAuthenticated = () => {
   return !!getAccessToken();
 };
 
+// 토큰 가져오기 (Socket.IO 인증용)
+export const getTokenFromStorage = () => {
+  return getAccessToken();
+};

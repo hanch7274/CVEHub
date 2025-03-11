@@ -6,7 +6,7 @@ from ..repositories.cve_repository import CVERepository
 from ..models.cve_model import CVEModel, CreateCVERequest, PatchCVERequest, Comment, CommentCreate, CommentUpdate, PoC, SnortRule, ModificationHistory, ChangeItem
 from ..models.notification import Notification
 from ..models.user import User
-from ..core.websocket import manager, DateTimeEncoder
+from ..core.socketio_manager import socketio_manager, WSMessageType, DateTimeEncoder
 import logging
 import traceback
 from pydantic import ValidationError

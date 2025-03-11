@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { useDispatch } from 'react-redux';
 import {
   Dialog,
   DialogTitle,
@@ -22,7 +21,9 @@ import {
   Delete as DeleteIcon,
 } from '@mui/icons-material';
 import api from '../../api/config/axios';
-import { fetchCVEList } from '../../store/slices/cveSlice';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSnackbar } from 'notistack';
+import { useNavigate } from 'react-router-dom';
 
 const POC_SOURCES = {
   Etc: "Etc",
@@ -51,8 +52,7 @@ const STATUS_OPTIONS = [
   { value: '분석불가', label: '분석불가' }
 ];
 
-const CreateCVE = ({ onClose, onSuccess }) => {
-  const dispatch = useDispatch();
+const CreateCVE = ({ open = false, onClose, onSuccess }) => {
   const [formData, setFormData] = useState({
     cveId: '',
     title: '',
@@ -61,7 +61,10 @@ const CreateCVE = ({ onClose, onSuccess }) => {
     publishedDate: new Date(new Date().getTime() + (9 * 60 * 60 * 1000)).toISOString(),
     pocs: [],
     snortRules: [],
-    references: []
+    references: [],
+    severity: 'Low',
+    exploitStatus: 'Unknown',
+    tags: ''
   });
 
   const [newPoc, setNewPoc] = useState({ source: POC_SOURCES.Etc, url: '', description: '' });
@@ -73,6 +76,58 @@ const CreateCVE = ({ onClose, onSuccess }) => {
   const [newReference, setNewReference] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
+  const { enqueueSnackbar } = useSnackbar();
+  const queryClient = useQueryClient();
+  
+  // React Query 뮤테이션 설정
+  const createCVEMutation = useMutation({
+    mutationFn: async (cveData) => {
+      const requestData = {
+        cve_id: cveData.cveId,
+        description: cveData.description,
+        status: cveData.status,
+        severity: cveData.severity,
+        exploit_status: cveData.exploitStatus,
+        references: cveData.references,
+        pocs: cveData.pocs,
+        snort_rules: cveData.snortRules,
+        last_updated: cveData.lastUpdated,
+        tags: cveData.tags
+      };
+      
+      const response = await api.post('/cves', requestData);
+      return response.data;
+    },
+    onSuccess: (data) => {
+      // CVE 목록 데이터 무효화
+      queryClient.invalidateQueries({ queryKey: ['cves'] });
+      
+      // 성공 메시지 표시
+      enqueueSnackbar('CVE가 성공적으로 생성되었습니다', { variant: 'success' });
+      
+      // 콜백 실행
+      if (onSuccess) {
+        onSuccess(data);
+      }
+      
+      // 다이얼로그 닫기
+      if (onClose) {
+        onClose();
+      }
+      
+      // 새로 생성된 CVE로 이동
+      if (data && data.cveId) {
+        navigate(`/cves/${data.cveId}`);
+      }
+      
+      setLoading(false);
+    },
+    onError: (error) => {
+      setError(error.response?.data?.message || '에러가 발생했습니다');
+      setLoading(false);
+    }
+  });
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -137,77 +192,33 @@ const CreateCVE = ({ onClose, onSuccess }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError(null);
+    
     setLoading(true);
-
-    // CVE ID 형식 검증 (필수 필드만 검증)
-    const cveIdPattern = /^CVE-\d{4}-\d{4,}$/;
-    if (!cveIdPattern.test(formData.cveId)) {
-        setError('CVE ID 형식이 올바르지 않습니다. (예: CVE-2024-1234)');
-        setLoading(false);
-        return;
-    }
-
-    try {
-      const currentTime = new Date().toISOString();
-      const requestData = {
-        cveId: formData.cveId,
-        title: formData.title,
-        description: formData.description,
-        status: formData.status,
-        publishedDate: currentTime,
-        pocs: formData.pocs.map(poc => ({
-          source: poc.source,
-          url: poc.url,
-          description: poc.description || '',
-          dateAdded: currentTime
-        })),
-        snortRules: formData.snortRules.map(rule => ({
-          rule: rule.rule,
-          type: rule.type,
-          description: rule.description || '',
-          dateAdded: currentTime
-        })),
-        references: formData.references.map(ref => ({
-          url: ref.url,
-          dateAdded: currentTime
-        }))
-      };
-
-      // 요청 데이터 로깅
-      console.log('[CreateCVE] Submitting data:', {
-        rawData: requestData,
-        formData,
-        currentTime
-      });
-      
-      console.log('[CreateCVE] Request Data:', requestData);
-      const response = await api.post('/cves', requestData);
-      console.log('[CreateCVE] Response received:', response.data);
-
-      // CVE 리스트 갱신
-      await dispatch(fetchCVEList({ skip: 0, limit: 10 }));
-
-      if (onSuccess) {
-        onSuccess(response.data);
-      }
-      onClose();
-    } catch (err) {
-      console.error('[CreateCVE] Error:', {
-        status: err.response?.status,
-        data: err.response?.data,
-        message: err.message,
-        stack: err.stack
-      });
-      setError(err.response?.data?.detail || err.message);
-    } finally {
-      setLoading(false);
-    }
+    setError(null);
+    
+    // 제출할 데이터 준비
+    const cveData = {
+      cveId: formData.cveId,
+      title: formData.title,
+      description: formData.description,
+      status: formData.status,
+      publishedDate: formData.publishedDate,
+      pocs: formData.pocs,
+      snortRules: formData.snortRules,
+      references: formData.references,
+      severity: formData.severity,
+      exploitStatus: formData.exploitStatus,
+      lastUpdated: new Date().toISOString(),
+      tags: formData.tags.split(',').map(tag => tag.trim()).filter(tag => tag)
+    };
+    
+    // React Query 뮤테이션 실행
+    createCVEMutation.mutate(cveData);
   };
 
   return (
     <Dialog 
-      open={onClose !== undefined} 
+      open={open} 
       onClose={onClose} 
       maxWidth="md" 
       fullWidth 

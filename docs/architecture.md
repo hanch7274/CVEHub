@@ -249,7 +249,7 @@ export const WS_EVENT = {
 
 2. **백엔드 연결 수락**:
    ```python
-   await manager.connect(websocket, user_id)
+   await socketio_manager.connect(websocket, user_id)
    ```
 
 3. **연결 확인 메시지 전송** (백엔드 → 프론트엔드):

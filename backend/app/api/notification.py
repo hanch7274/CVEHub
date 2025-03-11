@@ -9,7 +9,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import logging
 from beanie import PydanticObjectId
-from ..core.websocket import manager
+from ..core.socketio_manager import socketio_manager
 from ..services.notification import NotificationService
 from ..core.dependencies import get_notification_service
 
@@ -43,6 +43,7 @@ async def create_notification(
             type=notification_data.type,
             metadata=notification_data.metadata
         )
+        await socketio_manager.emit("new_notification", notification.dict(), room=notification_data.recipient_id)
         return APIResponse(
             data=notification,
             message="알림이 성공적으로 생성되었습니다."

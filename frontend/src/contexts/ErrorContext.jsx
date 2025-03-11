@@ -1,15 +1,14 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useDispatch } from 'react-redux';
-import { logout } from '../store/slices/authSlice';
 import { clearAuthStorage } from '../utils/storage/tokenStorage';
+import { useAuthQuery } from '../api/hooks/useAuthQuery';
 
 const ErrorContext = createContext(null);
 
 export const ErrorProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const navigate = useNavigate();
-  const dispatch = useDispatch();
+  const { logout } = useAuthQuery();
 
   const handleError = useCallback((error) => {
     const status = error?.response?.status;
@@ -19,7 +18,7 @@ export const ErrorProvider = ({ children }) => {
     if (status === 401) {
       // 토큰 만료 또는 인증 실패
       clearAuthStorage();
-      dispatch(logout());
+      logout();
       navigate('/login', { 
         state: { 
           from: window.location.pathname,
@@ -56,12 +55,12 @@ export const ErrorProvider = ({ children }) => {
       return;
     }
 
-    // 기타 에러 처리
+    // 기타 오류 처리
     setError({
       type: 'error',
       message
     });
-  }, [navigate, dispatch]);
+  }, [navigate, logout]);
 
   const clearError = useCallback(() => {
     setError(null);
@@ -80,4 +79,6 @@ export const useError = () => {
     throw new Error('useError must be used within an ErrorProvider');
   }
   return context;
-}; 
+};
+
+export default ErrorContext;

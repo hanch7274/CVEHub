@@ -18,8 +18,8 @@ from .models.notification import Notification
 from .models.comment import Comment
 from .core.config import get_settings
 from .api.api import api_router
-from .api.websocket import router as websocket_router
-from .core.websocket import manager
+from .api.socketio_routes import router as socketio_router, sio_app
+from .core.socketio_manager import socketio_manager
 from .core.exceptions import CVEHubException
 from .core.error_handlers import (
     cvehub_exception_handler,
@@ -52,9 +52,9 @@ class KSTFormatter(logging.Formatter):
 
 # 루트 로거 설정
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',  # ISO 포맷에서 일반 시간 포맷으로 변경
+    datefmt='%Y-%m-%d %H:%M:%S',  
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
@@ -78,7 +78,7 @@ app = FastAPI(
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 실제 운영 환경에서는 구체적인 origin을 지정해야 합니다
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -128,7 +128,10 @@ app.add_exception_handler(HTTPException, http_exception_handler)
 
 # API 라우터 등록
 app.include_router(api_router)
-app.include_router(websocket_router)
+app.include_router(socketio_router)
+
+# Socket.IO 앱 마운트
+app.mount("/socket.io", sio_app)
 
 # 애플리케이션 시작 시 KST 타임존 설정
 os.environ['TZ'] = 'Asia/Seoul'

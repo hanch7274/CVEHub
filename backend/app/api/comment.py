@@ -12,7 +12,7 @@ import traceback
 import re
 from beanie import PydanticObjectId
 from bson import ObjectId
-from ..core.websocket import manager, WSMessageType
+from ..core.socketio_manager import socketio_manager, WSMessageType
 from fastapi.logger import logger
 from pydantic import ValidationError
 from ..api.notification import create_notification
@@ -104,10 +104,10 @@ async def process_mentions(content: str, cve_id: str, comment_id: PydanticObject
                         logger.info(f"Created notification: {notification.id} for user {username}")
 
                         notification_dict = notification.dict()
-                        logger.info(f"Sending WebSocket notification: {notification_dict}")
+                        logger.info(f"Sending Socket.IO notification: {notification_dict}")
 
-                        await manager.send_notification(str(mentioned_user.id), notification_dict)
-                        logger.info(f"WebSocket notification sent to user {username} (ID: {mentioned_user.id})")
+                        await socketio_manager.emit('notification', notification_dict, room=str(mentioned_user.id))
+                        logger.info(f"Socket.IO notification sent to user {username} (ID: {mentioned_user.id})")
                     else:
                         logger.error(f"Failed to create notification for user {username}")
                 else:
@@ -154,7 +154,7 @@ async def count_active_comments(cve_id: str) -> int:
         raise
 
 async def send_comment_update(cve_id: str):
-    """댓글 수 업데이트를 WebSocket으로 전송합니다."""
+    """댓글 수 업데이트를 Socket.IO로 전송합니다."""
     try:
         active_count = await count_active_comments(cve_id)
         data = {
@@ -164,7 +164,7 @@ async def send_comment_update(cve_id: str):
                 "activeCommentCount": active_count
             }
         }
-        await manager.broadcast(data)
+        await socketio_manager.emit('comment_update', data)
         logger.info(f"Sent comment update for CVE {cve_id} with count {active_count}")
     except Exception as e:
         logger.error(f"Error sending comment update for CVE {cve_id}: {str(e)}")
@@ -257,13 +257,13 @@ async def create_comment(
             # 멘션 처리 실패는 댓글 생성에 영향을 주지 않도록 함
             pass
 
-        # WebSocket 업데이트 전송
+        # Socket.IO 업데이트 전송
         try:
             await send_comment_update(cve_id)
-            logger.info("Successfully sent WebSocket update")
+            logger.info("Successfully sent Socket.IO update")
         except Exception as ws_error:
-            logger.error(f"Error sending WebSocket update: {str(ws_error)}")
-            # WebSocket 실패는 댓글 생성에 영향을 주지 않도록 함
+            logger.error(f"Error sending Socket.IO update: {str(ws_error)}")
+            # Socket.IO 실패는 댓글 생성에 영향을 주지 않도록 함
             pass
 
         logger.info("=== Comment Creation Completed Successfully ===")
@@ -315,7 +315,7 @@ async def update_comment(
         comment.updated_at = kst_now
         await cve.save()
         
-        # 웹소켓을 통해 댓글 수정 이벤트 발송
+        # Socket.IO를 통해 댓글 수정 이벤트 발송
         await send_comment_update(cve_id)
         
         # 새로운 멘션 처리
@@ -345,10 +345,7 @@ async def update_comment(
                                 "unreadCount": await Notification.count_unread(str(mentioned_user.id))
                             }
                         }
-                        await manager.send_personal_message(
-                            notification_data,
-                            str(mentioned_user.id)
-                        )
+                        await socketio_manager.emit('notification', notification_data, room=str(mentioned_user.id))
 
         # 활성화된 댓글 수
         active_count = await count_active_comments(cve_id)

@@ -11,18 +11,18 @@ import Login from './features/auth/Login';
 import PrivateRoute from './features/auth/PrivateRoute';
 import AuthRoute from './features/auth/AuthRoute';
 import { AuthProvider } from './contexts/AuthContext';
-import { store } from './store';
-import { WebSocketProvider } from './contexts/WebSocketContext';
-import { Provider } from 'react-redux';
+import { SocketIOProvider } from './contexts/SocketIOContext';
 import { SnackbarProvider } from 'notistack';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import theme from './theme';
-import { injectStore, injectErrorHandler } from './utils/auth';
+import { injectErrorHandler, injectQueryClient } from './utils/auth';
 import { ErrorProvider, useError } from './contexts/ErrorContext';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
-import { useSelector } from 'react-redux';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
+import WebSocketQueryBridge from './contexts/WebSocketQueryBridge';
 
 const MainLayout = React.memo(({ children }) => {
   const [selectedCVE, setSelectedCVE] = useState(null);
@@ -94,7 +94,7 @@ const ErrorHandlerSetup = ({ children }) => {
   return children;
 };
 
-const MainRoutes = () => {
+const MainRoutes = ({ setSelectedCVE, selectedCVE }) => {
   return (
     <Routes>
       {/* Authentication Routes */}
@@ -135,7 +135,9 @@ const MainRoutes = () => {
         element={
           <PrivateRoute>
             <MainLayout>
-              <CVEDetail />
+              <Suspense fallback={<div>로딩 중...</div>}>
+                <CVEDetail />
+              </Suspense>
             </MainLayout>
           </PrivateRoute>
         }
@@ -159,42 +161,66 @@ const MainRoutes = () => {
 
       {/* Catch-all Route */}
       <Route path="*" element={<Navigate to="/" replace />} />
+      
+      {/* Render CVEDetail as modal when selectedCVE is set */}
+      {selectedCVE && (
+        <Route
+          path="*"
+          element={
+            <Suspense fallback={<div>로딩 중...</div>}>
+              <CVEDetail 
+                cveId={selectedCVE}
+                open={true}
+                onClose={() => setSelectedCVE(null)}
+              />
+            </Suspense>
+          }
+        />
+      )}
     </Routes>
   );
 };
 
 const CVEDetail = lazy(() => import('./features/cve/CVEDetail'));
 
-const App = () => {
-  // Inject store on load
-  useEffect(() => {
-    injectStore(store);
-  }, []);
+// React Query 클라이언트 생성
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false, // 창 포커스시 자동 리페치 비활성화
+      staleTime: 5 * 60 * 1000, // 5분 동안 데이터 신선하게 유지
+      retry: 1, // 실패시 1번 재시도
+      cacheTime: 10 * 60 * 1000, // 10분 동안 캐시 유지
+    },
+  },
+});
 
+// auth.js에 queryClient 주입
+injectQueryClient(queryClient);
+
+const App = () => {
   const [selectedCVE, setSelectedCVE] = useState(null);
 
   return (
-    <Provider store={store}>
+    <QueryClientProvider client={queryClient}>
       <ThemeProvider theme={theme}>
         <SnackbarProvider
           maxSnack={3}
-          anchorOrigin={{
-            vertical: 'bottom',
-            horizontal: 'center'
-          }}
-          style={{
-            marginBottom: '20px'
-          }}
+          anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+          autoHideDuration={3000}
         >
           <AuthProvider>
-            <Router>
-              <ErrorProvider>
-                <ErrorHandlerSetup>
-                  <CssBaseline />
-                  <AppRoutes setSelectedCVE={setSelectedCVE} selectedCVE={selectedCVE} />
-                </ErrorHandlerSetup>
-              </ErrorProvider>
-            </Router>
+            <SocketIOProvider>
+              <Router>
+                <ErrorProvider>
+                  <ErrorHandlerSetup>
+                    <CssBaseline />
+                    <WebSocketQueryBridge />
+                    <MainRoutes setSelectedCVE={setSelectedCVE} selectedCVE={selectedCVE} />
+                  </ErrorHandlerSetup>
+                </ErrorProvider>
+              </Router>
+            </SocketIOProvider>
           </AuthProvider>
         </SnackbarProvider>
         <ToastContainer
@@ -210,45 +236,8 @@ const App = () => {
           theme="colored"
         />
       </ThemeProvider>
-    </Provider>
-  );
-};
-
-// 인증 상태에 따라 WebSocketProvider를 적용하는 컴포넌트
-const AppRoutes = ({ setSelectedCVE, selectedCVE }) => {
-  const isAuthenticated = useSelector((state) => state.auth.isAuthenticated);
-
-  return (
-    <>
-      {/* 인증된 경우에만 WebSocketProvider 사용 */}
-      {isAuthenticated ? (
-        <WebSocketProvider>
-          <MainRoutes />
-          <Suspense fallback={<div>로딩 중...</div>}>
-            {selectedCVE && (
-              <CVEDetail 
-                cveId={selectedCVE}
-                open={true}
-                onClose={() => setSelectedCVE(null)}
-              />
-            )}
-          </Suspense>
-        </WebSocketProvider>
-      ) : (
-        <>
-          <MainRoutes />
-          <Suspense fallback={<div>로딩 중...</div>}>
-            {selectedCVE && (
-              <CVEDetail 
-                cveId={selectedCVE}
-                open={true}
-                onClose={() => setSelectedCVE(null)}
-              />
-            )}
-          </Suspense>
-        </>
-      )}
-    </>
+      {process.env.NODE_ENV === 'development' && <ReactQueryDevtools />}
+    </QueryClientProvider>
   );
 };
 

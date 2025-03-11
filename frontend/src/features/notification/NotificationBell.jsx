@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useCallback, memo } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
 import {
   Badge,
   IconButton,
@@ -14,15 +13,7 @@ import {
   CircularProgress
 } from '@mui/material';
 import NotificationsIcon from '@mui/icons-material/Notifications';
-import { 
-  fetchNotifications, 
-  markAsRead, 
-  markAllAsRead,
-  fetchUnreadCount,
-  selectNotifications,
-  selectUnreadCount,
-  selectNotificationLoading
-} from '../../store/slices/notificationSlice';
+import { useNotifications, useUnreadCount, useMarkAsRead, useMarkAllAsRead } from '../../api/hooks/useNotifications';
 import CVEDetail from '../cve/CVEDetail';
 
 const NotificationBell = memo(() => {
@@ -37,33 +28,39 @@ const NotificationBell = memo(() => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedCVE, setSelectedCVE] = useState(null);
 
-  const dispatch = useDispatch();
-  
-  const notifications = useSelector(selectNotifications);
-  const unreadCount = useSelector(selectUnreadCount);
-  const loading = useSelector(selectNotificationLoading);
-
   const ITEMS_PER_PAGE = 5;
+  const skip = page * ITEMS_PER_PAGE;
+  
+  // React Query 훅 사용
+  const { data: unreadCountData } = useUnreadCount({
+    refetchOnWindowFocus: true,
+    refetchInterval: 60000, // 1분마다 갱신
+  });
+  
+  const { 
+    data: notificationsData, 
+    isLoading: notificationsLoading,
+    refetch: refetchNotifications
+  } = useNotifications(
+    { skip, limit: ITEMS_PER_PAGE },
+    { 
+      enabled: Boolean(anchorEl),
+      keepPreviousData: true
+    }
+  );
+  
+  const markAsReadMutation = useMarkAsRead();
+  const markAllAsReadMutation = useMarkAllAsRead();
+  
+  // 알림 데이터 추출
+  const notifications = notificationsData?.items || [];
+  const unreadCount = unreadCountData?.count || 0;
+  const loading = notificationsLoading;
 
   // 초기 데이터 로드
   useEffect(() => {
-    const fetchInitialData = async () => {
-      try {
-        console.log('=== NotificationBell: Fetching Initial Data ===');
-        await dispatch(fetchUnreadCount()).unwrap();
-        console.log('Initial unread count fetched successfully');
-      } catch (error) {
-        console.error('=== NotificationBell: Initial Data Fetch Error ===');
-        console.error('Error Details:', {
-          message: error.message,
-          code: error.code,
-          stack: error.stack
-        });
-      }
-    };
-
-    fetchInitialData();
-  }, [dispatch]);
+    console.log('=== NotificationBell: Component Mounted ===');
+  }, []);
 
   const loadNotifications = useCallback(async (newPage = 0) => {
     try {
@@ -71,21 +68,18 @@ const NotificationBell = memo(() => {
       console.log('Page:', newPage);
       console.log('Items per page:', ITEMS_PER_PAGE);
       
-      const skip = newPage * ITEMS_PER_PAGE;
-      console.log('Skip:', skip);
+      setPage(newPage);
+      await refetchNotifications();
       
-      const result = await dispatch(fetchNotifications({ 
-        skip, 
-        limit: ITEMS_PER_PAGE 
-      })).unwrap();
-      
-      console.log('Notifications loaded successfully:', {
-        resultLength: result.items.length,
-        total: result.total,
-        unreadCount: result.unreadCount
-      });
-      
-      setHasMore(result.items.length === ITEMS_PER_PAGE);
+      if (notificationsData) {
+        console.log('Notifications loaded successfully:', {
+          resultLength: notificationsData.items.length,
+          total: notificationsData.total,
+          unreadCount: notificationsData.unreadCount
+        });
+        
+        setHasMore(notificationsData.items.length === ITEMS_PER_PAGE);
+      }
     } catch (error) {
       console.error('=== NotificationBell: Load Notifications Error ===');
       console.error('Error Details:', {
@@ -99,11 +93,10 @@ const NotificationBell = memo(() => {
         severity: 'error'
       });
     }
-  }, [dispatch]);
+  }, [refetchNotifications, notificationsData]);
 
   const loadMoreNotifications = async () => {
     const nextPage = page + 1;
-    setPage(nextPage);
     await loadNotifications(nextPage);
   };
 
@@ -125,7 +118,6 @@ const NotificationBell = memo(() => {
 
   const handleClick = (event) => {
     setAnchorEl(event.currentTarget);
-    loadNotifications();
   };
 
   const handleClose = () => {
@@ -135,9 +127,9 @@ const NotificationBell = memo(() => {
   const handleMarkAllAsRead = async () => {
     try {
       console.log('=== NotificationBell: Marking All As Read ===');
-      await dispatch(markAllAsRead()).unwrap();
+      await markAllAsReadMutation.mutateAsync();
       console.log('All notifications marked as read successfully');
-      await loadNotifications();
+      await loadNotifications(0);
     } catch (error) {
       console.error('=== NotificationBell: Mark All As Read Error ===');
       console.error('Error Details:', {
@@ -204,28 +196,35 @@ const NotificationBell = memo(() => {
 
   const handleNotificationClick = async (notification) => {
     try {
-      console.log('=== NotificationBell: Handling Notification Click ===');
-      console.log('Notification:', notification);
-
-      await dispatch(markAsRead(notification.id)).unwrap();
+      const id = getNotificationId(notification);
+      
+      if (!id) {
+        console.error('=== NotificationBell: Invalid notification ID ===');
+        return;
+      }
+      
+      console.log('=== NotificationBell: Marking Notification As Read ===');
+      console.log('Notification ID:', id);
+      
+      // 읽음 처리
+      await markAsReadMutation.mutateAsync(id);
       console.log('Notification marked as read successfully');
-
-      if (notification.cveId) {
-        console.log('Opening CVE detail:', notification.cveId);
-        setSelectedCVE(notification.cveId);
+      
+      // CVE 관련 알림인 경우 상세 정보 표시
+      if (notification.metadata && notification.metadata.cve_id) {
+        setSelectedCVE(notification.metadata.cve_id);
         setDialogOpen(true);
       }
     } catch (error) {
-      console.error('=== NotificationBell: Notification Click Error ===');
+      console.error('=== NotificationBell: Mark As Read Error ===');
       console.error('Error Details:', {
-        notificationId: notification.id,
         message: error.message,
         code: error.code,
         stack: error.stack
       });
       setSnackbar({
         open: true,
-        message: '알림을 처리하는 중 오류가 발생했습니다.',
+        message: '알림을 읽음 처리하는 중 오류가 발생했습니다.',
         severity: 'error'
       });
     }
@@ -241,118 +240,121 @@ const NotificationBell = memo(() => {
   }, []);
 
   const formatDate = (dateString) => {
-    try {
-      if (!dateString) return '';
-      
-      const date = new Date(dateString);
-      if (isNaN(date.getTime())) {
-        console.error('Invalid date string:', dateString);
-        return '';
-      }
-
-      return new Intl.DateTimeFormat('ko-KR', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      }).format(date);
-    } catch (error) {
-      console.error('Error formatting date:', error, dateString);
-      return '';
-    }
+    if (!dateString) return '';
+    
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHour = Math.floor(diffMin / 60);
+    const diffDay = Math.floor(diffHour / 24);
+    
+    if (diffSec < 60) return '방금 전';
+    if (diffMin < 60) return `${diffMin}분 전`;
+    if (diffHour < 24) return `${diffHour}시간 전`;
+    if (diffDay < 7) return `${diffDay}일 전`;
+    
+    return date.toLocaleDateString('ko-KR', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
   };
 
   return (
     <>
       <IconButton
         color="inherit"
+        aria-label="notifications"
         onClick={handleClick}
-        aria-label={`${unreadCount}개의 새로운 알림`}
-        sx={{ 
-          color: '#FFD700',  // 원래 색상 복원
-          position: 'relative' 
-        }}
+        sx={{ position: 'relative' }}
       >
         <Badge badgeContent={unreadCount} color="error">
-          <NotificationsIcon sx={{ fontSize: '2rem' }} />
+          <NotificationsIcon />
         </Badge>
       </IconButton>
-
+      
       <Menu
         anchorEl={anchorEl}
         open={Boolean(anchorEl)}
         onClose={handleClose}
         PaperProps={{
           sx: {
-            maxHeight: '80vh',
-            width: '400px',
-            overflowX: 'hidden'
+            width: 320,
+            maxHeight: 500,
+            overflowY: 'auto'
           }
         }}
       >
-        <Box sx={{ p: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="h6">알림</Typography>
+        <Box sx={{ p: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Typography variant="h6">
+            알림
+          </Typography>
           {unreadCount > 0 && (
-            <Button onClick={handleMarkAllAsRead} size="small">
-              모두 읽음
+            <Button
+              size="small"
+              onClick={handleMarkAllAsRead}
+              disabled={markAllAsReadMutation.isLoading}
+            >
+              모두 읽음 처리
             </Button>
           )}
         </Box>
+        
         <Divider />
-        <Box sx={{ maxHeight: '60vh', overflowY: 'auto' }}>
-          {loading ? (
-            <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
-              <CircularProgress size={20} />
-            </Box>
-          ) : !Array.isArray(notifications) || notifications.length === 0 ? (
-            <Box sx={{ p: 2, textAlign: 'center' }}>
-              <Typography color="textSecondary">
-                알림이 없습니다.
-              </Typography>
-            </Box>
-          ) : (
-            notifications.map((notification, index) => (
-              <React.Fragment key={notification.id}>
-                <MenuItem
-                  onClick={() => handleNotificationClick(notification)}
-                  sx={{
-                    bgcolor: notification.status === 'unread' ? 'action.hover' : 'inherit',
-                    py: 1.5
-                  }}
-                >
+        
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+            <CircularProgress size={24} />
+          </Box>
+        ) : notifications.length === 0 ? (
+          <MenuItem disabled>
+            <Typography variant="body2" color="text.secondary">
+              알림이 없습니다
+            </Typography>
+          </MenuItem>
+        ) : (
+          <>
+            {notifications.map((notification) => (
+              <MenuItem
+                key={getNotificationId(notification) || Math.random().toString()}
+                onClick={() => handleNotificationClick(notification)}
+                sx={{
+                  whiteSpace: 'normal',
+                  py: 1.5,
+                  borderLeft: notification.read ? 'none' : '3px solid #1976d2',
+                  bgcolor: notification.read ? 'inherit' : 'rgba(25, 118, 210, 0.08)'
+                }}
+              >
+                <Box sx={{ width: '100%' }}>
                   {formatNotificationContent(notification)}
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: 'block', mt: 0.5, textAlign: 'right' }}
+                  >
                     {formatDate(notification.createdAt)}
                   </Typography>
-                </MenuItem>
-                {index < notifications.length - 1 && <Divider />}
-              </React.Fragment>
-            ))
-          )}
-        </Box>
-        {hasMore && (
-          <Box sx={{ 
-            display: 'flex', 
-            justifyContent: 'center', 
-            padding: '8px',
-            borderTop: '1px solid rgba(0, 0, 0, 0.12)'
-          }}>
-            <Button
-              onClick={loadMoreNotifications}
-              disabled={loading}
-              size="small"
-              sx={{ textTransform: 'none' }}
-            >
-              {loading ? (
-                <CircularProgress size={20} sx={{ mr: 1 }} />
-              ) : null}
-              더보기
-            </Button>
-          </Box>
+                </Box>
+              </MenuItem>
+            ))}
+            
+            {hasMore && (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 1 }}>
+                <Button
+                  size="small"
+                  onClick={loadMoreNotifications}
+                  disabled={loading}
+                >
+                  더 보기
+                </Button>
+              </Box>
+            )}
+          </>
         )}
       </Menu>
+      
       {selectedCVE && (
         <CVEDetail
           open={dialogOpen}
@@ -360,15 +362,15 @@ const NotificationBell = memo(() => {
           cveId={selectedCVE}
         />
       )}
+      
       <Snackbar
         open={snackbar.open}
-        autoHideDuration={5000}
+        autoHideDuration={6000}
         onClose={handleSnackbarClose}
-        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
       >
-        <Alert 
-          onClose={handleSnackbarClose} 
-          severity={snackbar.severity} 
+        <Alert
+          onClose={handleSnackbarClose}
+          severity={snackbar.severity}
           sx={{ width: '100%' }}
         >
           {snackbar.message}
@@ -377,7 +379,5 @@ const NotificationBell = memo(() => {
     </>
   );
 });
-
-NotificationBell.displayName = 'NotificationBell';
 
 export default NotificationBell;

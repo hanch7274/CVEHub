@@ -103,8 +103,8 @@ async def update_cve(
         await invalidate_cve_caches(cve_id)
         
         # 웹소켓 이벤트 발송 (이미 구현되어 있다고 가정)
-        from ..core.websocket import manager
-        await manager.broadcast_json({
+        from ..core.socketio_manager import socketio_manager
+        await socketio_manager.broadcast_json({
             "type": "cve_updated",
             "data": {
                 "cveId": cve_id,
