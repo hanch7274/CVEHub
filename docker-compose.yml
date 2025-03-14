@@ -10,6 +10,8 @@ services:
     volumes:
       - mongodb_data:/data/db
       - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+    environment:
+      - TZ=Asia/Seoul
     networks:
       - cvehub-network
     healthcheck:
@@ -27,6 +29,8 @@ services:
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
+    environment:
+      - TZ=Asia/Seoul
     networks:
       - cvehub-network
     healthcheck:
@@ -51,6 +55,7 @@ services:
     environment:
       - MONGODB_URL=mongodb://mongodb:27017/cvehub
       - REDIS_URL=redis://redis:6379/0
+      - TZ=Asia/Seoul
     depends_on:
       mongodb:
         condition: service_healthy
@@ -75,6 +80,7 @@ services:
       - WDS_SOCKET_PORT=0
       - CHOKIDAR_USEPOLLING=true
       - WATCHPACK_POLLING=true
+      - TZ=Asia/Seoul
     depends_on:
       - backend
     networks:

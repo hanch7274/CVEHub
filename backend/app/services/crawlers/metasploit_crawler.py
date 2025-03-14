@@ -126,7 +126,7 @@ class MetasploitCrawlerService(BaseCrawlerService):
                 'description': description,
                 'references': references,
                 'pocs': pocs,
-                'published_date': current_time,
+                'created_at': current_time,
                 'last_modified_date': current_time,
                 'created_by': self.crawler_name
             }
@@ -222,7 +222,7 @@ class MetasploitCrawlerService(BaseCrawlerService):
                     description=cve_data['description'],
                     references=cve_data['references'],
                     pocs=cve_data['pocs'],
-                    published_date=cve_data['published_date'],
+                    created_at=cve_data['created_at'],
                     last_modified_date=cve_data['last_modified_date'],
                     created_by="Metasploit-Crawler",
                     modification_history=modification_history

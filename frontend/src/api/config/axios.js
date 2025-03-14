@@ -2,7 +2,7 @@ import axios from 'axios';
 import { getAccessToken, clearAuthStorage } from '../../utils/storage/tokenStorage';
 import { camelToSnake, snakeToCamel } from '../../utils/caseConverter';
 import { refreshToken as refreshAuthToken } from '../../services/authService';
-import { getAPITimestamp, formatToKST, DATE_FORMATS } from '../../utils/dateUtils';
+import { getAPITimestamp, formatToKST, DATE_FORMATS, formatInTimeZone } from '../../utils/dateUtils';
 import { API_BASE_URL, CASE_CONVERSION } from '../../config';
 
 // 디버그 모드 설정 (config에서 가져옴)
@@ -38,7 +38,7 @@ api.interceptors.request.use(
         url: config.url,
         method: config.method,
         headers: config.headers,
-        timestamp: formatToKST(new Date(), DATE_FORMATS.DISPLAY.DEFAULT)
+        timestamp: formatInTimeZone(new Date(), 'Asia/Seoul', DATE_FORMATS.API)
       });
 
       // 인증이 필요하지 않은 엔드포인트 체크 (로그인, 회원가입 등)
@@ -76,7 +76,8 @@ api.interceptors.request.use(
               exp: payload.exp,
               currentTime: now,
               timeUntilExp: payload.exp - now,
-              tokenPayload: payload
+              tokenPayload: payload,
+              currentTimeISO: formatInTimeZone(new Date(), 'Asia/Seoul', DATE_FORMATS.API)
             });
             
             // 토큰 만료 체크 (만료 5분 전부터 갱신 시도)
@@ -170,7 +171,7 @@ api.interceptors.request.use(
       debugLog('Headers:', config.headers);
       debugLog('Data:', config.data);
       debugLog('Params:', config.params);
-      debugLog('Timestamp:', formatToKST(new Date(), DATE_FORMATS.DISPLAY.DEFAULT));
+      debugLog('Timestamp:', formatInTimeZone(new Date(), 'Asia/Seoul', DATE_FORMATS.API));
 
       // GET 요청 캐싱
       if (config.method === 'get') {
@@ -208,7 +209,7 @@ api.interceptors.response.use(
     debugLog('Response:', {
       url: response.config.url,
       status: response.status,
-      timestamp: formatToKST(new Date(), DATE_FORMATS.DISPLAY.DEFAULT)
+      timestamp: formatInTimeZone(new Date(), 'Asia/Seoul', DATE_FORMATS.API)
     });
 
     // 인증 관련 엔드포인트 체크 (원본 필드 보존을 위해)
@@ -282,7 +283,7 @@ api.interceptors.response.use(
       url: error.config?.url,
       method: error.config?.method,
       status: error.response?.status,
-      timestamp: formatToKST(new Date(), DATE_FORMATS.DISPLAY.DEFAULT)
+      timestamp: formatInTimeZone(new Date(), 'Asia/Seoul', DATE_FORMATS.API)
     });
 
     // 인증 관련 엔드포인트 체크 (원본 필드 보존을 위해)

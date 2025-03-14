@@ -6,10 +6,7 @@ import json
 import asyncio
 import traceback
 from datetime import datetime
-from zoneinfo import ZoneInfo
-from bson import ObjectId
-from ..models.user import User
-from .cache import handle_websocket_event
+from .datetime_utils import get_current_time, get_kst_now
 
 logger = logging.getLogger(__name__)
 
@@ -120,10 +117,10 @@ class SocketIOManager:
                 
                 # pong 응답 전송
                 pong_data = {
-                    "timestamp": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S'),
-                    "server_time": datetime.now(ZoneInfo("Asia/Seoul")).isoformat(),
+                    "timestamp": get_current_time(),
+                    "server_time": get_kst_now().isoformat(),
                     "client_id": data.get("client_id") if data and isinstance(data, dict) else None,
-                    "received_at": datetime.now(ZoneInfo("Asia/Seoul")).timestamp()
+                    "received_at": get_kst_now().timestamp()
                 }
                 
                 logger.debug(f"Pong 응답 전송 - 사용자: {user_id}, SID: {sid}, 데이터: {pong_data}")
@@ -341,11 +338,43 @@ class SocketIOManager:
                         await self.sio.emit(event_type, {
                             "cve_id": cve_id,
                             "data": data,
-                            "timestamp": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S')
+                            "timestamp": get_current_time()
                         }, room=sid)
         except Exception as e:
             logger.error(f"CVE 업데이트 브로드캐스트 중 오류: {str(e)}")
             logger.error(traceback.format_exc())
+    
+    async def broadcast_to_cve(self, cve_id, data, event_type=WSMessageType.CVE_UPDATED):
+        """CVE 업데이트 브로드캐스트 (프론트엔드 호환성 함수)
+        
+        Args:
+            cve_id: CVE ID
+            data: 전송할 데이터
+            event_type: 이벤트 타입 (기본값: CVE_UPDATED)
+        """
+        try:
+            if cve_id not in self.cve_subscribers:
+                logger.debug(f"구독자 없는 CVE 업데이트: {cve_id}")
+                return
+            
+            subscribers = self.cve_subscribers[cve_id]
+            logger.info(f"CVE 업데이트 브로드캐스트 (broadcast_to_cve) - CVE: {cve_id}, 구독자: {len(subscribers)}명")
+            
+            # 각 구독자에게 메시지 전송
+            for user_id in subscribers:
+                if user_id in self.user_connections:
+                    for sid in self.user_connections[user_id]:
+                        await self.sio.emit(event_type, {
+                            "cve_id": cve_id,
+                            "data": data,
+                            "timestamp": get_current_time()
+                        }, room=sid)
+            
+            return True
+        except Exception as e:
+            logger.error(f"CVE 업데이트 브로드캐스트 (broadcast_to_cve) 중 오류: {str(e)}")
+            logger.error(traceback.format_exc())
+            return False
     
     async def send_notification(self, user_id, notification_data):
         """사용자에게 알림 전송"""
@@ -360,7 +389,7 @@ class SocketIOManager:
             for sid in self.user_connections[user_id]:
                 await self.sio.emit('notification', {
                     "data": notification_data,
-                    "timestamp": datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y-%m-%d %H:%M:%S')
+                    "timestamp": get_current_time()
                 }, room=sid)
         except Exception as e:
             logger.error(f"알림 전송 중 오류: {str(e)}")

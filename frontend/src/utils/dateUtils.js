@@ -1,6 +1,9 @@
 import { formatInTimeZone } from 'date-fns-tz';
 import { ko } from 'date-fns/locale';
 
+// formatInTimeZone 함수 재export
+export { formatInTimeZone };
+
 // 자주 사용되는 날짜 포맷 상수
 export const DATE_FORMATS = {
   // API 통신용 ISO 포맷 (백엔드와 통신할 때 사용)
@@ -40,7 +43,8 @@ export const formatToKST = (dateString, format = DATE_FORMATS.DISPLAY.DEFAULT) =
 
 // UTC 타임스탬프 생성 (API 요청시 사용)
 export const getAPITimestamp = () => {
-  return new Date().toISOString();
+  // KST 시간대로 ISO 문자열 생성
+  return formatInTimeZone(new Date(), 'Asia/Seoul', DATE_FORMATS.API);
 };
 
 // 상대적 시간 표시 (예: "3시간 전")

@@ -9,6 +9,8 @@ import redis.asyncio as redis_async
 import logging
 from .config import get_settings
 import asyncio
+import traceback
+from .datetime_utils import DateTimeFormatter
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -51,6 +53,14 @@ async def get_redis():
             raise
     return _redis
 
+# JSON 인코더 - datetime 객체를 ISO 포맷 문자열로 변환
+class DateTimeJSONEncoder(json.JSONEncoder):
+    """datetime 객체를 ISO 포맷 문자열로 변환하는 JSON 인코더"""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super().default(obj)
+
 async def set_cache(key: str, value: Any, expire: int = None, cache_type: str = None) -> bool:
     """
     캐시에 값 저장
@@ -74,11 +84,21 @@ async def set_cache(key: str, value: Any, expire: int = None, cache_type: str = 
             value["_cached_at"] = datetime.now().isoformat()
         
         redis = await get_redis()
-        serialized = json.dumps(value)
+        # datetime 객체를 처리할 수 있는 인코더 사용
+        serialized = json.dumps(value, cls=DateTimeJSONEncoder)
         await redis.set(key, serialized, ex=expire)
+        logger.debug(f"캐시 저장 성공: {key}")
         return True
     except Exception as e:
         logger.error(f"캐시 저장 실패 ({key}): {str(e)}")
+        # 디버깅을 위한 추가 정보 로깅
+        if isinstance(value, dict):
+            problematic_keys = []
+            for k, v in value.items():
+                if isinstance(v, datetime):
+                    problematic_keys.append(f"{k} (datetime)")
+            if problematic_keys:
+                logger.error(f"직렬화 문제가 있는 필드: {', '.join(problematic_keys)}")
         return False
 
 # CVE 상세 정보 캐싱
@@ -115,7 +135,17 @@ async def invalidate_cve_caches(cve_id: str = None) -> bool:
         bool: 하나 이상의 캐시가 무효화되었는지 여부
     """
     try:
-        redis = await get_redis()
+        # Redis 연결 상태 확인
+        try:
+            redis = await get_redis()
+            # Redis 연결 테스트
+            await redis.ping()
+            logger.debug("Redis 연결 상태: 정상")
+        except Exception as redis_err:
+            logger.error(f"Redis 연결 오류: {str(redis_err)}")
+            # Redis 연결 실패 시 빈 결과 반환하고 계속 진행
+            return False
+            
         invalidated = False
         
         # 특정 CVE 상세 정보 캐시 삭제
@@ -123,23 +153,32 @@ async def invalidate_cve_caches(cve_id: str = None) -> bool:
             start_time = datetime.now()
             # 상세 캐시 키 (기본 키 포함)
             detail_key = f"{CACHE_KEY_PREFIXES['cve_detail']}{cve_id}"
-            detail_deleted = await redis.delete(detail_key)
-            
-            # 상세 정보 삭제 결과 로깅
-            if detail_deleted:
-                logger.info(f"캐시 무효화: CVE 상세 정보 ({cve_id}) 삭제됨")
-                invalidated = True
-            else:
-                logger.debug(f"캐시 무효화: CVE 상세 정보 ({cve_id})가 캐시에 없었음")
+            try:
+                detail_deleted = await redis.delete(detail_key)
+                
+                # 상세 정보 삭제 결과 로깅
+                if detail_deleted:
+                    logger.info(f"캐시 무효화: CVE 상세 정보 ({cve_id}) 삭제됨")
+                    invalidated = True
+                else:
+                    logger.debug(f"캐시 무효화: CVE 상세 정보 ({cve_id})가 캐시에 없었음")
+            except Exception as detail_err:
+                logger.error(f"CVE 상세 캐시 삭제 중 오류: {str(detail_err)}")
             
             # 파생 캐시 키도 삭제 (다양한 형태로 저장된 관련 캐시 검색)
-            derived_pattern = f"{CACHE_KEY_PREFIXES['cve_detail']}*{cve_id}*"
-            async for derived_key in redis.scan_iter(match=derived_pattern):
-                if derived_key != detail_key:  # 이미 삭제한 기본 키는 제외
-                    deleted = await redis.delete(derived_key)
-                    if deleted:
-                        logger.info(f"캐시 무효화: 파생 CVE 상세 캐시 ({derived_key}) 삭제됨")
-                        invalidated = True
+            try:
+                derived_pattern = f"{CACHE_KEY_PREFIXES['cve_detail']}*{cve_id}*"
+                async for derived_key in redis.scan_iter(match=derived_pattern):
+                    if derived_key != detail_key:  # 이미 삭제한 기본 키는 제외
+                        try:
+                            deleted = await redis.delete(derived_key)
+                            if deleted:
+                                logger.info(f"캐시 무효화: 파생 CVE 상세 캐시 ({derived_key}) 삭제됨")
+                                invalidated = True
+                        except Exception as key_err:
+                            logger.error(f"파생 캐시 키 삭제 중 오류 ({derived_key}): {str(key_err)}")
+            except Exception as scan_err:
+                logger.error(f"캐시 키 스캔 중 오류: {str(scan_err)}")
             
             # 처리 시간 측정 및 로깅
             processing_time = (datetime.now() - start_time).total_seconds() * 1000
@@ -151,8 +190,11 @@ async def invalidate_cve_caches(cve_id: str = None) -> bool:
         
         # scan_iter로 모든 매칭되는 키 찾기
         list_keys = []
-        async for key in redis.scan_iter(match=cve_list_pattern):
-            list_keys.append(key)
+        try:
+            async for key in redis.scan_iter(match=cve_list_pattern):
+                list_keys.append(key)
+        except Exception as scan_err:
+            logger.error(f"목록 캐시 키 스캔 중 오류: {str(scan_err)}")
         
         # 목록 캐시가 있으면 파이프라인으로 일괄 삭제
         if list_keys:
@@ -160,19 +202,22 @@ async def invalidate_cve_caches(cve_id: str = None) -> bool:
             sample_keys = list_keys[:5]
             logger.info(f"삭제할 목록 캐시 키 샘플: {sample_keys} (총 {len(list_keys)}개)")
             
-            # 파이프라인으로 효율적으로 삭제
-            pipe = redis.pipeline()
-            for key in list_keys:
-                pipe.delete(key)
-            results = await pipe.execute()
-            
-            # 삭제된 키 수 집계 및 로깅
-            deleted_count = sum(1 for res in results if res)
-            if deleted_count > 0:
-                logger.info(f"캐시 무효화: {deleted_count}개의 CVE 목록 캐시 삭제됨 (총 {len(list_keys)}개 중)")
-                invalidated = True
-            else:
-                logger.warning(f"캐시 무효화: 목록 캐시 키는 {len(list_keys)}개 발견되었으나 삭제된 캐시가 없음")
+            try:
+                # 파이프라인으로 효율적으로 삭제
+                pipe = redis.pipeline()
+                for key in list_keys:
+                    pipe.delete(key)
+                results = await pipe.execute()
+                
+                # 삭제된 키 수 집계 및 로깅
+                deleted_count = sum(1 for res in results if res)
+                if deleted_count > 0:
+                    logger.info(f"캐시 무효화: {deleted_count}개의 CVE 목록 캐시 삭제됨 (총 {len(list_keys)}개 중)")
+                    invalidated = True
+                else:
+                    logger.warning(f"캐시 무효화: 목록 캐시 키는 {len(list_keys)}개 발견되었으나 삭제된 캐시가 없음")
+            except Exception as pipe_err:
+                logger.error(f"파이프라인 실행 중 오류: {str(pipe_err)}")
         else:
             logger.debug("캐시 무효화: 삭제할 CVE 목록 캐시가 없음")
         
@@ -193,16 +238,19 @@ async def invalidate_cve_caches(cve_id: str = None) -> bool:
             }
             
             try:
-                # 비동기로 웹소켓 이벤트 발생 (await 없이)
-                asyncio.create_task(
+                # 웹소켓 이벤트 발생 (비동기 태스크로 실행)
+                ws_task = asyncio.create_task(
                     handle_websocket_event(
                         "cache_invalidated", 
                         event_data["data"]
                     )
                 )
+                # 태스크에 이름 지정 (디버깅 용이)
+                ws_task.set_name(f"ws_cache_invalidate_{cve_id if cve_id else 'all'}")
                 logger.info(f"캐시 무효화 웹소켓 이벤트 발생: {cve_id if cve_id else '전체 목록'}")
-            except Exception as e:
-                logger.error(f"웹소켓 이벤트 발생 중 오류: {str(e)}")
+            except Exception as ws_err:
+                logger.error(f"웹소켓 이벤트 발생 중 오류: {str(ws_err)}")
+                logger.error(traceback.format_exc())
             
         return invalidated
         
@@ -267,4 +315,4 @@ async def delete_cache(key: str) -> bool:
         return True
     except Exception as e:
         logger.error(f"캐시 삭제 실패 ({key}): {str(e)}")
-        return False 
+        return False

@@ -7,6 +7,15 @@ export const QUERY_KEYS = {
   CVE_LIST: 'cve-list',
   CVE_DETAIL: 'cve-detail',
   
+  // CVE 관련 함수형 쿼리 키 구조 (useCVEQuery.js와 일치)
+  CVE: {
+    all: ['cves'],
+    lists: () => [...QUERY_KEYS.CVE.all, 'list'],
+    list: (filters) => [...QUERY_KEYS.CVE.lists(), filters],
+    details: () => [...QUERY_KEYS.CVE.all, 'detail'],
+    detail: (id) => [...QUERY_KEYS.CVE.details(), id],
+  },
+  
   // 사용자 관련 query keys
   USER: 'user',
   USER_PROFILE: 'user-profile',
@@ -18,4 +27,4 @@ export const QUERY_KEYS = {
   NOTIFICATION: 'notification',
 };
 
-export default QUERY_KEYS; 
+export default QUERY_KEYS;

@@ -41,8 +41,9 @@ settings = get_settings()
 # 로깅 포맷터에 KST 시간대 적용
 class KSTFormatter(logging.Formatter):
     def converter(self, timestamp):
-        dt = datetime.fromtimestamp(timestamp)
-        return dt.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo("Asia/Seoul"))
+        # 명시적으로 KST 시간대 사용
+        dt = datetime.fromtimestamp(timestamp, ZoneInfo("Asia/Seoul"))
+        return dt
         
     def formatTime(self, record, datefmt=None):
         dt = self.converter(record.created)

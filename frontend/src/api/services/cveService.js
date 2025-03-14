@@ -1,415 +1,409 @@
-import api from '../config/axios';
-import { CVE } from '../config/endpoints';
+// cveService.js
+import api from '../../api/config/axios';
+import { API_BASE_URL } from '../../config';
+import logger from '../../utils/logger';
 
-// 로그 레벨 설정
-const LOG_LEVEL = {
-  NONE: 0,
-  ERROR: 1,
-  WARN: 2,
-  INFO: 3,
-  DEBUG: 4
-};
-
-// 현재 로그 레벨 설정
-const CURRENT_LOG_LEVEL = process.env.NODE_ENV === 'development' ? LOG_LEVEL.INFO : LOG_LEVEL.ERROR;
-
-// 로그 유틸리티
-const log = {
-  debug: (message, data) => {
-    if (CURRENT_LOG_LEVEL >= LOG_LEVEL.DEBUG) {
-      console.debug(`[API] ${message}`, data);
-    }
-  },
-  info: (message, data) => {
-    if (CURRENT_LOG_LEVEL >= LOG_LEVEL.INFO) {
-      console.log(`[API] ${message}`, data);
-    }
-  },
-  warn: (message, data) => {
-    if (CURRENT_LOG_LEVEL >= LOG_LEVEL.WARN) {
-      console.warn(`[API] ${message}`, data);
-    }
-  },
-  error: (message, error) => {
-    if (CURRENT_LOG_LEVEL >= LOG_LEVEL.ERROR) {
-      console.error(`[API] ${message}`, error);
-    }
-  }
-};
-
-// 메모리 캐시 (서비스 레벨 캐싱)
-const cache = new Map();
-const CACHE_TTL = 10 * 60 * 1000; // 10분으로 기본 TTL 연장
-
-// 최근 HEAD 요청 타임스탬프를 추적하는 맵
-const lastHeadRequestTime = new Map();
-const HEAD_REQUEST_DEBOUNCE = 5000; // 5초 디바운싱
-
-// 캐시 접근 횟수 측정 (디버깅용)
-const cacheStats = {
-  hits: 0,
-  misses: 0,
-  invalidations: 0
-};
-
-export const cveService = {
-  // CVE 관리
-  getCVEs: async (params) => {
+/**
+ * CVE 데이터를 관리하는 서비스 클래스
+ * 백엔드 API와 통신하여 CVE 데이터의 CRUD 작업을 처리
+ * @class CVEService
+ */
+class CVEService {
+  /**
+   * CVE 목록 조회
+   * @param {Object} filters - 페이지네이션, 검색, 필터링 옵션
+   * @returns {Promise<Object>} 응답 데이터 (results, pagination 포함)
+   */
+  async getCVEs(filters = {}) {
     try {
-      log.debug('CVE 목록 요청', params);
-      const response = await api.get('/cves', { params });
-      log.debug(`CVE 목록 ${response.data.items?.length || 0}개 응답 수신`);
+      logger.info('cveService', '목록 조회 요청', filters);
+      
+      // 백엔드 API와 호환되는 파라미터로 변환
+      const params = {};
+      
+      // 페이지네이션 처리
+      if (filters.page !== undefined) {
+        params.page = Number(filters.page) + 1; // 0부터 시작하는 페이지를 1부터 시작하는 페이지로 변환
+      }
+      
+      if (filters.rowsPerPage !== undefined) {
+        params.limit = filters.rowsPerPage;
+      }
+      
+      // 검색어 처리
+      if (filters.search) {
+        params.search = filters.search;
+      }
+      
+      // 정렬 처리
+      if (filters.sortBy) {
+        params.sortBy = filters.sortBy;
+        params.sortOrder = filters.sortOrder || 'desc';
+      }
+      
+      // 필터 처리 (severity, status 등)
+      if (filters.filters) {
+        Object.entries(filters.filters).forEach(([key, value]) => {
+          if (value !== undefined && value !== null && value !== '') {
+            params[key] = value;
+          }
+        });
+      }
+      
+      // API 엔드포인트 선택 (/cves/list 사용)
+      const endpoint = `${API_BASE_URL}/cves/list`;
+      
+      logger.info('cveService', '변환된 API 요청 파라미터', params);
+      const response = await api.get(endpoint, {
+        params
+      });
+      
+      logger.info('cveService', '목록 조회 성공', { 
+        count: response.data?.results?.length || 0,
+        total: response.data?.pagination?.total || 0
+      });
       return response.data;
     } catch (error) {
-      log.error('CVE 목록 조회 오류', error);
-      throw error;
+      logger.error('cveService', '목록 조회 실패', { error: error.message, filters });
+      throw this._handleError(error, '목록 조회 실패');
     }
-  },
+  }
 
-  // CVE 상세 조회
-  getCVEById: async (cveId, options = {}) => {
-    // cveId 유효성 검사
-    if (!cveId || typeof cveId !== 'string' || cveId.trim() === '') {
-      log.error(`유효하지 않은 CVE ID: ${cveId}`, { type: typeof cveId });
-      throw new Error('유효하지 않은 CVE ID');
+  /**
+   * CVE 상세 정보 조회
+   * @param {string} cveId - CVE ID
+   * @returns {Promise<Object>} 응답 데이터
+   */
+  async getCVEById(cveId) {
+    if (!cveId) {
+      logger.warn('cveService', 'getCVEById 호출 시 cveId가 없습니다');
+      throw new Error('CVE ID는 필수 항목입니다');
     }
 
-    const { forceRefresh = false, checkModified = true } = options;
-    const cacheKey = `cve_${cveId}`;
-    const cachedItem = cache.get(cacheKey);
-    
-    // 1. 강제 새로고침이면 캐시 무시
-    if (forceRefresh) {
-      log.debug(`강제 새로고침: ${cveId}`);
-      cacheStats.misses++;
-      return cveService.fetchAndCacheFullCVE(cveId);
-    }
-    
-    // 2. 캐시가 없으면 전체 데이터 가져오기
-    if (!cachedItem) {
-      log.debug(`캐시 없음: ${cveId}`);
-      cacheStats.misses++;
-      return cveService.fetchAndCacheFullCVE(cveId);
-    }
-    
-    // 3. 캐시 만료 확인
-    const isCacheExpired = Date.now() - cachedItem.timestamp > CACHE_TTL;
-    
-    // 4. 최근 HEAD 요청 시간 확인하여 디바운싱 적용
-    const now = Date.now();
-    const lastHeadTime = lastHeadRequestTime.get(cveId) || 0;
-    const shouldSkipHeadRequest = now - lastHeadTime < HEAD_REQUEST_DEBOUNCE;
-    
-    // 5. 만료되었거나 수정 확인이 필요하고, 디바운싱 기간이 지났으면 HEAD 요청으로 확인
-    if ((isCacheExpired || checkModified) && !shouldSkipHeadRequest) {
-      try {
-        // HEAD 요청 시간 기록
-        lastHeadRequestTime.set(cveId, now);
-        
-        // HEAD 요청으로 메타데이터만 가져오기 (효율적)
-        const headResponse = await api.head(`/cves/${cveId}`);
-        const serverLastModified = headResponse.headers['last-modified'] || 
-                                  headResponse.headers['x-last-modified'];
-        
-        // 서버측 lastModified 정보가 있고, 캐시된 lastModified와 다르면 새로운 데이터 가져오기
-        if (serverLastModified && 
-            (!cachedItem.lastModified || new Date(serverLastModified) > new Date(cachedItem.lastModified))) {
-          log.debug(`변경 감지: ${cveId} - 새 데이터 가져오기`);
-          cacheStats.misses++;
-          return cveService.fetchAndCacheFullCVE(cveId);
-        }
-        
-        // 변경되지 않았으면 캐시 사용
-        log.debug(`수정 없음, 캐시 사용: ${cveId}`);
-        
-        // 캐시 타임스탬프 갱신 (프레시니스 업데이트)
-        cachedItem.timestamp = Date.now();
-        cache.set(cacheKey, cachedItem);
-        
-        cacheStats.hits++;
-        return cachedItem.data;
-      } catch (error) {
-        log.warn(`변경 확인 오류: ${cveId}`, error);
-        // 오류 시 캐시가 유효하면 캐시 사용, 아니면 새로 가져오기
-        if (!isCacheExpired) {
-          cacheStats.hits++;
-          return cachedItem.data;
-        }
-        cacheStats.misses++;
-        return cveService.fetchAndCacheFullCVE(cveId);
-      }
-    } else if (shouldSkipHeadRequest) {
-      // 최근에 HEAD 요청을 했으면 추가 요청 없이 캐시 사용
-      log.debug(`디바운싱 적용, 캐시 사용: ${cveId}`);
-      cacheStats.hits++;
-      return cachedItem.data;
-    }
-    
-    // 캐시가 유효하고, 수정 확인이 필요없으면 캐시 데이터 반환
-    log.debug(`유효한 캐시 사용: ${cveId}`);
-    cacheStats.hits++;
-    return cachedItem.data;
-  },
-
-  // CVE 상세 정보 가져오기 (캐시 사용 안함)
-  getCVEByIdNoCache: async (cveId, timestamp = Date.now()) => {
     try {
-      log.debug(`캐시 우회 요청: ${cveId}`);
-      
-      // 서비스 레벨 메모리 캐시에서 먼저 삭제
-      const cacheKey = `cve_${cveId}`;
-      if (cache.has(cacheKey)) {
-        cache.delete(cacheKey);
-        log.debug(`서비스 캐시 삭제: ${cveId}`);
-      }
-      
-      // 타임스탬프를 URL과 쿼리 파라미터 모두에 추가 (가장 확실한 캐시 방지 방법)
-      const url = `/cves/${cveId}?_t=${timestamp}&nocache=true`;
-      
-      // 캐시 무시 헤더 추가
-      const response = await api.get(url, {
+      logger.info('cveService', 'CVE 상세 조회 요청', { cveId });
+      const response = await api.get(`${API_BASE_URL}/cves/${cveId}`);
+      logger.info('cveService', 'CVE 상세 조회 성공', { cveId });
+      return response.data;
+    } catch (error) {
+      logger.error('cveService', 'CVE 상세 조회 실패', { cveId, error: error.message });
+      throw this._handleError(error, `CVE #${cveId} 조회 실패`);
+    }
+  }
+
+  /**
+   * 캐시 우회 CVE 상세 정보 조회 (강제 새로고침)
+   * @param {string} cveId - CVE ID
+   * @returns {Promise<Object>} 응답 데이터
+   */
+  async getCVEByIdNoCache(cveId) {
+    if (!cveId) {
+      logger.warn('cveService', 'getCVEByIdNoCache 호출 시 cveId가 없습니다');
+      throw new Error('CVE ID는 필수 항목입니다');
+    }
+
+    try {
+      logger.info('cveService', 'CVE 강제 새로고침 요청', { cveId });
+      const response = await api.get(`${API_BASE_URL}/cves/${cveId}`, {
         headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
+          'Cache-Control': 'no-cache',
           'Pragma': 'no-cache',
-          'Expires': '0',
-          'X-No-Cache': timestamp.toString() // 커스텀 헤더로 추가적인 캐시 방지
+          'x-refresh': 'true'
         }
       });
-      
-      // 반환된 데이터에 타임스탬프 표시 추가
-      const data = response.data;
-      if (data) {
-        // _fetchedAt 메타데이터 추가 (디버깅 및 모니터링 용도)
-        Object.defineProperty(data, '_fetchedAt', {
-          value: Date.now(),
-          enumerable: false, // JSON 직렬화 시 제외되도록 설정
-          configurable: true
-        });
-        
-        // 서비스 캐시 강제 갱신 (신선한 데이터로)
-        cache.set(cacheKey, {
-          data: data,
-          timestamp: Date.now(),
-          lastModified: data.lastModifiedDate || data.lastModified || new Date().toISOString()
-        });
-      }
-      
-      return data;
-    } catch (error) {
-      log.error(`캐시 우회 요청 실패: ${cveId}`, error);
-      throw error;
-    }
-  },
-
-  // CVE 생성
-  createCVE: async (data) => {
-    try {
-      log.debug('CVE 생성 요청', data);
-      const response = await api.post(CVE.BASE, data);
+      logger.info('cveService', 'CVE 강제 새로고침 성공', { cveId });
       return response.data;
     } catch (error) {
-      log.error('CVE 생성 실패', error);
-      throw error;
+      logger.error('cveService', 'CVE 강제 새로고침 실패', { cveId, error: error.message });
+      throw this._handleError(error, `CVE #${cveId} 새로고침 실패`);
     }
-  },
+  }
 
-  // CVE 수정
-  updateCVE: async (cveId, data) => {
+  /**
+   * CVE 생성
+   * @param {Object} cveData - 생성할 CVE 데이터
+   * @returns {Promise<Object>} 생성된 CVE 데이터
+   */
+  async createCVE(cveData) {
+    if (!cveData) {
+      logger.warn('cveService', 'createCVE 호출 시 cveData가 없습니다');
+      throw new Error('CVE 데이터는 필수 항목입니다');
+    }
+
     try {
-      log.debug(`CVE 업데이트: ${cveId}`, data);
-      const response = await api.patch(`${CVE.BASE}/${cveId}`, data);
-      
-      // 캐시 무효화
-      cveService.invalidateCache(cveId);
-      
+      logger.info('cveService', 'CVE 생성 요청', { data: cveData });
+      const response = await api.post(`${API_BASE_URL}/cves`, cveData);
+      logger.info('cveService', 'CVE 생성 성공', { id: response.data.id });
       return response.data;
     } catch (error) {
-      log.error(`CVE 업데이트 실패: ${cveId}`, error);
-      throw error;
+      logger.error('cveService', 'CVE 생성 실패', { error: error.message, data: cveData });
+      throw this._handleError(error, 'CVE 생성 실패');
     }
-  },
+  }
 
-  // CVE 삭제
-  deleteCVE: async (id) => {
-    const response = await api.delete(CVE.DETAIL(id));
-    return response.data;
-  },
+  /**
+   * CVE 업데이트 (전체)
+   * @param {string} cveId - CVE ID
+   * @param {Object} updateData - 업데이트할 데이터
+   * @returns {Promise<Object>} 업데이트된 CVE 데이터
+   */
+  async updateCVE(cveId, updateData) {
+    if (!cveId) {
+      logger.warn('cveService', 'updateCVE 호출 시 cveId가 없습니다');
+      throw new Error('CVE ID는 필수 항목입니다');
+    }
 
-  // CVE 검색
-  searchCVEs: async (params) => {
-    const response = await api.get(CVE.SEARCH, { params });
-    return response.data;
-  },
-
-  // 댓글 관리
-  getComments: async (id) => {
-    const response = await api.get(CVE.COMMENTS(id));
-    return response.data;
-  },
-
-  // 댓글 작성
-  createComment: async (id, data) => {
-    const response = await api.post(CVE.COMMENTS(id), data);
-    return response.data;
-  },
-
-  // 댓글 수정
-  updateComment: async (cveId, commentId, data) => {
-    const response = await api.patch(CVE.COMMENT(cveId, commentId), data);
-    return response.data;
-  },
-
-  // 댓글 삭제
-  deleteComment: async (cveId, commentId, permanent = false) => {
-    const response = await api.delete(CVE.COMMENT(cveId, commentId), {
-      params: { permanent },
-    });
-    return response.data;
-  },
-
-  // 보안 도구 관리
-  addPoC: async (id, data) => {
-    const response = await api.post(CVE.POC(id), data);
-    return response.data;
-  },
-
-  // Snort Rule 추가
-  addSnortRule: async (id, data) => {
-    const response = await api.post(CVE.SNORT_RULE(id), data);
-    return response.data;
-  },
-
-  // Lock 관리
-  acquireLock: async (id) => {
-    const response = await api.post(CVE.LOCK(id));
-    return response.data;
-  },
-
-  releaseLock: async (id) => {
-    const response = await api.delete(CVE.LOCK(id));
-    return response.data;
-  },
-
-  // 전체 CVE 데이터를 가져와서 캐싱하는 헬퍼 메서드 (재사용성)
-  fetchAndCacheFullCVE: async (cveId) => {
-    // cveId 유효성 검사
-    if (!cveId || typeof cveId !== 'string' || cveId.trim() === '') {
-      log.error(`유효하지 않은 CVE ID (fetchAndCacheFullCVE): ${cveId}`);
-      throw new Error('유효하지 않은 CVE ID');
+    if (!updateData) {
+      logger.warn('cveService', 'updateCVE 호출 시 updateData가 없습니다');
+      throw new Error('업데이트 데이터는 필수 항목입니다');
     }
 
     try {
-      log.debug(`전체 데이터 가져오기: ${cveId}`);
-      const response = await api.get(`/cves/${cveId}`);
-      const data = response.data;
-      
-      // 캐시에 저장
-      const cacheKey = `cve_${cveId}`;
-      cache.set(cacheKey, {
-        data,
-        timestamp: Date.now(),
-        lastModified: data.lastModifiedDate || data.lastModified
+      logger.info('cveService', 'CVE 업데이트 요청', { cveId, data: updateData });
+      // 백엔드에서 PATCH 메서드 사용하므로 일관성 유지
+      const response = await api.patch(`${API_BASE_URL}/cves/${cveId}`, updateData);
+      logger.info('cveService', 'CVE 업데이트 성공', { cveId });
+      return response.data;
+    } catch (error) {
+      logger.error('cveService', 'CVE 업데이트 실패', { cveId, error: error.message, data: updateData });
+      throw this._handleError(error, `CVE #${cveId} 업데이트 실패`);
+    }
+  }
+
+  /**
+   * CVE 필드 단위 업데이트
+   * @param {string} cveId - CVE ID
+   * @param {string} fieldName - 필드 이름
+   * @param {any} fieldValue - 필드 값
+   * @returns {Promise<Object>} 업데이트된 CVE 데이터
+   */
+  async updateCVEField(cveId, fieldName, fieldValue) {
+    if (!cveId) {
+      logger.warn('cveService', 'updateCVEField 호출 시 cveId가 없습니다');
+      throw new Error('CVE ID는 필수 항목입니다');
+    }
+
+    if (!fieldName) {
+      logger.warn('cveService', 'updateCVEField 호출 시 fieldName이 없습니다');
+      throw new Error('필드 이름은 필수 항목입니다');
+    }
+
+    try {
+      logger.info('cveService', 'CVE 필드 업데이트 요청', { cveId, fieldName, fieldValue });
+      // 백엔드에서 PATCH 메서드 사용하므로 일관성 유지
+      const response = await api.patch(
+        `${API_BASE_URL}/cves/${cveId}/fields/${fieldName}`,
+        { value: fieldValue }
+      );
+      logger.info('cveService', 'CVE 필드 업데이트 성공', { cveId, fieldName });
+      return response.data;
+    } catch (error) {
+      logger.error('cveService', 'CVE 필드 업데이트 실패', { 
+        cveId, 
+        fieldName, 
+        fieldValue, 
+        error: error.message 
+      });
+      throw this._handleError(error, `CVE #${cveId} ${fieldName} 필드 업데이트 실패`);
+    }
+  }
+
+  /**
+   * CVE 상태 업데이트
+   * @param {string} cveId - CVE ID
+   * @param {string} status - 업데이트할 상태 값
+   * @returns {Promise<Object>} 업데이트된 CVE 데이터
+   */
+  async updateCVEStatus(cveId, status) {
+    if (!cveId) {
+      logger.warn('cveService', 'updateCVEStatus 호출 시 cveId가 없습니다');
+      throw new Error('CVE ID는 필수 항목입니다');
+    }
+
+    if (!status) {
+      logger.warn('cveService', 'updateCVEStatus 호출 시 status가 없습니다');
+      throw new Error('상태 값은 필수 항목입니다');
+    }
+
+    try {
+      logger.info('cveService', 'CVE 상태 업데이트 요청', { cveId, status });
+      // 필드 업데이트 API를 활용하여 상태만 업데이트
+      const response = await api.patch(
+        `${API_BASE_URL}/cves/${cveId}/fields/status`,
+        { value: status }
+      );
+      logger.info('cveService', 'CVE 상태 업데이트 성공', { cveId, status });
+      return response.data;
+    } catch (error) {
+      logger.error('cveService', 'CVE 상태 업데이트 실패', { 
+        cveId, 
+        status, 
+        error: error.message 
+      });
+      throw this._handleError(error, `CVE #${cveId} 상태 업데이트 실패`);
+    }
+  }
+
+  /**
+   * CVE 삭제
+   * @param {string} cveId - CVE ID
+   * @returns {Promise<boolean>} 성공 여부
+   */
+  async deleteCVE(cveId) {
+    if (!cveId) {
+      logger.warn('cveService', 'deleteCVE 호출 시 cveId가 없습니다');
+      throw new Error('CVE ID는 필수 항목입니다');
+    }
+
+    try {
+      logger.info('cveService', 'CVE 삭제 요청', { cveId });
+      // DELETE 메서드 사용 (HTTP 메서드 일관성 유지)
+      const response = await api.delete(`${API_BASE_URL}/cves/${cveId}`);
+      logger.info('cveService', 'CVE 삭제 성공', { 
+        cveId,
+        status: response.status,
+        statusText: response.statusText
       });
       
-      log.debug(`전체 데이터 캐싱 완료: ${cveId}`);
-      return data;
-    } catch (error) {
-      log.error(`전체 데이터 요청 실패: ${cveId}`, error);
-      throw error;
-    }
-  },
-
-  // 캐시 무효화
-  invalidateCache: async (cveId) => {
-    try {
-      const cacheKey = `cve_${cveId}`;
-      // 서비스 레벨 캐시에서 삭제
-      if (cache.has(cacheKey)) {
-        cache.delete(cacheKey);
-        cacheStats.invalidations++;
-        log.debug(`캐시 무효화 성공: ${cveId}`);
-      } else {
-        log.debug(`캐시 무효화 불필요: ${cveId} - 캐시에 없음`);
-      }
+      // 참고: 이 서비스 레이어에서는 캐시 무효화를 직접 처리하지 않음
+      // React Query의 useMutation 훅에서 onSuccess 콜백을 통해 캐시 무효화 처리
+      // queryClient.invalidateQueries([QUERY_KEYS.CVE_LIST]) 형태로 처리해야 함
       
-      // 서버에 캐시 무효화 요청
-      try {
-        await api.post(`/cves/${cveId}/invalidate-cache`);
-        log.debug(`서버측 캐시 무효화 요청 성공: ${cveId}`);
-      } catch (error) {
-        // 백엔드에 해당 엔드포인트가 없을 수 있으므로 오류는 무시
-        log.warn(`서버측 캐시 무효화 요청 실패: ${cveId}`, error);
-      }
-      
-      return true;
+      return true; // 삭제 성공 시 true 반환
     } catch (error) {
-      log.error(`캐시 무효화 실패: ${cveId}`, error);
-      return false;
-    }
-  },
-
-  // 캐시 통계 조회
-  getCacheStats: () => {
-    const cacheSize = cache.size;
-    const keys = Array.from(cache.keys());
-    return {
-      ...cacheStats,
-      size: cacheSize,
-      keys: keys.slice(0, 10), // 처음 10개만 표시
-      hitRate: cacheStats.hits / (cacheStats.hits + cacheStats.misses) || 0
-    };
-  },
-
-  // 전체 캐시 초기화
-  clearAllCache: () => {
-    const size = cache.size;
-    cache.clear();
-    log.info(`전체 캐시 ${size}개 항목 삭제됨`);
-    return size;
-  },
-
-  // CVE 상태 업데이트
-  updateCVEStatus: async (cveId, status) => {
-    try {
-      log.debug(`CVE 상태 업데이트: ${cveId} → ${status}`);
-      return await cveService.updateCVE(cveId, { status });
-    } catch (error) {
-      log.error(`CVE 상태 업데이트 실패: ${cveId}`, error);
-      throw error;
+      logger.error('cveService', 'CVE 삭제 실패', { 
+        cveId, 
+        error: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data // 서버에서 반환한 오류 데이터 추가
+      });
+      throw this._handleError(error, `CVE #${cveId} 삭제 실패`);
     }
   }
-};
 
-// 웹소켓 캐시 무효화 리스너 설정
-export const setupCacheInvalidationListeners = (socket) => {
-  if (!socket) {
-    log.warn('웹소켓이 제공되지 않아 캐시 무효화 리스너를 설정할 수 없습니다.');
-    return;
+  /**
+   * CVE 검색
+   * @param {string} searchTerm - 검색어
+   * @param {Object} options - 검색 옵션 (페이지, 정렬 등)
+   * @returns {Promise<Object>} 검색 결과
+   */
+  async searchCVEs(searchTerm, options = {}) {
+    if (!searchTerm && Object.keys(options).length === 0) {
+      logger.warn('cveService', 'searchCVEs 호출 시 검색어와 옵션이 모두 없습니다');
+      throw new Error('검색어 또는 검색 옵션이 필요합니다');
+    }
+
+    try {
+      // 검색 파라미터 구성
+      const params = {
+        q: searchTerm
+      };
+
+      // 옵션 처리
+      if (options.page !== undefined) {
+        params.page = Number(options.page) + 1; // 0부터 시작하는 페이지를 1부터 시작하는 페이지로 변환
+      }
+      
+      if (options.limit !== undefined) {
+        params.limit = options.limit;
+      }
+      
+      if (options.sortBy) {
+        params.sortBy = options.sortBy;
+        params.sortOrder = options.sortOrder || 'desc';
+      }
+      
+      // 필터 처리
+      if (options.filters) {
+        Object.entries(options.filters).forEach(([key, value]) => {
+          if (value !== undefined && value !== null && value !== '') {
+            params[key] = value;
+          }
+        });
+      }
+
+      // 검색 요청 파라미터 로깅 (디버깅 용이성 향상)
+      logger.info('cveService', 'CVE 검색 요청', { 
+        searchTerm, 
+        params,
+        endpoint: `${API_BASE_URL}/cves/search`
+      });
+      
+      // GET 메서드 사용 (HTTP 메서드 일관성 유지)
+      const response = await api.get(`${API_BASE_URL}/cves/search`, { params });
+      
+      // 검색 결과 로깅 (성공 케이스)
+      logger.info('cveService', 'CVE 검색 성공', { 
+        count: response.data?.results?.length || 0,
+        total: response.data?.pagination?.total || 0,
+        searchTerm,
+        params // 요청 파라미터도 함께 로깅하여 디버깅 용이성 향상
+      });
+      
+      return response.data;
+    } catch (error) {
+      // 검색 실패 로깅 (실패 케이스 - 상세 정보 포함)
+      logger.error('cveService', 'CVE 검색 실패', { 
+        searchTerm, 
+        options, 
+        error: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data, // 서버에서 반환한 오류 데이터 추가
+        url: `${API_BASE_URL}/cves/search`, // 요청 URL 추가
+        stack: error.stack // 스택 트레이스 추가 (디버깅 용이성 향상)
+      });
+      
+      throw this._handleError(error, '검색 실패');
+    }
   }
-  
-  // cve_updated 이벤트 리스너
-  socket.on('cve_updated', (data) => {
-    const cveId = data?.cveId;
-    if (cveId) {
-      log.debug(`웹소켓 업데이트로 캐시 무효화: ${cveId}`);
-      cveService.invalidateCache(cveId);
+
+  /**
+   * 에러 핸들링 공통 메서드
+   * @private
+   * @param {Error} error - 발생한 에러
+   * @param {string} defaultMessage - 기본 에러 메시지
+   * @returns {Error} 처리된 에러
+   */
+  _handleError(error, defaultMessage = '요청 실패') {
+    // axios 오류 형태 확인
+    if (error.response) {
+      // 서버 응답이 있지만 2xx 외의 상태 코드
+      const statusCode = error.response.status;
+      const serverMessage = error.response.data?.message || error.response.data?.error || '알 수 없는 서버 오류';
+      
+      // 특정 상태 코드에 따른 처리
+      switch (statusCode) {
+        case 400:
+          return new Error(`잘못된 요청: ${serverMessage}`);
+        case 401:
+          return new Error('인증이 필요합니다');
+        case 403:
+          return new Error('권한이 없습니다');
+        case 404:
+          return new Error('자원을 찾을 수 없습니다');
+        case 409:
+          return new Error(`충돌 발생: ${serverMessage}`);
+        case 422:
+          return new Error(`유효성 검사 실패: ${serverMessage}`);
+        case 500:
+          return new Error(`서버 오류: ${serverMessage}`);
+        default:
+          return new Error(`${defaultMessage}: ${serverMessage} (${statusCode})`);
+      }
+    } else if (error.request) {
+      // 요청은 보냈지만 응답이 없음
+      return new Error('서버에서 응답이 없습니다. 네트워크 연결을 확인하세요.');
+    } else {
+      // 요청 설정 중 오류
+      return new Error(`${defaultMessage}: ${error.message}`);
     }
-  });
-  
-  // cache_invalidated 이벤트 리스너
-  socket.on('cache_invalidated', (data) => {
-    const cveId = data?.cve_id;
-    if (cveId) {
-      log.debug(`웹소켓 캐시 무효화 이벤트: ${cveId}`);
-      cveService.invalidateCache(cveId);
-    }
-  });
-  
-  log.info('캐시 무효화 리스너 설정 완료');
-  
-  return () => {
-    socket.off('cve_updated');
-    socket.off('cache_invalidated');
-    log.debug('캐시 무효화 리스너 해제');
-  };
-}; 
+  }
+}
+
+// 싱글톤 인스턴스 생성 및 내보내기
+export const cveService = new CVEService();
+
+// 클래스 자체도 내보내서 테스트에서 목킹하거나 커스텀 인스턴스 생성 가능하게 함
+export default CVEService;

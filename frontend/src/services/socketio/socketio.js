@@ -5,6 +5,7 @@ import { getAccessToken } from '../../utils/storage/tokenStorage';
 import { getSocketIOURL } from './utils';
 import { WS_BASE_URL, SOCKET_IO_PATH, CASE_CONVERSION } from '../../config';
 import { snakeToCamel, camelToSnake } from '../../utils/caseConverter';
+import { getAPITimestamp, formatToKST, DATE_FORMATS, formatInTimeZone } from '../../utils/dateUtils';
 
 // 변환에서 제외할 필드 목록 (config에서 가져옴)
 const EXCLUDED_FIELDS = CASE_CONVERSION.EXCLUDED_FIELDS;
@@ -39,8 +40,8 @@ class SocketIOService {
             exp: decodedPayload.exp,
             iat: decodedPayload.iat,
             sub: decodedPayload.sub,
-            expiresIn: decodedPayload.exp ? new Date(decodedPayload.exp * 1000).toISOString() : 'unknown',
-            currentTime: new Date().toISOString(),
+            expiresIn: decodedPayload.exp ? formatInTimeZone(new Date(decodedPayload.exp * 1000), 'Asia/Seoul', DATE_FORMATS.API) : 'unknown',
+            currentTime: formatInTimeZone(new Date(), 'Asia/Seoul', DATE_FORMATS.API),
             timeLeft: decodedPayload.exp ? Math.floor((decodedPayload.exp * 1000 - Date.now()) / 1000) + '초' : 'unknown'
           });
         } else {
@@ -139,14 +140,14 @@ class SocketIOService {
                 tokenSuffix: '...' + token.substring(token.length - 5),
                 isExpired: expiresAt < currentTime,
                 timeLeft: timeLeft + '초',
-                expiresAt: new Date(expiresAt).toISOString(),
-                currentTime: new Date(currentTime).toISOString()
+                expiresAt: formatInTimeZone(new Date(expiresAt), 'Asia/Seoul', DATE_FORMATS.API),
+                currentTime: formatInTimeZone(new Date(currentTime), 'Asia/Seoul', DATE_FORMATS.API)
               });
               
               if (expiresAt < currentTime) {
                 logger.error('SocketIOService', '연결 실패: 인증 토큰이 만료되었습니다', {
-                  expiresAt: new Date(expiresAt).toISOString(),
-                  currentTime: new Date(currentTime).toISOString()
+                  expiresAt: formatInTimeZone(new Date(expiresAt), 'Asia/Seoul', DATE_FORMATS.API),
+                  currentTime: formatInTimeZone(new Date(currentTime), 'Asia/Seoul', DATE_FORMATS.API)
                 });
                 this._updateConnectionState(SOCKET_STATE.ERROR);
                 this._notifyListeners(SOCKET_EVENTS.CONNECT_ERROR, { message: '인증 토큰이 만료되었습니다' });
@@ -398,10 +399,7 @@ class SocketIOService {
     
     try {
       // snake_case로 변환하여 전송
-      const data = camelToSnake({
-        cveId,
-        sessionId
-      }, { excludeFields: EXCLUDED_FIELDS });
+      const data = { cve_id: cveId, session_id: sessionId };
       
       logger.info('SocketIOService', 'CVE 구독 요청', { cveId, sessionId });
       this.socket.emit('subscribe_cve', data);
@@ -448,10 +446,10 @@ class SocketIOService {
     }
     
     try {
-      const pingData = {
-        timestamp: new Date().toISOString(),
-        client_id: this.socket.id
-      };
+      const pingData = camelToSnake({
+        timestamp: getAPITimestamp(),
+        clientId: this.socket.id
+      }, { excludeFields: EXCLUDED_FIELDS });
       
       logger.debug('SocketIOService', '핑 메시지 전송', pingData);
       this.socket.emit(SOCKET_EVENTS.PING, pingData);
@@ -492,6 +490,11 @@ class SocketIOService {
     return this.isConnected;
   }
   
+  // 연결 상태 확인
+  isConnected() {
+    return this.isConnected;
+  }
+  
   // 연결 상태 조회
   getConnectionState() {
     return {
@@ -522,9 +525,19 @@ class SocketIOService {
       this._notifyListeners(SOCKET_EVENTS.CONNECTION_STATE_CHANGE, {
         state: newState,
         isConnected: this.isConnected,
-        timestamp: new Date().toISOString()
+        timestamp: formatInTimeZone(new Date(), 'Asia/Seoul', DATE_FORMATS.API)
       });
     }
+  }
+
+  // 소켓 인스턴스 반환
+  getSocket() {
+    return this.socket;
+  }
+
+  // 연결 상태 확인
+  getConnectionStatus() {
+    return this.isConnected;
   }
 }
 

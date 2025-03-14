@@ -384,7 +384,6 @@ class NucleiCrawlerService(BaseCrawlerService):
                 else:
                     # 생성 날짜 추가
                     cve_data["created_at"] = now
-                    cve_data["published_date"] = now
                     
                     # 신규 문서 생성
                     await CVEModel(**cve_data).create()

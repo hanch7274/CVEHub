@@ -6,10 +6,14 @@ settings = get_settings()
 
 def get_kst_now() -> datetime:
     """현재 KST 시간을 반환"""
-    return datetime.now(ZoneInfo(settings.TIMEZONE))
+    # 명시적으로 Asia/Seoul 시간대 사용
+    return datetime.now(ZoneInfo("Asia/Seoul"))
 
 def format_datetime(dt: datetime) -> str:
     """datetime 객체를 지정된 포맷의 문자열로 변환"""
+    # 시간대가 없는 경우 KST 시간대 적용
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("Asia/Seoul"))
     return dt.strftime(settings.DATETIME_FORMAT)
 
 def get_current_time() -> str:
@@ -22,4 +26,4 @@ class DateTimeFormatter:
     def to_string(obj):
         if isinstance(obj, datetime):
             return format_datetime(obj)
-        return obj 
+        return obj

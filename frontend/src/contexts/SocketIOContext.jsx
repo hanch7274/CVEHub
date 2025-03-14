@@ -8,6 +8,7 @@ import logger from '../services/socketio/loggingService';
 import { SOCKET_EVENTS, SOCKET_STATE } from '../services/socketio/constants';
 import { getAccessToken } from '../utils/storage/tokenStorage';
 import { WS_BASE_URL } from '../config';
+import { formatToKST, DATE_FORMATS, formatInTimeZone } from '../utils/dateUtils';
 
 // Context 생성
 const SocketIOContext = createContext(null);
@@ -89,9 +90,8 @@ const SocketIOProvider = ({ children }) => {
       // 토큰 디코딩 시도 (JWT 형식 검증)
       const tokenParts = currentToken.split('.');
       if (tokenParts.length === 3) {
-        const [header, payload, signature] = tokenParts;
         try {
-          const decodedPayload = JSON.parse(atob(payload));
+          const decodedPayload = JSON.parse(atob(tokenParts[1]));
           const expiresAt = decodedPayload.exp * 1000;
           const currentTime = Date.now();
           const timeLeft = Math.floor((expiresAt - currentTime) / 1000);
@@ -100,8 +100,8 @@ const SocketIOProvider = ({ children }) => {
             tokenLength: currentToken.length,
             isExpired: expiresAt < currentTime,
             timeLeft: timeLeft + '초',
-            expiresAt: new Date(expiresAt).toISOString(),
-            currentTime: new Date(currentTime).toISOString()
+            expiresAt: formatInTimeZone(new Date(expiresAt), 'Asia/Seoul', DATE_FORMATS.API),
+            currentTime: formatInTimeZone(new Date(currentTime), 'Asia/Seoul', DATE_FORMATS.API)
           });
           
           if (expiresAt < currentTime) {
@@ -132,6 +132,18 @@ const SocketIOProvider = ({ children }) => {
     
     // 연결 시도
     socketIOService.connect();
+    
+    // 소켓 객체 참조 업데이트
+    const socketInstance = socketIOService.getSocket();
+    socketInstanceRef.current = socketInstance;
+    setSocket(socketInstance);
+    
+    // 소켓 객체 상태 로깅
+    logger.debug('SocketIOContext', '소켓 객체 상태', {
+      socketExists: !!socketInstance,
+      socketId: socketInstance?.id,
+      connected: socketInstance?.connected
+    });
   }, []);
 
   // 연결 종료
@@ -189,6 +201,71 @@ const SocketIOProvider = ({ children }) => {
     queryClient.invalidateQueries([QUERY_KEYS.NOTIFICATION_COUNT]);
   }, [queryClient]);
 
+  // 소켓 서비스 이벤트 리스너 설정
+  useEffect(() => {
+    // 연결 상태 변경 이벤트 리스너
+    const handleConnected = () => {
+      logger.info('SocketIOContext', '소켓 연결됨');
+      handleConnectionStatusChange(SOCKET_STATE.CONNECTED);
+      
+      // 소켓 객체 참조 업데이트
+      const socketInstance = socketIOService.getSocket();
+      socketInstanceRef.current = socketInstance;
+      setSocket(socketInstance);
+      
+      // 소켓 객체 상태 로깅
+      logger.debug('SocketIOContext', '소켓 객체 상태 (연결 후)', {
+        socketExists: !!socketInstance,
+        socketId: socketInstance?.id,
+        connected: socketInstance?.connected
+      });
+    };
+    
+    const handleDisconnected = () => {
+      logger.info('SocketIOContext', '소켓 연결 끊김');
+      handleConnectionStatusChange(SOCKET_STATE.DISCONNECTED);
+    };
+    
+    const handleError = (error) => {
+      logger.error('SocketIOContext', '소켓 오류', { error });
+      handleConnectionStatusChange(SOCKET_STATE.ERROR);
+      setError(error);
+    };
+    
+    // 이벤트 리스너 등록
+    socketIOService.on(SOCKET_EVENTS.CONNECT, handleConnected);
+    socketIOService.on(SOCKET_EVENTS.DISCONNECT, handleDisconnected);
+    socketIOService.on(SOCKET_EVENTS.CONNECT_ERROR, handleError);
+    
+    // 정기적으로 소켓 객체 상태 확인 및 업데이트
+    const socketCheckInterval = setInterval(() => {
+      const socketInstance = socketIOService.getSocket();
+      const isConnected = socketIOService.isConnected;
+      
+      // 상태가 불일치하면 업데이트
+      if (!!socketInstance !== !!socket || isConnected !== connected) {
+        logger.debug('SocketIOContext', '소켓 상태 불일치 감지', {
+          contextSocket: !!socket,
+          serviceSocket: !!socketInstance,
+          contextConnected: connected,
+          serviceConnected: isConnected
+        });
+        
+        socketInstanceRef.current = socketInstance;
+        setSocket(socketInstance);
+        setConnected(isConnected);
+      }
+    }, 5000);
+    
+    // 컴포넌트 언마운트 시 이벤트 리스너 제거
+    return () => {
+      socketIOService.off(SOCKET_EVENTS.CONNECT, handleConnected);
+      socketIOService.off(SOCKET_EVENTS.DISCONNECT, handleDisconnected);
+      socketIOService.off(SOCKET_EVENTS.CONNECT_ERROR, handleError);
+      clearInterval(socketCheckInterval);
+    };
+  }, [handleConnectionStatusChange, socket, connected]);
+
   // Socket.IO 이벤트 리스너 설정
   useEffect(() => {
     // 연결 이벤트 리스너
@@ -234,7 +311,7 @@ const SocketIOProvider = ({ children }) => {
       // CVE 데이터 캐시 무효화
       if (data && data.cveId) {
         queryClient.invalidateQueries([QUERY_KEYS.CVE, data.cveId]);
-        enqueueSnackbar(`CVE-${data.cveId} 정보가 업데이트되었습니다`, { 
+        enqueueSnackbar(`${data.cveId} 정보가 업데이트되었습니다`, { 
           variant: 'info',
           autoHideDuration: 3000
         });
@@ -249,7 +326,7 @@ const SocketIOProvider = ({ children }) => {
       queryClient.invalidateQueries([QUERY_KEYS.CVES]);
       
       if (data && data.cveId) {
-        enqueueSnackbar(`새로운 CVE-${data.cveId}가 등록되었습니다`, { 
+        enqueueSnackbar(`새로운 ${data.cveId}가 등록되었습니다`, { 
           variant: 'info',
           autoHideDuration: 3000
         });

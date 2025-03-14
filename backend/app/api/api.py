@@ -1,14 +1,12 @@
 """API 라우터 통합"""
 from fastapi import APIRouter
-from . import cve_router, comment, notification, user, crawler, auth, users
+from .routers import api_router as routers_api_router
 
-# 기존의 각 모듈에 정의된 라우터들을 재사용
+# 통합 API 라우터
 api_router = APIRouter()
 
-# 각 라우터를 prefix와 tag와 함께 등록
-api_router.include_router(cve_router.router, prefix="/cves", tags=["cve"])
-api_router.include_router(comment.router, prefix="/cves", tags=["comment"])
-api_router.include_router(notification.router, tags=["notification"])
-api_router.include_router(user.router, prefix="/users", tags=["users"])
-api_router.include_router(crawler.router, prefix="/crawler", tags=["crawler"])
-api_router.include_router(auth.router, prefix="/auth", tags=["auth"]) 
+# 리팩토링된 라우터 모듈의 api_router를 통합 라우터에 포함
+api_router.include_router(routers_api_router)
+
+# 비고: 모든 개별 라우터들은 app/api/routers/__init__.py에서 관리됩니다.
+# 여기서는 통합 라우터만 관리하여 중복 등록을 방지합니다.

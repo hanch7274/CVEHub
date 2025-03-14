@@ -4,6 +4,7 @@ import { useSocketIO } from './SocketIOContext';
 import { QUERY_KEYS } from '../api/queryKeys';
 import logger from '../services/socketio/loggingService';
 import { SOCKET_EVENTS } from '../services/socketio/constants';
+import socketIOService from '../services/socketio/socketio';
 
 /**
  * Socket.IO와 React Query를 연결하는 브릿지 컴포넌트
@@ -11,23 +12,29 @@ import { SOCKET_EVENTS } from '../services/socketio/constants';
  */
 const WebSocketQueryBridge = () => {
   const socketIO = useSocketIO();
-  const { socket, connected } = socketIO || {};
   const queryClient = useQueryClient();
   const initAttemptRef = useRef(0);
   const maxInitAttempts = 5;
 
   useEffect(() => {
-    // 소켓이나 컨텍스트가 없는 경우 핸들링
-    if (!socketIO || !socket) {
+    // 컨텍스트에서 소켓 정보 가져오기
+    const { socket, connected } = socketIO || {};
+    
+    // 컨텍스트에서 소켓을 가져오지 못한 경우 서비스에서 직접 가져오기 시도
+    const activeSocket = socket || socketIOService.getSocket();
+    const isConnected = connected || socketIOService.isConnected;
+    
+    // 소켓이 없는 경우 핸들링
+    if (!activeSocket) {
       // 최대 시도 횟수 이하일때만 경고 로그 출력
       if (initAttemptRef.current < maxInitAttempts) {
-        logger.warn('WebSocketQueryBridge', 'Socket.IO 컨텍스트 또는 인스턴스 없음');
+        logger.warn('WebSocketQueryBridge', 'Socket.IO 인스턴스를 찾을 수 없음');
         initAttemptRef.current += 1;
       }
       return;
     }
     
-    if (!connected) {
+    if (!isConnected) {
       // 최대 시도 횟수 이하일때만 경고 로그 출력
       if (initAttemptRef.current < maxInitAttempts) {
         logger.warn('WebSocketQueryBridge', 'Socket.IO 연결되지 않음, 이벤트 리스너 설정 지연');
@@ -74,10 +81,10 @@ const WebSocketQueryBridge = () => {
 
     try {
       // 소켓 이벤트 리스너 등록
-      socket.on(SOCKET_EVENTS.CVE_CREATED, handleCVECreated);
-      socket.on(SOCKET_EVENTS.CVE_UPDATED, handleCVEUpdated);
-      socket.on(SOCKET_EVENTS.CVE_DELETED, handleCVEDeleted);
-      socket.on(SOCKET_EVENTS.SUBSCRIPTION_UPDATED, handleSubscriptionUpdated);
+      activeSocket.on(SOCKET_EVENTS.CVE_CREATED, handleCVECreated);
+      activeSocket.on(SOCKET_EVENTS.CVE_UPDATED, handleCVEUpdated);
+      activeSocket.on(SOCKET_EVENTS.CVE_DELETED, handleCVEDeleted);
+      activeSocket.on(SOCKET_EVENTS.SUBSCRIPTION_UPDATED, handleSubscriptionUpdated);
       
       logger.info('WebSocketQueryBridge', '이벤트 리스너 등록 완료');
     } catch (error) {
@@ -91,19 +98,19 @@ const WebSocketQueryBridge = () => {
       }
       
       try {
-        if (socket) {
-          socket.off(SOCKET_EVENTS.CVE_CREATED, handleCVECreated);
-          socket.off(SOCKET_EVENTS.CVE_UPDATED, handleCVEUpdated);
-          socket.off(SOCKET_EVENTS.CVE_DELETED, handleCVEDeleted);
-          socket.off(SOCKET_EVENTS.SUBSCRIPTION_UPDATED, handleSubscriptionUpdated);
+        if (activeSocket) {
+          activeSocket.off(SOCKET_EVENTS.CVE_CREATED, handleCVECreated);
+          activeSocket.off(SOCKET_EVENTS.CVE_UPDATED, handleCVEUpdated);
+          activeSocket.off(SOCKET_EVENTS.CVE_DELETED, handleCVEDeleted);
+          activeSocket.off(SOCKET_EVENTS.SUBSCRIPTION_UPDATED, handleSubscriptionUpdated);
         }
       } catch (error) {
         logger.error('WebSocketQueryBridge', '이벤트 리스너 해제 오류', error);
       }
     };
-  }, [socket, connected, queryClient]);
+  }, [socketIO, queryClient]);
 
   return null; // 이 컴포넌트는 UI를 렌더링하지 않습니다
 };
 
-export default WebSocketQueryBridge; 
+export default WebSocketQueryBridge;

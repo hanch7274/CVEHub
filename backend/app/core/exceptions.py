@@ -52,6 +52,11 @@ class DatabaseException(CVEHubException):
     def __init__(self, detail: str = "데이터베이스 작업 중 오류가 발생했습니다.", error_code: str = "DATABASE_ERROR"):
         super().__init__(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail, error_code=error_code)
 
+class DatabaseOperationError(CVEHubException):
+    """데이터베이스 작업 중 특정 오퍼레이션 실패 시 발생하는 예외"""
+    def __init__(self, detail: str = "데이터베이스 작업 수행 중 오류가 발생했습니다.", error_code: str = "DATABASE_OPERATION_ERROR"):
+        super().__init__(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail, error_code=error_code)
+
 class DuplicateException(CVEHubException):
     """중복된 데이터 생성 시도 시 발생하는 예외"""
     def __init__(self, detail: str = "이미 존재하는 데이터입니다."):

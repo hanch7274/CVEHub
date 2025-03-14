@@ -1,16 +1,85 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from beanie import PydanticObjectId
 from .base import BaseRepository
 from ..models.cve_model import CVEModel, CreateCVERequest, PatchCVERequest
 from ..database import get_database
 from fastapi.logger import logger
+from bson import ObjectId
 
 class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest]):
     def __init__(self):
         super().__init__(CVEModel)
         self.db = get_database()
         self.collection = self.db.get_collection("cves")
+
+    async def find_with_projection(
+        self, 
+        query: Dict[str, Any], 
+        projection: Dict[str, Any], 
+        skip: int = 0, 
+        limit: int = 10,
+        sort: List[tuple] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        지정된 projection을 사용하여 CVE를 검색합니다.
+        
+        Args:
+            query: 검색 쿼리
+            projection: 반환할 필드 (1:포함, 0:제외)
+            skip: 건너뛸 문서 수
+            limit: 반환할 최대 문서 수
+            sort: 정렬 기준 (필드명, 방향) 튜플 리스트
+            
+        Returns:
+            List[Dict[str, Any]]: 조회된 CVE 목록
+        """
+        try:
+            # Beanie ORM의 projection 메소드 대신 모터 컬렉션을 직접 사용
+            collection = self.model.get_motor_collection()
+            
+            # 정렬 조건 변환
+            sort_list = None
+            if sort:
+                sort_list = []
+                for field, direction in sort:
+                    sort_list.append((field, direction))
+            
+            # 모든 프로젝션에 _id 필드를 포함시킴
+            if not projection.get("_id", None):
+                projection["_id"] = 1
+                
+            # 모터 컬렉션을 사용하여 쿼리 실행
+            cursor = collection.find(query, projection=projection)
+            
+            if skip > 0:
+                cursor = cursor.skip(skip)
+            
+            if limit > 0:
+                cursor = cursor.limit(limit)
+                
+            if sort_list:
+                cursor = cursor.sort(sort_list)
+            
+            # 결과를 문서 리스트로 변환
+            result_docs = await cursor.to_list(length=limit)
+            
+            # 결과 반환 - 응답 모델 요구사항에 맞게 데이터 가공
+            result = []
+            for doc in result_docs:
+                # _id를 문자열로 변환하고 id 필드로 복제
+                if '_id' in doc:
+                    if isinstance(doc['_id'], ObjectId):
+                        doc['_id'] = str(doc['_id'])
+                    doc['id'] = doc['_id']  # 'id' 필드 추가 (이게 중요!)
+                
+                # 결과 문서 추가
+                result.append(doc)
+                
+            return result
+        except Exception as e:
+            logger.error(f"find_with_projection 중 오류 발생: {e}")
+            raise
 
     async def search_cves(self, query: str, skip: int = 0, limit: int = 10) -> List[CVEModel]:
         """CVE를 검색합니다."""

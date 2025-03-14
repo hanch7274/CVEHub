@@ -1,4 +1,4 @@
-import axios from 'axios';
+import api from '../api/config/axios';
 import { camelToSnake, snakeToCamel } from './caseConverter';
 import { CASE_CONVERSION } from '../config';
 import { 
@@ -50,7 +50,7 @@ export const refreshTokenFn = async () => {
     console.log('=== Token Refresh Debug ===');
     console.log('Current refresh token:', refreshToken);
 
-    const response = await axios.post(
+    const response = await api.post(
       `${process.env.REACT_APP_API_URL || 'http://localhost:8000'}/auth/refresh`,
       {},  // empty body
       {
@@ -90,46 +90,8 @@ export const refreshTokenFn = async () => {
   }
 };
 
-// Axios 인스턴스 생성
-export const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL,
-  headers: {
-    'Content-Type': 'application/json'
-  }
-});
-
-// 요청 인터셉터
-api.interceptors.request.use(
-  (config) => {
-    const token = getAccessToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    
-    // 요청 데이터를 스네이크 케이스로 변환 (POST, PUT, PATCH 요청)
-    if (config.data && ['post', 'put', 'patch'].includes(config.method)) {
-      console.log('[Axios Interceptor] 요청 데이터 변환 전:', {
-        url: config.url,
-        method: config.method,
-        dataType: typeof config.data,
-        isArray: Array.isArray(config.data),
-        originalKeys: typeof config.data === 'object' ? Object.keys(config.data) : []
-      });
-      
-      config.data = camelToSnake(config.data, { excludeFields: CASE_CONVERSION.EXCLUDED_FIELDS });
-      
-      console.log('[Axios Interceptor] 요청 데이터 변환 후:', {
-        convertedKeys: typeof config.data === 'object' ? Object.keys(config.data) : [],
-        sample: config.data
-      });
-    }
-    
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
+// axios.js에서 생성한 api 인스턴스를 export
+export { api };
 
 // 응답 인터셉터
 api.interceptors.response.use(

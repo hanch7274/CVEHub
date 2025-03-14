@@ -21,12 +21,7 @@ sio_app = socketio.ASGIApp(socketio_manager.sio)
 @socketio_manager.sio.event
 async def connect(sid, environ, auth):
     """Socket.IO 연결 인증 처리"""
-    try:
-        # 환경 변수 및 요청 정보 로깅
-        logger.debug(f"Socket.IO 연결 시도 - SID: {sid}")
-        logger.debug(f"환경 변수: {environ}")
-        logger.debug(f"인증 데이터: {auth}")
-        
+    try:        
         # 인증 데이터에서 토큰 추출
         token = None
         client_info = f"SID: {sid}"

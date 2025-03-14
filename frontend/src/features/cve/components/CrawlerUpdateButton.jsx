@@ -472,8 +472,9 @@ const CrawlerUpdateButton = () => {
           disabled={isRunning || loading}
           sx={{ 
             mr: 1,
-            background: 'linear-gradient(45deg, #3f51b5 30%, #2196f3 90%)',
-            boxShadow: '0 3px 5px 2px rgba(33, 150, 243, .3)'
+            borderRadius: '30px',
+            boxShadow: 'none',
+            '&:hover': { boxShadow: 'none', backgroundColor: '#1565c0' }
           }}
           ref={buttonRef}
         >

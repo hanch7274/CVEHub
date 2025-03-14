@@ -1,20 +1,23 @@
+"""
+알림(Notification) 관련 API 라우터
+"""
 from fastapi import APIRouter, HTTPException, Depends, status, Body, Query, Response, Path
 from typing import List, Optional
-from ..models.notification import Notification, NotificationCreate, NotificationStatus
-from ..models.user import User
-from ..api.auth import get_current_user
-from ..core.exceptions import NotFoundError, ValidationError, DatabaseError
-from ..core.schemas import APIResponse, PaginatedResponse, Metadata
+from app.models.notification import Notification, NotificationCreate, NotificationStatus
+from app.models.user import User
+from app.core.auth import get_current_user
+from app.core.exceptions import NotFoundError, ValidationError, DatabaseError
+from app.core.schemas import APIResponse, PaginatedResponse, Metadata
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import logging
 from beanie import PydanticObjectId
-from ..core.socketio_manager import socketio_manager
-from ..services.notification import NotificationService
-from ..core.dependencies import get_notification_service
+from app.core.socketio_manager import socketio_manager
+from app.services.notification import NotificationService
+from app.core.dependencies import get_notification_service
 
-router = APIRouter(prefix="/notifications", tags=["notifications"])
-notification_service = NotificationService()
+router = APIRouter()
+logger = logging.getLogger(__name__)
 
 @router.post("/", response_model=APIResponse[Notification])
 async def create_notification(
@@ -27,7 +30,8 @@ async def create_notification(
             "type": "cve_update"
         }
     ),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    notification_service: NotificationService = Depends(get_notification_service)
 ):
     """
     새로운 알림을 생성합니다.
@@ -49,6 +53,7 @@ async def create_notification(
             message="알림이 성공적으로 생성되었습니다."
         )
     except Exception as e:
+        logger.error(f"알림 생성 중 오류 발생: {str(e)}")
         raise DatabaseError(detail=str(e))
 
 @router.get("/", response_model=PaginatedResponse[List[Notification]])
@@ -60,7 +65,8 @@ async def get_notifications(
         None,
         description="알림 상태 필터 (read/unread)"
     ),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    notification_service: NotificationService = Depends(get_notification_service)
 ):
     """
     사용자의 알림 목록을 조회합니다.
@@ -98,13 +104,18 @@ async def get_notifications(
                 pages=(total_count + limit - 1) // limit,
                 has_next=skip + limit < total_count,
                 has_prev=skip > 0
-            )
+            ),
+            message="알림 목록을 성공적으로 조회했습니다."
         )
     except Exception as e:
+        logger.error(f"알림 목록 조회 중 오류 발생: {str(e)}")
         raise DatabaseError(detail=str(e))
 
 @router.get("/unread/count", response_model=APIResponse[dict])
-async def get_unread_count(current_user: User = Depends(get_current_user)):
+async def get_unread_count(
+    current_user: User = Depends(get_current_user),
+    notification_service: NotificationService = Depends(get_notification_service)
+):
     """
     읽지 않은 알림 개수를 조회합니다.
 
@@ -118,12 +129,14 @@ async def get_unread_count(current_user: User = Depends(get_current_user)):
             message="읽지 않은 알림 개수를 성공적으로 조회했습니다."
         )
     except Exception as e:
+        logger.error(f"읽지 않은 알림 개수 조회 중 오류 발생: {str(e)}")
         raise DatabaseError(detail=str(e))
 
-@router.put("/{notification_id}/read", response_model=APIResponse[dict])
+@router.patch("/{notification_id}/read", response_model=APIResponse[Notification])
 async def mark_as_read(
     notification_id: str = Path(..., description="읽음 처리할 알림 ID"),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    notification_service: NotificationService = Depends(get_notification_service)
 ):
     """
     특정 알림을 읽음 상태로 변경합니다.
@@ -132,70 +145,71 @@ async def mark_as_read(
         - **notification_id**: 읽음 처리할 알림의 ID
     """
     try:
-        success = await notification_service.mark_as_read(
-            notification_id,
-            str(current_user.id)
-        )
-        if not success:
-            raise NotFoundError(detail="알림을 찾을 수 없습니다.")
+        notification = await notification_service.mark_as_read(notification_id, str(current_user.id))
         return APIResponse(
-            data={"status": "success"},
-            message="알림을 성공적으로 읽음 처리했습니다."
+            data=notification,
+            message="알림이 읽음 상태로 변경되었습니다."
         )
+    except NotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"알림 읽음 처리 중 오류 발생: {str(e)}")
         raise DatabaseError(detail=str(e))
 
-@router.put("/read-all", response_model=APIResponse[dict])
-async def mark_all_as_read(current_user: User = Depends(get_current_user)):
+@router.patch("/mark-all-read", response_model=APIResponse[dict])
+async def mark_all_as_read(
+    current_user: User = Depends(get_current_user),
+    notification_service: NotificationService = Depends(get_notification_service)
+):
     """
     사용자의 모든 알림을 읽음 상태로 변경합니다.
     """
     try:
-        success = await notification_service.mark_all_as_read(str(current_user.id))
+        count = await notification_service.mark_all_as_read(str(current_user.id))
         return APIResponse(
-            data={"status": "success"},
-            message="모든 알림을 성공적으로 읽음 처리했습니다."
+            data={"count": count},
+            message=f"{count}개의 알림이 모두 읽음 상태로 변경되었습니다."
         )
     except Exception as e:
+        logger.error(f"모든 알림 읽음 처리 중 오류 발생: {str(e)}")
         raise DatabaseError(detail=str(e))
 
-@router.post("/read-multiple")
+@router.patch("/mark-multiple-read", response_model=APIResponse[dict])
 async def mark_multiple_as_read(
     notification_ids: List[str] = Body(..., embed=True),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    notification_service: NotificationService = Depends(get_notification_service)
 ):
-    """여러 알림을 한 번에 읽음 상태로 변경합니다."""
-    try:
-        logging.info(f"Attempting to mark multiple notifications as read: {notification_ids}")
-        
-        # ObjectId 변환 및 유효성 검사
-        try:
-            from bson import ObjectId
-            object_ids = [ObjectId(nid) for nid in notification_ids]
-        except Exception as e:
-            logging.error(f"Invalid notification ID format in list: {notification_ids}")
-            raise HTTPException(status_code=400, detail="유효하지 않은 알림 ID가 포함되어 있습니다.")
-        
-        # 알림 조회 및 권한 검증
-        notifications = await Notification.find({"_id": {"$in": object_ids}}).to_list()
-        
-        # 권한이 없는 알림이 있는지 확인
-        unauthorized_notifications = [n for n in notifications if n.recipient_id != current_user.id]
-        if unauthorized_notifications:
-            logging.error(f"Permission denied for user {current_user.username} to mark some notifications as read")
-            raise HTTPException(status_code=403, detail="일부 알림에 대한 권한이 없습니다.")
-        
-        # 벌크 업데이트 수행
-        update_result = await Notification.find({"_id": {"$in": object_ids}}).update({"$set": {"is_read": True}})
-        
-        logging.info(f"Successfully marked {len(notifications)} notifications as read for user {current_user.username}")
-        
-        return {"message": f"{len(notifications)}개의 알림을 읽음 상태로 변경했습니다."}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Error marking multiple notifications as read: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="알림을 읽음 상태로 변경하는 중 오류가 발생했습니다."
+    """
+    여러 알림을 한 번에 읽음 상태로 변경합니다.
+    
+    Parameters:
+        - **notification_ids**: 읽음 처리할 알림 ID 목록
+    """
+    if not notification_ids:
+        return APIResponse(
+            data={"count": 0},
+            message="변경할 알림이 없습니다."
         )
+    
+    try:
+        # 알림 ID를 ObjectId로 변환
+        object_ids = []
+        for id_str in notification_ids:
+            try:
+                object_ids.append(id_str)
+            except Exception:
+                raise ValidationError(f"유효하지 않은 알림 ID 형식: {id_str}")
+        
+        count = await notification_service.mark_multiple_as_read(object_ids, str(current_user.id))
+        return APIResponse(
+            data={"count": count},
+            message=f"{count}개의 알림이 읽음 상태로 변경되었습니다."
+        )
+    except ValidationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"다중 알림 읽음 처리 중 오류 발생: {str(e)}")
+        raise DatabaseError(detail=str(e))

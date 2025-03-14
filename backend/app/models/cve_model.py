@@ -148,7 +148,6 @@ class CVEModel(Document):
     description: Optional[str] = None
     status: str = "신규등록"  # 신규등록, 분석중, 릴리즈 완료, 분석불가
     assigned_to: Optional[str] = None
-    published_date: datetime
     last_modified_date: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
     created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
     created_by: str = "anonymous"
@@ -174,7 +173,6 @@ class CVEModel(Document):
             "cve_id",
             "status",
             "assigned_to",
-            "published_date",
             "last_modified_date",
             "created_at",
             "created_by",
@@ -202,7 +200,6 @@ class CVEModel(Document):
                 "title": "Buffer overflow vulnerability in Example Software",
                 "description": "Buffer overflow vulnerability in Example Software",
                 "status": "신규등록",
-                "published_date": datetime.now(ZoneInfo("Asia/Seoul")),
                 "last_modified_date": datetime.now(ZoneInfo("Asia/Seoul")),
                 "created_at": datetime.now(ZoneInfo("Asia/Seoul")),
                 "created_by": "anonymous",
@@ -221,7 +218,6 @@ class CreateCVERequest(BaseModel):
     description: Optional[str] = None
     status: str = "신규등록"
     assigned_to: Optional[str] = None
-    published_date: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
     references: List[Reference] = []
     notes: Optional[str] = None
 

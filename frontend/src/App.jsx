@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, lazy, Suspense } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { Box } from '@mui/material';
 import { Alert, Snackbar } from '@mui/material';
 import Header from './layout/Header';
@@ -23,6 +23,45 @@ import 'react-toastify/dist/ReactToastify.css';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import WebSocketQueryBridge from './contexts/WebSocketQueryBridge';
+
+// CVEDetail 컴포넌트를 lazy 로딩으로 가져옵니다
+const CVEDetail = lazy(() => import('./features/cve/CVEDetail'));
+
+// URL 파라미터를 가져와 CVEDetail에 전달하는 래퍼 컴포넌트
+const CVEDetailWrapper = () => {
+  const params = useParams();
+  const cveId = params.cveId;
+  const [isOpen, setIsOpen] = useState(true);
+  
+  // 디버깅을 위한 로깅 추가
+  useEffect(() => {
+    console.log('[CVEDetailWrapper] 마운트됨, cveId:', cveId);
+  }, [cveId]);
+  
+  const handleClose = useCallback(() => {
+    console.log('[CVEDetailWrapper] 닫기 이벤트 발생');
+    setIsOpen(false);
+    // 닫기 후 목록 페이지로 이동
+    window.history.back();
+  }, []);
+
+  if (!cveId) {
+    console.error('[CVEDetailWrapper] cveId가 없습니다!');
+    return <div>CVE ID가 필요합니다</div>;
+  }
+
+  console.log('[CVEDetailWrapper] 렌더링:', { cveId, isOpen });
+  
+  return (
+    <Suspense fallback={<div>로딩 중...</div>}>
+      <CVEDetail 
+        cveId={cveId}
+        open={isOpen}
+        onClose={handleClose}
+      />
+    </Suspense>
+  );
+};
 
 const MainLayout = React.memo(({ children }) => {
   const [selectedCVE, setSelectedCVE] = useState(null);
@@ -135,9 +174,7 @@ const MainRoutes = ({ setSelectedCVE, selectedCVE }) => {
         element={
           <PrivateRoute>
             <MainLayout>
-              <Suspense fallback={<div>로딩 중...</div>}>
-                <CVEDetail />
-              </Suspense>
+              <CVEDetailWrapper />
             </MainLayout>
           </PrivateRoute>
         }
@@ -180,8 +217,6 @@ const MainRoutes = ({ setSelectedCVE, selectedCVE }) => {
     </Routes>
   );
 };
-
-const CVEDetail = lazy(() => import('./features/cve/CVEDetail'));
 
 // React Query 클라이언트 생성
 const queryClient = new QueryClient({

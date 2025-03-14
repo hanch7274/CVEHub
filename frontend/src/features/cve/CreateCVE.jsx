@@ -58,7 +58,6 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
     title: '',
     description: '',
     status: '신규등록',
-    publishedDate: new Date(new Date().getTime() + (9 * 60 * 60 * 1000)).toISOString(),
     pocs: [],
     snortRules: [],
     references: [],
@@ -85,14 +84,12 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
     mutationFn: async (cveData) => {
       const requestData = {
         cve_id: cveData.cveId,
+        title: cveData.title,
         description: cveData.description,
         status: cveData.status,
-        severity: cveData.severity,
-        exploit_status: cveData.exploitStatus,
-        references: cveData.references,
+        references: cveData.references.map(ref => ({ url: ref.url })),
         pocs: cveData.pocs,
         snort_rules: cveData.snortRules,
-        last_updated: cveData.lastUpdated,
         tags: cveData.tags
       };
       
@@ -202,13 +199,11 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
       title: formData.title,
       description: formData.description,
       status: formData.status,
-      publishedDate: formData.publishedDate,
       pocs: formData.pocs,
       snortRules: formData.snortRules,
       references: formData.references,
       severity: formData.severity,
       exploitStatus: formData.exploitStatus,
-      lastUpdated: new Date().toISOString(),
       tags: formData.tags.split(',').map(tag => tag.trim()).filter(tag => tag)
     };
     

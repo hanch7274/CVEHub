@@ -101,18 +101,19 @@ export function removeFromSessionStorage(key) {
 }
 
 /**
- * WebSocket 연결 URL을 생성하는 함수
- * @returns {string} WebSocket 연결 URL
+ * Socket.IO 연결 URL을 생성하는 함수
+ * @returns {string} Socket.IO 연결 URL
  */
 export function getSocketIOURL() {
-  // config.js에서 정의된 WS_BASE_URL 상수 사용
-  const { WS_BASE_URL } = require('../../config');
+  // config.js에서 정의된 API_BASE_URL 상수 사용
+  // Socket.IO는 ws:// URL이 아닌 http:// URL을 사용해야 함
+  const { API_BASE_URL } = require('../../config');
   
-  logger.info('WebSocketUtils', `Socket.IO URL 생성: ${WS_BASE_URL}`);
+  logger.info('WebSocketUtils', `Socket.IO URL 생성: ${API_BASE_URL}`);
   
   // Socket.IO 서버는 백엔드에서 '/socket.io' 경로에 마운트되어 있으므로
   // 기본 URL만 반환하고 path 옵션은 socketio.js에서 설정함
-  return WS_BASE_URL;
+  return API_BASE_URL;
 }
 
 export default {
