@@ -2,7 +2,7 @@
  * Socket.IO 유틸리티 함수
  */
 
-import logger from './loggingService';
+import logger from '../../utils/logging';
 
 /**
  * Socket.IO 메시지 검증 및 정규화

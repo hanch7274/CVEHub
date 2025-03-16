@@ -212,6 +212,7 @@ export const setupCVESubscriptions = (queryClient, webSocketService) => {
 /**
  * CVE 목록의 실시간 업데이트를 처리하는 훅
  * Socket.IO를 사용하여 서버로부터 CVE 업데이트를 구독하고 React Query 캐시를 업데이트함
+ * 
  * @returns {Object} 연결 상태 정보
  */
 export const useCVEListUpdates = () => {
@@ -329,7 +330,7 @@ export const useCVESubscription = (cveId) => {
   const handleSubscriptionUpdated = useCallback((data) => {
     if (!data || !data.cveId || data.cveId !== cveId) return;
     
-    logger.log(`[useCVESubscription] 구독자 목록 업데이트: ${data.cveId}`, data.subscribers);
+    logger.info(`[useCVESubscription] 구독자 목록 업데이트: ${data.cveId}`, data.subscribers);
     setSubscribers(data.subscribers || []);
     
     // 사용자가 현재 구독 목록에 있는지 확인
@@ -368,7 +369,7 @@ export const useCVESubscription = (cveId) => {
     setError(null);
     
     try {
-      logger.log(`[useCVESubscription] CVE 구독 요청: ${cveId}`, {
+      logger.info(`[useCVESubscription] CVE 구독 요청: ${cveId}`, {
         socketId: currentSocket.id,
         connected: isConnected,
         timestamp: new Date().toISOString()
@@ -401,16 +402,15 @@ export const useCVESubscription = (cveId) => {
         errorStack: err.stack
       });
       setIsLoading(false);
-      setError(err.message || '구독 요청 중 오류가 발생했습니다.');
+      setError(`구독 요청 오류: ${err.message || '알 수 없는 오류'}`);
       return false;
     }
   }, [cveId]);
-  
+
   // 구독 해제 요청 함수
   const unsubscribe = useCallback(() => {
     if (!cveId) {
       logger.warn('[useCVESubscription] CVE ID가 제공되지 않았습니다.');
-      setError('CVE ID가 제공되지 않았습니다.');
       return false;
     }
     
@@ -425,7 +425,6 @@ export const useCVESubscription = (cveId) => {
         socketId: currentSocket?.id,
         cveId
       });
-      setError('웹소켓 연결이 활성화되지 않았습니다. 잠시 후 다시 시도해주세요.');
       return false;
     }
     
@@ -433,7 +432,7 @@ export const useCVESubscription = (cveId) => {
     setError(null);
     
     try {
-      logger.log(`[useCVESubscription] CVE 구독 해제 요청: ${cveId}`, {
+      logger.info(`[useCVESubscription] CVE 구독 해제 요청: ${cveId}`, {
         socketId: currentSocket.id,
         connected: isConnected,
         timestamp: new Date().toISOString()
@@ -452,7 +451,6 @@ export const useCVESubscription = (cveId) => {
         if (isLoading) {
           logger.warn(`[useCVESubscription] 구독 해제 요청 타임아웃: ${cveId}`);
           setIsLoading(false);
-          setError('구독 해제 요청 시간이 초과되었습니다. 네트워크 연결을 확인하고 다시 시도해주세요.');
         }
       }, 5000);
       
@@ -466,7 +464,6 @@ export const useCVESubscription = (cveId) => {
         errorStack: err.stack
       });
       setIsLoading(false);
-      setError(err.message || '구독 해제 요청 중 오류가 발생했습니다.');
       return false;
     }
   }, [cveId]);
@@ -479,7 +476,7 @@ export const useCVESubscription = (cveId) => {
     const handleSubscribeSuccess = (data) => {
       if (!data || data.cveId !== cveId) return;
       
-      logger.log(`[useCVESubscription] 구독 성공: ${cveId}`, data);
+      logger.info(`[useCVESubscription] 구독 성공: ${cveId}`, data);
       setIsLoading(false);
       setIsSubscribed(true);
       setSubscribers(data.subscribers || []);
@@ -513,7 +510,7 @@ export const useCVESubscription = (cveId) => {
     const handleUnsubscribeSuccess = (data) => {
       if (!data || data.cveId !== cveId) return;
       
-      logger.log(`[useCVESubscription] 구독 해제 성공: ${cveId}`, data);
+      logger.info(`[useCVESubscription] 구독 해제 성공: ${cveId}`, data);
       setIsLoading(false);
       setIsSubscribed(false);
       setSubscribers(data.subscribers || []);
@@ -595,6 +592,28 @@ export const useCVESubscription = (cveId) => {
   };
 };
 
+/**
+ * 전체 CVE 개수를 조회하는 훅
+ * 필터링 없이 DB에 존재하는 모든 CVE의 개수를 반환합니다.
+ * @param {Object} options - React Query 옵션
+ * @returns {Object} useQuery 훅에서 반환되는 결과 객체
+ */
+export const useTotalCVECount = (options = {}) => {
+  return useQuery({
+    queryKey: QUERY_KEYS.CVE.totalCount(),
+    queryFn: async () => {
+      try {
+        return await cveService.getTotalCVECount();
+      } catch (error) {
+        logger.error('useTotalCVECount', '전체 CVE 개수 조회 중 오류 발생', { error: error.message });
+        throw error;
+      }
+    },
+    staleTime: 60000, // 1분 동안 데이터를 fresh하게 유지
+    ...options,
+  });
+};
+
 // 모든 CVE 관련 훅을 기본 내보내기로 묶어서 제공
 export default {
   useCVEList,
@@ -604,5 +623,6 @@ export default {
   useCVEListUpdates,
   useCVESubscription,
   handleCVESubscriptionUpdate,
-  setupCVESubscriptions
+  setupCVESubscriptions,
+  useTotalCVECount
 };

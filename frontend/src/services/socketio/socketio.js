@@ -1,6 +1,6 @@
 import { io } from 'socket.io-client';
 import { SOCKET_EVENTS, SOCKET_STATE } from './constants';
-import logger from './loggingService';
+import logger from '../../utils/logging';
 import { getAccessToken } from '../../utils/storage/tokenStorage';
 import { getSocketIOURL } from './utils';
 import { WS_BASE_URL, SOCKET_IO_PATH, CASE_CONVERSION } from '../../config';
@@ -18,6 +18,9 @@ class SocketIOService {
     this.listeners = {};
     this.options = this._createOptions();
     this.pingInterval = null;
+    this.originalEmit = null; // 원본 emit 메서드 저장용
+    this.pingTimeoutId = null; // 핑 타임아웃 ID
+    this.lastPingTime = null; // 마지막 핑 전송 시간
   }
 
   // 설정 옵션 생성
@@ -187,6 +190,10 @@ class SocketIOService {
         connected: this.socket?.connected
       });
       
+      // 원본 emit 메서드 저장 및 래핑된 emit 메서드로 교체
+      this.originalEmit = this.socket.emit;
+      this.socket.emit = this._wrappedEmit.bind(this);
+      
       // 연결 이벤트 핸들러 설정
       this.socket.on(SOCKET_EVENTS.CONNECT, () => {
         logger.info('SocketIOService', '웹소켓 연결 성공');
@@ -287,12 +294,26 @@ class SocketIOService {
       
       // 핑/퐁 메시지 처리
       this.socket.on(SOCKET_EVENTS.PONG, (data) => {
-        logger.debug('SocketIOService', '퐁 메시지 수신', {
-          eventName: SOCKET_EVENTS.PONG,
-          dataType: typeof data,
-          dataKeys: data ? Object.keys(data) : [],
-          rawData: data
-        });
+        // 퐁 메시지 수신 시 타임아웃 제거
+        this._clearPingTimeout();
+        
+        // 핑-퐁 지연 시간 계산
+        if (this.lastPingTime) {
+          const pingPongDelay = Date.now() - this.lastPingTime;
+          logger.debug('SocketIOService', '퐁 메시지 수신', {
+            eventName: SOCKET_EVENTS.PONG,
+            pingPongDelay: `${pingPongDelay}ms`,
+            dataType: typeof data,
+            dataKeys: data ? Object.keys(data) : []
+          });
+        } else {
+          logger.debug('SocketIOService', '퐁 메시지 수신', {
+            eventName: SOCKET_EVENTS.PONG,
+            dataType: typeof data,
+            dataKeys: data ? Object.keys(data) : []
+          });
+        }
+        
         this._notifyListeners(SOCKET_EVENTS.PONG, this._convertDataCasing(data));
       });
       
@@ -311,6 +332,9 @@ class SocketIOService {
         
         // 핑 타이머 정리
         this._clearPingTimer();
+        
+        // 핑 타임아웃 정리
+        this._clearPingTimeout();
         
         this.socket.disconnect();
         this.socket = null;
@@ -385,6 +409,40 @@ class SocketIOService {
     }
   }
   
+  // 래핑된 emit 메서드 - 중앙집중적 케이스 변환 처리
+  _wrappedEmit(eventName, data) {
+    try {
+      // 데이터가 있는 경우에만 변환 처리
+      if (data) {
+        logger.debug('SocketIOService', `이벤트 ${eventName} 데이터 변환 전`, {
+          eventName,
+          originalData: data
+        });
+        
+        // camelCase에서 snake_case로 변환
+        const convertedData = camelToSnake(data, { excludeFields: EXCLUDED_FIELDS });
+        
+        logger.debug('SocketIOService', `이벤트 ${eventName} 데이터 변환 후`, {
+          eventName,
+          convertedData
+        });
+        
+        // 원본 emit 메서드 호출 (변환된 데이터 사용)
+        return this.originalEmit.call(this.socket, eventName, convertedData);
+      }
+      
+      // 데이터가 없는 경우 그대로 전달
+      return this.originalEmit.call(this.socket, eventName, data);
+    } catch (error) {
+      logger.error('SocketIOService', `이벤트 ${eventName} 데이터 변환 중 오류`, {
+        error: error.message,
+        stack: error.stack
+      });
+      // 오류 발생 시 원본 데이터 사용
+      return this.originalEmit.call(this.socket, eventName, data);
+    }
+  }
+  
   // CVE 구독
   subscribeToCVE(cveId, sessionId) {
     if (!this.socket || !this.isConnected) {
@@ -398,8 +456,8 @@ class SocketIOService {
     }
     
     try {
-      // snake_case로 변환하여 전송
-      const data = { cve_id: cveId, session_id: sessionId };
+      // 원본 camelCase 데이터 사용 (중앙집중적 변환 처리)
+      const data = { cveId, sessionId };
       
       logger.info('SocketIOService', 'CVE 구독 요청', { cveId, sessionId });
       this.socket.emit('subscribe_cve', data);
@@ -423,11 +481,8 @@ class SocketIOService {
     }
     
     try {
-      // snake_case로 변환하여 전송
-      const data = camelToSnake({
-        cveId,
-        sessionId
-      }, { excludeFields: EXCLUDED_FIELDS });
+      // 원본 camelCase 데이터 사용 (중앙집중적 변환 처리)
+      const data = { cveId, sessionId };
       
       logger.info('SocketIOService', 'CVE 구독 해제 요청', { cveId, sessionId });
       this.socket.emit('unsubscribe_cve', data);
@@ -446,20 +501,45 @@ class SocketIOService {
     }
     
     try {
-      const pingData = camelToSnake({
+      // 기존 타임아웃이 있으면 제거
+      this._clearPingTimeout();
+      
+      // 원본 camelCase 데이터 사용 (중앙집중적 변환 처리)
+      const pingData = {
         timestamp: getAPITimestamp(),
         clientId: this.socket.id
-      }, { excludeFields: EXCLUDED_FIELDS });
+      };
+      
+      // 핑 전송 시간 기록
+      this.lastPingTime = Date.now();
       
       logger.debug('SocketIOService', '핑 메시지 전송', pingData);
       this.socket.emit(SOCKET_EVENTS.PING, pingData);
+      
+      // 5초 내에 퐁 응답이 오지 않으면 오류 메시지 출력
+      this.pingTimeoutId = setTimeout(() => {
+        const elapsedTime = Date.now() - this.lastPingTime;
+        logger.error('SocketIOService', '퐁 메시지 수신 타임아웃', {
+          lastPingTime: formatInTimeZone(new Date(this.lastPingTime), 'Asia/Seoul', DATE_FORMATS.API),
+          elapsedTime: `${elapsedTime}ms`,
+          socketId: this.socket?.id,
+          connectionState: this.connectionState
+        });
+        this.pingTimeoutId = null;
+      }, 5000); // 5초 타임아웃
+      
       return true;
     } catch (error) {
-      logger.error('SocketIOService', '핑 메시지 전송 중 오류', {
-        error: error.message,
-        stack: error.stack
-      });
+      logger.error('SocketIOService', '핑 메시지 전송 중 오류', error);
       return false;
+    }
+  }
+  
+  // 핑 타임아웃 정리
+  _clearPingTimeout() {
+    if (this.pingTimeoutId) {
+      clearTimeout(this.pingTimeoutId);
+      this.pingTimeoutId = null;
     }
   }
   

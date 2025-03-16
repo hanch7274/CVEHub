@@ -360,6 +360,22 @@ class CVEService {
   }
 
   /**
+   * 전체 CVE 개수 조회 (필터링 없이 DB에 존재하는 모든 CVE 개수)
+   * @returns {Promise<number>} 전체 CVE 개수
+   */
+  async getTotalCVECount() {
+    try {
+      logger.info('cveService', '전체 CVE 개수 조회 요청');
+      const response = await api.get(`${API_BASE_URL}/cves/total-count`);
+      logger.info('cveService', '전체 CVE 개수 조회 성공', { count: response.data.count });
+      return response.data.count;
+    } catch (error) {
+      logger.error('cveService', '전체 CVE 개수 조회 실패', { error: error.message });
+      throw this._handleError(error, '전체 CVE 개수 조회 실패');
+    }
+  }
+
+  /**
    * 에러 핸들링 공통 메서드
    * @private
    * @param {Error} error - 발생한 에러

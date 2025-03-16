@@ -426,24 +426,47 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
 
   // CVE 구독 처리
   useEffect(() => {
-    if (propsCveId && open && isConnected) {
-      logger.info('CVEDetail', `CVE 구독 시도: ${propsCveId}`);
-      subscribe();
-      
-      return () => {
+    if (!propsCveId || !open || !isConnected) return;
+
+    logger.info('CVEDetail', `CVE ${propsCveId} 업데이트 이벤트 리스닝 시작`);
+    logger.info('CVEDetail', `CVE 구독 시도: ${propsCveId}`);
+    
+    // 구독 요청 전송
+    const subscriptionResult = subscribe();
+    
+    if (!subscriptionResult) {
+      logger.warn('CVEDetail', `CVE ${propsCveId} 구독 요청 실패`);
+    }
+    
+    // 브라우저 종료/새로고침 시 구독 해제 처리
+    const handleBeforeUnload = () => {
+      logger.info('CVEDetail', `브라우저 종료/새로고침 - CVE 구독 해제: ${propsCveId}`);
+      unsubscribe();
+    };
+    
+    // 브라우저 종료/새로고침 이벤트 리스너 등록
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    // 클린업 함수
+    return () => {
+      // 컴포넌트가 언마운트되거나 propsCveId, open, isConnected가 변경될 때만 실행
+      if (propsCveId && isConnected) {
         logger.info('CVEDetail', `CVE 구독 해제: ${propsCveId}`);
         unsubscribe();
-      };
-    }
-  }, [propsCveId, open, isConnected, subscribe, unsubscribe]);
+      }
+      
+      // 브라우저 이벤트 리스너 제거
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [propsCveId, open, isConnected]); // subscribe와 unsubscribe 의존성 제거
 
   // 구독자 정보 업데이트
   useEffect(() => {
     if (subscribers && subscribers.length > 0) {
       logger.info('CVEDetail', '구독자 정보 업데이트', { count: subscribers.length });
       setLocalSubscribers(subscribers);
-    } else if (isSubscribed && currentUser && localSubscribers.length === 0) {
-      // 구독자 목록이 비어있지만 구독 중이면 현재 사용자 정보로 채움
+    } else if (currentUser && localSubscribers.length === 0) {
+      // 구독자 목록이 비어있지만 현재 사용자 정보로 채움
       const userInfo = {
         id: currentUser.id,
         username: currentUser.username,
@@ -453,7 +476,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       logger.info('CVEDetail', '사용자 정보로 구독자 초기화', userInfo);
       setLocalSubscribers([userInfo]);
     }
-  }, [subscribers, isSubscribed, currentUser, localSubscribers.length]);
+  }, [subscribers, currentUser, localSubscribers.length]);
 
   // 편집 권한 확인
   const canEdit = useCallback(() => {
@@ -772,9 +795,8 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <Typography variant="h6">{cveData.cveId} 상세 정보</Typography>
-            {isSubscribed && (
-              <SubscriberCount subscribers={localSubscribers} />
-            )}
+            {/* 구독자 정보 표시 조건 수정: isSubscribed 체크 제거 */}
+            <SubscriberCount subscribers={localSubscribers} />
           </Box>
           <Box>
             <Tooltip title="새로고침">

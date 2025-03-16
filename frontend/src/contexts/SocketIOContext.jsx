@@ -4,7 +4,7 @@ import { useSnackbar } from 'notistack';
 import socketIOService from '../services/socketio/socketio';
 import { QUERY_KEYS } from '../api/queryKeys';
 import { io } from 'socket.io-client';
-import logger from '../services/socketio/loggingService';
+import logger from '../utils/logging';
 import { SOCKET_EVENTS, SOCKET_STATE } from '../services/socketio/constants';
 import { getAccessToken } from '../utils/storage/tokenStorage';
 import { WS_BASE_URL } from '../config';

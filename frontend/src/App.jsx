@@ -26,6 +26,8 @@ import WebSocketQueryBridge from './contexts/WebSocketQueryBridge';
 
 // CVEDetail 컴포넌트를 lazy 로딩으로 가져옵니다
 const CVEDetail = lazy(() => import('./features/cve/CVEDetail'));
+// CacheVisualization 컴포넌트를 lazy 로딩으로 가져옵니다
+const CacheVisualization = lazy(() => import('./features/cache/CacheVisualization'));
 
 // URL 파라미터를 가져와 CVEDetail에 전달하는 래퍼 컴포넌트
 const CVEDetailWrapper = () => {
@@ -189,6 +191,18 @@ const MainRoutes = ({ setSelectedCVE, selectedCVE }) => {
           </PrivateRoute>
         }
       />
+      <Route
+        path="/cache"
+        element={
+          <PrivateRoute>
+            <MainLayout>
+              <Suspense fallback={<div>로딩 중...</div>}>
+                <CacheVisualization />
+              </Suspense>
+            </MainLayout>
+          </PrivateRoute>
+        }
+      />
 
       {/* Default Route */}
       <Route
@@ -222,10 +236,16 @@ const MainRoutes = ({ setSelectedCVE, selectedCVE }) => {
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      refetchOnWindowFocus: false, // 창 포커스시 자동 리페치 비활성화
-      staleTime: 5 * 60 * 1000, // 5분 동안 데이터 신선하게 유지
-      retry: 1, // 실패시 1번 재시도
-      cacheTime: 10 * 60 * 1000, // 10분 동안 캐시 유지
+      refetchOnWindowFocus: true, // 창 포커스시 자동 리페치 활성화
+      refetchOnReconnect: true, // 네트워크 재연결시 자동 리페치 활성화
+      refetchOnMount: true, // 컴포넌트 마운트시 자동 리페치 활성화
+      staleTime: 1 * 60 * 1000, // 1분 동안 데이터 신선하게 유지 (기존 5분에서 단축)
+      retry: 2, // 실패시 2번 재시도 (기존 1번에서 증가)
+      retryDelay: attemptIndex => Math.min(1000 * 2 ** attemptIndex, 30000), // 지수 백오프 적용
+      cacheTime: 10 * 60 * 1000, // 10분 동안 캐시 유지 (유지)
+      onError: (error) => {
+        console.error('Global query error:', error);
+      },
     },
   },
 });
@@ -245,17 +265,17 @@ const App = () => {
           autoHideDuration={3000}
         >
           <AuthProvider>
-            <SocketIOProvider>
-              <Router>
-                <ErrorProvider>
+            <Router>
+              <ErrorProvider>
+                <SocketIOProvider>
                   <ErrorHandlerSetup>
                     <CssBaseline />
                     <WebSocketQueryBridge />
                     <MainRoutes setSelectedCVE={setSelectedCVE} selectedCVE={selectedCVE} />
                   </ErrorHandlerSetup>
-                </ErrorProvider>
-              </Router>
-            </SocketIOProvider>
+                </SocketIOProvider>
+              </ErrorProvider>
+            </Router>
           </AuthProvider>
         </SnackbarProvider>
         <ToastContainer

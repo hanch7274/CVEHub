@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
 import { getAccessToken, getRefreshToken } from '../utils/storage/tokenStorage';
-import logger from '../services/socketio/loggingService';
+import logger from '../utils/logging';
 import socketIOService from '../services/socketio/socketio';
 import { useAuthQuery } from '../api/hooks/useAuthQuery';
 import { TOKEN_REFRESH_THRESHOLD } from '../config';

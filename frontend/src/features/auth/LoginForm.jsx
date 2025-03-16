@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSocketIO } from '../../contexts/SocketIOContext';
-import logger from '../../services/socketio/loggingService';
+import logger from '../../utils/logging';
 
 const LoginForm = ({ username, password, setUsername, setPassword }) => {
     const navigate = useNavigate();

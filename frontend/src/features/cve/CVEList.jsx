@@ -33,7 +33,8 @@ import {
   InputAdornment,
   useTheme,
   useMediaQuery,
-  alpha
+  alpha,
+  Pagination
 } from '@mui/material';
 
 import SearchIcon from '@mui/icons-material/Search';
@@ -42,6 +43,8 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import AddIcon from '@mui/icons-material/Add';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import EditIcon from '@mui/icons-material/Edit';
+import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSocketIO } from '../../contexts/SocketIOContext';
@@ -50,7 +53,8 @@ import { useSocketIO } from '../../contexts/SocketIOContext';
 import { 
   useCVEList, 
   useCVEDetail,
-  useCVEListUpdates
+  useCVEListUpdates,
+  useTotalCVECount
 } from '../../api/hooks/useCVEQuery';
 import {
   useDeleteCVE,
@@ -137,7 +141,7 @@ const CVEDetailWrapper = ({ cveId, open, onClose }) => {
     );
   }
 
-  return <CVEDetail cve={cve} open={open} onClose={onClose} />;
+  return <CVEDetail cveId={cveId} open={open} onClose={onClose} />;
 };
 
 const CVEList = () => {
@@ -152,6 +156,9 @@ const CVEList = () => {
   // 실시간 업데이트 구독
   useCVEListUpdates();
 
+  // 전체 CVE 개수 조회
+  const { data: totalCVECount = 0, isLoading: isTotalCountLoading } = useTotalCVECount();
+  
   // 필터 상태 (상태, 심각도, 정렬 옵션)
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -182,7 +189,7 @@ const CVEList = () => {
           onClick={handleCreateCVE}
           sx={{
             ...fontStyles,
-            borderRadius: '8px',
+            borderRadius: '20px',
             fontWeight: 500,
             boxShadow: '0 4px 12px rgba(58, 134, 255, 0.2)',
             background: 'linear-gradient(135deg, #3a86ff, #8338ec)',
@@ -259,7 +266,7 @@ const CVEList = () => {
   }, []);
 
   const handlePageChange = useCallback((event, newPage) => {
-    setPage(newPage);
+    setPage(newPage - 1); // Pagination 컴포넌트는 1부터 시작하므로 -1 해줍니다
   }, []);
 
   const handleRowsPerPageChange = useCallback((event) => {
@@ -357,16 +364,22 @@ const CVEList = () => {
             p: 2,
             borderRadius: '8px',
             boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
-            textAlign: 'center'
+            textAlign: 'center',
+            transition: 'all 0.3s ease',
+            '&:hover': {
+              transform: 'translateY(-5px)',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+              background: `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.05)} 0%, ${alpha(theme.palette.primary.main, 0.1)} 100%)`
+            }
           }}
         >
           <Typography variant="caption" sx={{ textTransform: 'uppercase', color: theme.palette.text.secondary }}>
             전체 CVE
           </Typography>
           <Typography variant="h4" sx={{ fontWeight: 'bold', color: theme.palette.primary.main, my: 1 }}>
-            {statsData.totalCount}
+            {totalCVECount}
           </Typography>
-          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>분석된 취약점</Typography>
+          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>등록된 취약점</Typography>
         </Card>
       </Grid>
       <Grid item xs={12} sm={6} md={3}>
@@ -376,7 +389,13 @@ const CVEList = () => {
             p: 2,
             borderRadius: '8px',
             boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
-            textAlign: 'center'
+            textAlign: 'center',
+            transition: 'all 0.3s ease',
+            '&:hover': {
+              transform: 'translateY(-5px)',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+              background: `linear-gradient(135deg, ${alpha(theme.palette.secondary.main, 0.05)} 0%, ${alpha(theme.palette.secondary.main, 0.1)} 100%)`
+            }
           }}
         >
           <Typography variant="caption" sx={{ textTransform: 'uppercase', color: theme.palette.text.secondary }}>
@@ -395,7 +414,13 @@ const CVEList = () => {
             p: 2,
             borderRadius: '8px',
             boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
-            textAlign: 'center'
+            textAlign: 'center',
+            transition: 'all 0.3s ease',
+            '&:hover': {
+              transform: 'translateY(-5px)',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+              background: `linear-gradient(135deg, ${alpha(theme.palette.info.main, 0.05)} 0%, ${alpha(theme.palette.info.main, 0.1)} 100%)`
+            }
           }}
         >
           <Typography variant="caption" sx={{ textTransform: 'uppercase', color: theme.palette.text.secondary }}>
@@ -414,7 +439,13 @@ const CVEList = () => {
             p: 2,
             borderRadius: '8px',
             boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
-            textAlign: 'center'
+            textAlign: 'center',
+            transition: 'all 0.3s ease',
+            '&:hover': {
+              transform: 'translateY(-5px)',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+              background: `linear-gradient(135deg, ${alpha(theme.palette.success.main, 0.05)} 0%, ${alpha(theme.palette.success.main, 0.1)} 100%)`
+            }
           }}
         >
           <Typography variant="caption" sx={{ textTransform: 'uppercase', color: theme.palette.text.secondary }}>
@@ -441,7 +472,11 @@ const CVEList = () => {
         display: 'flex',
         flexWrap: 'wrap',
         gap: 2,
-        alignItems: 'center'
+        alignItems: 'center',
+        transition: 'all 0.3s ease',
+        '&:hover': {
+          boxShadow: '0 6px 20px rgba(0,0,0,0.15)'
+        }
       }}
     >
       <Box sx={{ flex: 1, position: 'relative', minWidth: 300 }}>
@@ -465,8 +500,12 @@ const CVEList = () => {
               borderRadius: '30px',
               pl: '45px',
               backgroundColor: 'white',
+              transition: 'all 0.2s ease',
               '& fieldset': { borderColor: '#e0e0e0' },
-              '&:hover fieldset': { borderColor: theme.palette.primary.main }
+              '&:hover fieldset': { borderColor: theme.palette.primary.main },
+              '&.Mui-focused': {
+                boxShadow: `0 0 0 2px ${alpha(theme.palette.primary.main, 0.2)}`
+              }
             }
           }}
         />
@@ -479,7 +518,11 @@ const CVEList = () => {
           onChange={handleStatusFilterChange}
           sx={{
             borderRadius: '30px',
-            backgroundColor: 'white'
+            backgroundColor: 'white',
+            transition: 'all 0.2s ease',
+            '&:hover': {
+              boxShadow: `0 0 0 2px ${alpha(theme.palette.primary.main, 0.2)}`
+            }
           }}
         >
           <MenuItem value="">전체</MenuItem>
@@ -497,7 +540,11 @@ const CVEList = () => {
           onChange={handleSeverityFilterChange}
           sx={{
             borderRadius: '30px',
-            backgroundColor: 'white'
+            backgroundColor: 'white',
+            transition: 'all 0.2s ease',
+            '&:hover': {
+              boxShadow: `0 0 0 2px ${alpha(theme.palette.primary.main, 0.2)}`
+            }
           }}
         >
           <MenuItem value="">전체</MenuItem>
@@ -515,7 +562,11 @@ const CVEList = () => {
           onChange={handleSortOptionChange}
           sx={{
             borderRadius: '30px',
-            backgroundColor: 'white'
+            backgroundColor: 'white',
+            transition: 'all 0.2s ease',
+            '&:hover': {
+              boxShadow: `0 0 0 2px ${alpha(theme.palette.primary.main, 0.2)}`
+            }
           }}
         >
           <MenuItem value="newest">최신순</MenuItem>
@@ -524,7 +575,16 @@ const CVEList = () => {
         </Select>
       </FormControl>
       <Tooltip title="새로고침">
-        <IconButton onClick={handleRefresh}>
+        <IconButton 
+          onClick={handleRefresh}
+          sx={{
+            transition: 'all 0.2s ease',
+            '&:hover': {
+              backgroundColor: alpha(theme.palette.primary.main, 0.1),
+              transform: 'rotate(180deg)'
+            }
+          }}
+        >
           <RefreshIcon />
         </IconButton>
       </Tooltip>
@@ -591,9 +651,21 @@ const CVEList = () => {
                           onClick={() => handleCVEClick(cve)}
                           sx={{
                             cursor: 'pointer',
-                            '&:hover': { backgroundColor: theme.palette.mode === 'dark' ? '#3a4a61' : '#e9effd' },
+                            '&:hover': { 
+                              backgroundColor: theme.palette.mode === 'dark' ? '#3a4a61' : '#e9effd',
+                              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                              transform: 'scale(1.005)',
+                              '& .MuiTableCell-root': {
+                                color: theme.palette.mode === 'dark' ? '#ffffff' : theme.palette.primary.main,
+                              },
+                              '& .action-icon': {
+                                opacity: 1,
+                                transform: 'translateY(0)',
+                              }
+                            },
                             height: '60px',
-                            borderBottom: `1px solid ${theme.palette.mode === 'dark' ? '#4a5568' : '#e9ecef'}`
+                            borderBottom: `1px solid ${theme.palette.mode === 'dark' ? '#4a5568' : '#e9ecef'}`,
+                            transition: 'all 0.2s ease'
                           }}
                         >
                           {/* CVE ID 컬럼: 모던한 스타일 적용 */}
@@ -663,33 +735,67 @@ const CVEList = () => {
                             }
                           </TableCell>
                           <TableCell align="center" sx={{ p: '12px 20px' }} onClick={(e) => e.stopPropagation()}>
-                            <Tooltip title="상세 보기">
-                              <IconButton size="small" onClick={() => handleCVEClick(cve)}>
-                                <VisibilityIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="수정">
-                              <IconButton size="small" onClick={() => {/* 수정 로직 추가 */}}>
-                                <EditIcon fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                            <Tooltip title="삭제">
-                              <IconButton
-                                size="small"
-                                onClick={(e) => handleDeleteClick(e, cve)}
-                                color="error"
-                                sx={{
-                                  '&:hover': { backgroundColor: alpha(theme.palette.error.main, 0.1) },
-                                  transition: 'all 0.2s ease'
-                                }}
-                              >
-                                {deleteMutation.isPending && deleteMutation.variables === cve.id ? (
-                                  <CircularProgress size={20} color="inherit" />
-                                ) : (
-                                  <DeleteIcon fontSize="small" />
-                                )}
-                              </IconButton>
-                            </Tooltip>
+                            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1 }}>
+                              <Tooltip title="상세 보기">
+                                <IconButton 
+                                  size="small" 
+                                  onClick={() => handleCVEClick(cve)}
+                                  className="action-icon"
+                                  sx={{
+                                    opacity: 0.7,
+                                    transform: 'translateY(2px)',
+                                    transition: 'all 0.2s ease',
+                                    '&:hover': {
+                                      backgroundColor: alpha(theme.palette.primary.main, 0.1),
+                                      color: theme.palette.primary.main
+                                    }
+                                  }}
+                                >
+                                  <VisibilityIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="수정">
+                                <IconButton 
+                                  size="small" 
+                                  onClick={() => {/* 수정 로직 추가 */}}
+                                  className="action-icon"
+                                  sx={{
+                                    opacity: 0.7,
+                                    transform: 'translateY(2px)',
+                                    transition: 'all 0.2s ease',
+                                    '&:hover': {
+                                      backgroundColor: alpha(theme.palette.info.main, 0.1),
+                                      color: theme.palette.info.main
+                                    }
+                                  }}
+                                >
+                                  <EditIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="삭제">
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => handleDeleteClick(e, cve)}
+                                  color="error"
+                                  className="action-icon"
+                                  sx={{
+                                    opacity: 0.7,
+                                    transform: 'translateY(2px)',
+                                    transition: 'all 0.2s ease',
+                                    '&:hover': { 
+                                      backgroundColor: alpha(theme.palette.error.main, 0.1),
+                                      color: theme.palette.error.main
+                                    }
+                                  }}
+                                >
+                                  {deleteMutation.isPending && deleteMutation.variables === cve.id ? (
+                                    <CircularProgress size={20} color="inherit" />
+                                  ) : (
+                                    <DeleteIcon fontSize="small" />
+                                  )}
+                                </IconButton>
+                              </Tooltip>
+                            </Box>
                           </TableCell>
                         </TableRow>
                       );
@@ -742,30 +848,41 @@ const CVEList = () => {
           }}
         >
           <Typography sx={{ fontSize: '14px', color: theme.palette.text.secondary }}>
-            전체 {totalCount}개 중 {page * rowsPerPage + 1}-{Math.min((page + 1) * rowsPerPage, totalCount)} 표시
+            전체 {totalCVECount}개 중 {totalCVECount > 0 ? page * rowsPerPage + 1 : 0}-{Math.min((page + 1) * rowsPerPage, totalCVECount)} 표시
           </Typography>
-          <Box>
-            <Button
-              onClick={() => handlePageChange(null, page - 1)}
-              disabled={page === 0}
-              sx={{ minWidth: '35px', height: '35px', borderRadius: '6px', mr: 1 }}
-            >
-              <i className="fas fa-angle-left" />
-            </Button>
-            <Button
-              onClick={() => handlePageChange(null, page + 1)}
-              disabled={(page + 1) * rowsPerPage >= totalCount}
-              sx={{ minWidth: '35px', height: '35px', borderRadius: '6px' }}
-            >
-              <i className="fas fa-angle-right" />
-            </Button>
-          </Box>
+          <Pagination 
+            count={Math.ceil(totalCVECount / rowsPerPage)}
+            page={page + 1} // Pagination 컴포넌트는 1부터 시작하므로 +1 해줍니다
+            onChange={handlePageChange}
+            color="primary"
+            size="medium"
+            showFirstButton
+            showLastButton
+            siblingCount={1}
+            boundaryCount={1}
+            sx={{
+              '& .MuiPaginationItem-root': {
+                fontWeight: 500,
+                borderRadius: '6px',
+                '&.Mui-selected': {
+                  backgroundColor: theme.palette.primary.main,
+                  color: 'white',
+                  '&:hover': {
+                    backgroundColor: theme.palette.primary.dark,
+                  }
+                },
+                '&:hover': {
+                  backgroundColor: alpha(theme.palette.primary.main, 0.1),
+                }
+              }
+            }}
+          />
         </Box>
       </Paper>
 
       {selectedCVE && (
         <CVEDetailWrapper
-          cveId={selectedCVE.id || selectedCVE.cveId}
+          cveId={selectedCVE.cveId}
           open={detailOpen}
           onClose={handleDetailClose}
         />

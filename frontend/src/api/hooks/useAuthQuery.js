@@ -12,7 +12,7 @@ import {
   clearAuthStorage, 
   setUser as setStoredUser 
 } from '../../utils/storage/tokenStorage';
-import logger from '../../services/socketio/loggingService';
+import logger from '../../utils/logging';
 
 /**
  * 인증 관련 React Query 훅

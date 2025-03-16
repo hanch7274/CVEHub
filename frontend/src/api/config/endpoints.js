@@ -1,5 +1,5 @@
 import { WS_BASE_URL, SOCKET_IO_PATH } from '../../config';
-import logger from '../../services/socketio/loggingService';
+import logger from '../../utils/logging';
 
 // Auth endpoints
 export const AUTH = {

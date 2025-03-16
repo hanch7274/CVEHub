@@ -1,22 +1,5 @@
-// Simple logger utility
-const logger = {
-  info: (context, message, data) => {
-    console.info(`[INFO][${context}] ${message}`, data || '');
-  },
-  
-  warn: (context, message, data) => {
-    console.warn(`[WARN][${context}] ${message}`, data || '');
-  },
-  
-  error: (context, message, error) => {
-    console.error(`[ERROR][${context}] ${message}`, error || '');
-  },
-  
-  debug: (context, message, data) => {
-    if (process.env.NODE_ENV !== 'production') {
-      console.debug(`[DEBUG][${context}] ${message}`, data || '');
-    }
-  }
-};
+// 중앙화된 로깅 시스템 사용
+import logger from '../utils/logging';
 
+// 기존 코드와의 호환성을 위해 동일한 인터페이스 유지
 export default logger;

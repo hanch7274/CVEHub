@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSocketIO } from './SocketIOContext';
 import { QUERY_KEYS } from '../api/queryKeys';
-import logger from '../services/socketio/loggingService';
+import logger from '../utils/logging';
 import { SOCKET_EVENTS } from '../services/socketio/constants';
 import socketIOService from '../services/socketio/socketio';
 
