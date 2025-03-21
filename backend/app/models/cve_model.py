@@ -155,7 +155,7 @@ class CVEModel(Document):
     status: str = "신규등록"  # 신규등록, 분석중, 릴리즈 완료, 분석불가
     assigned_to: Optional[str] = None
     severity: Optional[str] = None  # 심각도 필드 추가
-    last_modified_date: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
     created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
     created_by: str = Field(..., description="추가한 사용자")
     last_modified_by: str = Field(..., description="마지막 수정자")
@@ -181,15 +181,15 @@ class CVEModel(Document):
             "cve_id",
             "status",
             "assigned_to",
-            "last_modified_date",
+            "last_modified_at",
             "created_at",
             "created_by",
             "is_locked",  # 락 상태 인덱스 추가
             "locked_by",
             [("cve_id", 1)], # 고유 인덱스
-            [("last_modified_date", -1)], # 내림차순 인덱스
+            [("last_modified_at", -1)], # 내림차순 인덱스
             [("created_at", -1)], # 내림차순 인덱스
-            [("status", 1), ("last_modified_date", -1)], # 복합 인덱스
+            [("status", 1), ("last_modified_at", -1)], # 복합 인덱스
             [
                 ("cve_id", "text"), 
                 ("title", "text"), 
@@ -199,7 +199,7 @@ class CVEModel(Document):
 
     class Config:
         json_encoders = {
-            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat() if v else None,
+            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat().replace('+00:00', 'Z') if v else None,
             ObjectId: str
         }
         json_schema_extra = {
@@ -208,7 +208,7 @@ class CVEModel(Document):
                 "title": "Buffer overflow vulnerability in Example Software",
                 "description": "Buffer overflow vulnerability in Example Software",
                 "status": "신규등록",
-                "last_modified_date": datetime.now(ZoneInfo("UTC")),
+                "last_modified_at": datetime.now(ZoneInfo("UTC")),
                 "created_at": datetime.now(ZoneInfo("UTC")),
                 "created_by": "anonymous",
                 "modification_history": [],
@@ -231,7 +231,7 @@ class CreateCVERequest(BaseModel):
 
     class Config:
         json_encoders = {
-            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat() if v else None
+            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat().replace('+00:00', 'Z') if v else None
         }
 
 class PatchCVERequest(BaseModel):

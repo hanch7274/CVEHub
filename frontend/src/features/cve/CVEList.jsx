@@ -54,7 +54,8 @@ import {
   useCVEList, 
   useCVEDetail,
   useCVEListUpdates,
-  useTotalCVECount
+  useTotalCVECount,
+  useCVEStats
 } from '../../api/hooks/useCVEQuery';
 import {
   useDeleteCVE,
@@ -164,9 +165,14 @@ const getStatusColor = (status, theme) => {
 };
 
 // 날짜 포맷팅 함수
-const formatDate = (dateString) => {
-  if (!dateString) return '-';
-  return formatForDisplay(dateString, DATE_FORMATS.DISPLAY.DEFAULT);
+const formatDate = (dateValue) => {
+  // 빈 값이나 빈 객체 체크
+  if (!dateValue || 
+      (typeof dateValue === 'object' && Object.keys(dateValue).length === 0)) {
+    return '-';
+  }
+  
+  return formatForDisplay(dateValue, DATE_FORMATS.DISPLAY.DEFAULT);
 };
 
 const CVECardSkeleton = () => (
@@ -252,7 +258,7 @@ const StatisticsSection = React.memo(({ statsData, totalCVECount, theme }) => {
             위험도 높음
           </Typography>
           <Typography variant="h4" sx={{ fontWeight: 'bold', color: theme.palette.secondary.main, my: 1 }}>
-            {statsData.newLastWeekCount}
+            {statsData.highSeverityCount || 0}
           </Typography>
           <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>심각한 취약점</Typography>
         </Card>
@@ -270,7 +276,7 @@ const StatisticsSection = React.memo(({ statsData, totalCVECount, theme }) => {
             최근 7일
           </Typography>
           <Typography variant="h4" sx={{ fontWeight: 'bold', color: theme.palette.info.main, my: 1 }}>
-            {statsData.inProgressCount}
+            {statsData.newLastWeekCount || 0}
           </Typography>
           <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>신규 등록</Typography>
         </Card>
@@ -591,7 +597,7 @@ const CVETable = React.memo(({
                   {!isMobile && (
                     <TableCell sx={tableCellBaseStyle}>{formatDate(cve.createdAt)}</TableCell>
                   )}
-                  <TableCell sx={tableCellBaseStyle}>{formatDate(cve.lastModifiedDate)}</TableCell>
+                  <TableCell sx={tableCellBaseStyle}>{formatDate(cve.lastModifiedAt)}</TableCell>
                   <TableCell sx={tableCellBaseStyle}>
                     <Box sx={{ display: 'flex', gap: 1 }}>
                       <Tooltip title="삭제">
@@ -805,6 +811,9 @@ const CVEList = () => {
 
   // 전체 CVE 개수 조회
   const { data: totalCVECount = 0, isLoading: isTotalCountLoading } = useTotalCVECount();
+
+  // 통계 데이터를 가져오는 쿼리
+  const { data: backendStats, isLoading: isLoadingStats } = useCVEStats();
   
   // 필터 상태 (상태, 심각도, 정렬 옵션)
   const [page, setPage] = useState(1);
@@ -897,17 +906,31 @@ const CVEList = () => {
   const cves = useMemo(() => queryData?.items || [], [queryData]);
   const totalCount = useMemo(() => queryData?.total || queryData?.totalItems || 0, [queryData]);
   
-  // 통계 데이터 (예시)
+  // 통계 데이터 (백엔드 API 결과와 로컬 데이터 결합)
   const statsData = useMemo(() => {
+    // 백엔드 통계 데이터가 있으면 사용
+    if (backendStats) {
+      return {
+        totalCount,
+        ...backendStats
+      };
+    }
+    
+    // 백엔드 데이터가 없으면 현재 페이지 데이터로 계산 (임시 방법)
     const oneWeekAgo = new Date();
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    
     return {
       totalCount,
       newLastWeekCount: cves.filter(cve => new Date(cve.createdAt) >= oneWeekAgo).length,
+      highSeverityCount: cves.filter(cve => 
+        cve.severity?.toLowerCase() === 'critical' || 
+        cve.severity?.toLowerCase() === 'high'
+      ).length,
       inProgressCount: cves.filter(cve => cve.status === '분석중').length,
       completedCount: cves.filter(cve => cve.status === '릴리즈 완료').length
     };
-  }, [cves, totalCount]);
+  }, [cves, totalCount, backendStats]);
 
   // 개선된 검색 핸들러 - 디바운스 및 유효성 검사 강화
   const handleSearchChange = useCallback((e) => {

@@ -2,6 +2,7 @@ from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
 from beanie import Document, PydanticObjectId
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 class UserModel(BaseModel):
     """사용자 모델"""
@@ -12,7 +13,7 @@ class UserModel(BaseModel):
     is_active: bool = True
     is_admin: bool = False
     created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    last_modified_at: Optional[datetime] = None
 
     class Config:
         """Pydantic 설정"""
@@ -81,7 +82,7 @@ class User(Document):
     hashed_password: str
     is_active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now())
-    updated_at: datetime = datetime.utcnow()
+    last_modified_at: datetime = datetime.utcnow()
     is_admin: bool = False
     
     class Settings:
@@ -93,7 +94,7 @@ class User(Document):
 
     class Config:
         json_encoders = {
-            datetime: lambda v: v.isoformat()
+            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat().replace('+00:00', 'Z') if v else None
         }
 
     @property

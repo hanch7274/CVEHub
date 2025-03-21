@@ -37,3 +37,12 @@ def format_datetime(dt: datetime, timezone: str = "Asia/Seoul") -> str:
     
     # 포맷팅
     return local_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+def get_current_time() -> str:
+    """
+    현재 시간을 포맷된 문자열로 반환합니다 (KST 기준).
+    
+    Returns:
+        str: 포맷된 현재 시간 문자열 (YYYY-MM-DD HH:MM:SS)
+    """
+    return format_datetime(get_utc_now())

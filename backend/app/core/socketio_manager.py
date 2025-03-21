@@ -6,7 +6,7 @@ import json
 import asyncio
 import traceback
 from datetime import datetime
-from .datetime_utils import get_current_time, get_kst_now
+from ..utils.datetime_utils import get_current_time
 from .config import get_settings
 from .logging_utils import get_logger
 
@@ -861,7 +861,7 @@ class SocketIOManager:
             data = {
                 'cve_id': cve_id,
                 'subscribers_count': len(subscribers),
-                'updated_at': get_current_time()
+                'last_modified_at': get_current_time()
             }
             
             # 모든 구독자에게 업데이트 전송

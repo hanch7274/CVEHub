@@ -2,10 +2,9 @@ import axios from 'axios';
 import { getAccessToken, clearAuthStorage } from '../../utils/storage/tokenStorage';
 import { camelToSnake, snakeToCamel } from '../../utils/caseConverter';
 import { refreshToken as refreshAuthToken } from '../../services/authService';
-import { getUTCTimestamp, formatWithTimeZone, prepareDataForAPI, processAPIResponse } from '../../utils/dateUtils';
+import { formatWithTimeZone, prepareDataForAPI, convertDateStrToKST, TIME_ZONES } from '../../utils/dateUtils';
 import { 
   API_BASE_URL, 
-  API_ENDPOINTS, 
   CASE_CONVERSION_CONFIG, 
   PUBLIC_ENDPOINTS,
   TOKEN_REFRESH_CONFIG
@@ -40,10 +39,22 @@ const cache = new Map();
 // 변환에서 제외할 필드 목록 (config에서 가져옴)
 const EXCLUDED_FIELDS = CASE_CONVERSION_CONFIG.EXCLUDED_FIELDS;
 
+// 로그 출력에서 제외할 URL 패턴
+const URL_NO_LOG_PATTERNS = [
+  '/static/',
+  '/assets/',
+  '/health'
+];
+
+// 날짜 처리에서 제외할 URL 패턴
+const URL_NO_DATE_PROCESSING_PATTERNS = [
+  '/static/',
+  '/assets/'
+];
+
 // 로깅 제외할 엔드포인트 목록
 const EXCLUDED_LOG_ENDPOINTS = [
   '/notifications/unread/count',
-  '/health',
   '/user/status'
 ];
 
@@ -55,18 +66,15 @@ const DATE_PROCESSING_EXCLUDED_ENDPOINTS = [
   '/auth/register'
 ];
 
-// 날짜 필드 처리가 필요한지 확인하는 함수
-const shouldProcessDates = (url) => {
-  if (!url) return true;
-  
-  return !DATE_PROCESSING_EXCLUDED_ENDPOINTS.some(endpoint => 
-    url.includes(endpoint)
-  );
+// URL 패턴에 따라 로그 출력 여부 결정
+const isExcludedFromLogging = (url) => {
+  return URL_NO_LOG_PATTERNS.some(pattern => url.includes(pattern));
 };
 
-// 엔드포인트가 로깅 제외 대상인지 확인
-const isExcludedFromLogging = (url) => {
-  return EXCLUDED_LOG_ENDPOINTS.some(endpoint => url.includes(endpoint));
+// URL 패턴에 따라 날짜 처리 여부 결정
+const shouldProcessDates = (url) => {
+  // 제외 패턴과 일치하는 경우 날짜 처리하지 않음
+  return !URL_NO_DATE_PROCESSING_PATTERNS.some(pattern => url.includes(pattern));
 };
 
 // Request Interceptor
@@ -78,10 +86,10 @@ api.interceptors.request.use(
       
       if (shouldLog) {
         debugLog('=== Request Interceptor Debug [Start] ===');
-        debugLog('1. Initial Request:', {
+        debugLog('1. ======= API 요청 시작 =======', {
           url: config.url,
           method: config.method,
-          timestamp: formatWithTimeZone(new Date(), 'Asia/Seoul', DATE_FORMATS.API)
+          timestamp: formatWithTimeZone(new Date(), DATE_FORMATS.DISPLAY.FULL, TIME_ZONES.KST)
         });
       }
 
@@ -124,7 +132,7 @@ api.interceptors.request.use(
                 exp: payload.exp,
                 currentTime: now,
                 timeUntilExp: payload.exp - now,
-                currentTimeISO: formatWithTimeZone(new Date(), 'Asia/Seoul', DATE_FORMATS.API)
+                currentTimeISO: formatWithTimeZone(new Date(), DATE_FORMATS.DISPLAY.FULL, TIME_ZONES.KST)
               });
             }
             
@@ -300,7 +308,7 @@ api.interceptors.request.use(
           debugLog('Data:', config.data);
           debugLog('Params:', config.params);
         }
-        debugLog('Timestamp:', formatWithTimeZone(new Date(), 'Asia/Seoul', DATE_FORMATS.API));
+        debugLog('Timestamp:', formatWithTimeZone(new Date(), DATE_FORMATS.DISPLAY.FULL, TIME_ZONES.KST));
       }
 
       // GET 요청 캐싱
@@ -343,44 +351,28 @@ api.interceptors.response.use(
     const shouldLog = !isExcludedFromLogging(response.config.url);
     
     try {
-      // 응답 데이터 변환 (snake_case -> camelCase)
+      // 응답 데이터가 있는 경우에만 처리
       if (response.data) {
         // 응답 데이터 형식 확인 (배열 또는 객체)
         if (Array.isArray(response.data)) {
-          console.log('원본 응답 데이터 (배열):', JSON.stringify(response.data).substring(0, 200) + '...');
-          
           // 스네이크 케이스에서 카멜 케이스로 변환
-          const beforeSnakeToCamel = JSON.stringify(response.data);
           response.data = response.data.map(item => snakeToCamel(item, EXCLUDED_FIELDS));
-          const afterSnakeToCamel = JSON.stringify(response.data);
-          
-          // 날짜 필드 처리 전 데이터 구조 확인
-          console.log('processAPIResponse 호출 전 (배열) 첫 번째 항목 키:', 
-            Array.isArray(response.data) && response.data.length > 0 
-              ? Object.keys(response.data[0]) 
-              : '빈 배열');
           
           // 날짜 필드 처리
           if (shouldProcessDates(response.config.url)) {
-            response.data = processAPIResponse(response.data);
+            response.data = convertDateStrToKST(response.data);
           }
         } else if (typeof response.data === 'object' && response.data !== null) {
-          
           // 스네이크 케이스에서 카멜 케이스로 변환
-          const beforeSnakeToCamel = JSON.stringify(response.data);
           response.data = snakeToCamel(response.data, EXCLUDED_FIELDS);
-          const afterSnakeToCamel = JSON.stringify(response.data);
-                    
-          // 날짜 필드 처리 전 데이터 구조 확인
-          console.log('processAPIResponse 호출 전 (객체) 키:', Object.keys(response.data));
-                    
+          
           // 날짜 필드 처리
           if (shouldProcessDates(response.config.url)) {
-            response.data = processAPIResponse(response.data);
+            response.data = convertDateStrToKST(response.data);
           }
         }
       }
-      
+
       // 디버깅 로그 (개발 환경에서만)
       if (shouldLog && process.env.NODE_ENV === 'development') {
         const requestTime = response.config.metadata?.requestTime;
@@ -470,7 +462,7 @@ api.interceptors.response.use(
         url: error?.config?.url || 'unknown',
         method: error?.config?.method || 'unknown',
         status: error?.response?.status || 'unknown',
-        timestamp: formatWithTimeZone(new Date(), 'Asia/Seoul', DATE_FORMATS.API)
+        timestamp: formatWithTimeZone(new Date(), DATE_FORMATS.DISPLAY.FULL, TIME_ZONES.KST)
       };
       
       console.error('%c 🔴 Response Error', 'background: #f44336; color: white; padding: 2px 4px; border-radius: 2px;', 'Error Config:', errorInfo);

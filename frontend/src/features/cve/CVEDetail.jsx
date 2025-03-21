@@ -65,7 +65,7 @@ import { useUpdateCVEField } from '../../api/hooks/useCVEMutation';
 import { useAuth } from '../../contexts/AuthContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { QUERY_KEYS } from '../../api/queryKeys';
-import { formatForDisplay } from '../../utils/dateUtils';
+import { formatDate, DATE_FORMATS, isValid } from '../../utils/dateUtils';
 
 // 활성 댓글 개수 계산
 const countActiveComments = (comments) => {
@@ -704,6 +704,20 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     return true; // 현재는 항상 true 반환, 필요시 권한 로직 구현
   }, []);
 
+  // 날짜 포맷팅 함수
+  const formatDateDisplay = (dateValue) => {
+    // 디버깅 코드 추가
+    console.log('formatDateDisplay 입력값:', {
+      값: dateValue,
+      타입: typeof dateValue,
+      instanceof_Date: dateValue instanceof Date,
+      toString: dateValue ? dateValue.toString() : null,
+      isValid: dateValue ? isValid(new Date(dateValue)) : false
+    });
+    
+    return formatDate(dateValue, DATE_FORMATS.DISPLAY.DEFAULT);
+  };
+
   // 타이틀 업데이트 핸들러
   const handleTitleUpdate = useCallback(async (newTitle) => {
     if (!cveData || !propsCveId || newTitle === cveData.title) return;
@@ -891,18 +905,40 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
   // 날짜 필드 검증을 위한 useEffect
   useEffect(() => {
     if (cveData) {
+      // cveData 전체 구조 로깅
+      console.log('CVEDetail - cveData 전체 구조:', {
+        ...cveData,
+        _id: cveData._id,
+        cveId: cveData.cveId,
+        createdAt: cveData.createdAt,
+        lastModifiedAt: cveData.lastModifiedAt,
+        createdAtType: typeof cveData.createdAt,
+        lastModifiedAtType: typeof cveData.lastModifiedAt
+      });
+      
       // 날짜 필드 로깅 및 검증
-      const dateFields = ['createdAt', 'lastModifiedDate', 'publishedDate', 'assigner'];
+      const dateFields = ['createdAt', 'lastModifiedAt'];
       dateFields.forEach(field => {
         if (field in cveData) {
           console.log(`CVEDetail: ${field} 필드 값:`, cveData[field], typeof cveData[field]);
           
           // 빈 객체 또는 빈 문자열 검사
-          if (cveData[field] === null || 
-              cveData[field] === undefined || 
-              (typeof cveData[field] === 'object' && Object.keys(cveData[field]).length === 0) ||
-              (typeof cveData[field] === 'string' && !cveData[field].trim())) {
-            console.warn(`CVEDetail: ${field} 필드가 비어있습니다. 이는 데이터 불일치를 나타낼 수 있습니다.`);
+          if (!cveData[field] || 
+              cveData[field] === null || 
+              (typeof cveData[field] === 'object' && Object.keys(cveData[field]).length === 0)) {
+            console.log(`CVEDetail: ${field} 필드가 비어있습니다.`);
+          } else {
+            // 시간 변환 테스트
+            try {
+              const formattedDate = formatDateDisplay(cveData[field]);
+              console.log(`CVEDetail: ${field} 필드 변환 결과:`, {
+                원본: cveData[field],
+                변환결과: formattedDate,
+                타입: typeof cveData[field]
+              });
+            } catch (error) {
+              console.error(`CVEDetail: ${field} 필드 변환 오류:`, error);
+            }
           }
         } else {
           console.warn(`CVEDetail: ${field} 필드가 없습니다.`);
@@ -996,23 +1032,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
               <Chip
                 size="small"
                 icon={<HistoryIcon fontSize="small" />}
-                label={`생성: ${(() => {
-                  console.log('CVEDetail 값:', cveData);
-                  // 빈 객체인 경우 처리
-                  if (!cveData.createdAt || 
-                      cveData.createdAt === null || 
-                      (typeof cveData.createdAt === 'object' && Object.keys(cveData.createdAt).length === 0) ||
-                      cveData.createdAt === '') {
-                    console.log('CVEDetail - createdAt이 비어있거나 null입니다.');
-                    return '-';
-                  }
-                  try {
-                    return formatForDisplay(cveData.createdAt);
-                  } catch (error) {
-                    console.error('CVEDetail - createdAt 포맷팅 오류:', error);
-                    return '-';
-                  }
-                })()}`}
+                label={`생성: ${formatDateDisplay(cveData.createdAt)}`}
                 variant="outlined"
                 sx={{ fontSize: '0.7rem', height: 24 }}
               />
@@ -1021,22 +1041,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
               <Chip
                 size="small"
                 icon={<HistoryIcon fontSize="small" />}
-                label={`수정: ${(() => {
-                  // 빈 객체인 경우 처리
-                  if (!cveData.lastModifiedDate || 
-                      cveData.lastModifiedDate === null || 
-                      (typeof cveData.lastModifiedDate === 'object' && Object.keys(cveData.lastModifiedDate).length === 0) ||
-                      cveData.lastModifiedDate === '') {
-                    console.log('CVEDetail - lastModifiedDate가 비어있거나 null입니다.',cveData);
-                    return '-';
-                  }
-                  try {
-                    return formatForDisplay(cveData.lastModifiedDate);
-                  } catch (error) {
-                    console.error('CVEDetail - lastModifiedDate 포맷팅 오류:', error);
-                    return '-';
-                  }
-                })()}`}
+                label={`수정: ${formatDateDisplay(cveData.lastModifiedAt)}`}
                 variant="outlined"
                 sx={{ fontSize: '0.7rem', height: 24 }}
               />

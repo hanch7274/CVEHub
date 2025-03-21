@@ -22,8 +22,8 @@ class CommentService:
         """Comment 객체를 JSON 직렬화 가능한 딕셔너리로 변환합니다."""
         comment_dict = comment.dict()
         comment_dict["created_at"] = comment.created_at.isoformat()
-        if comment.updated_at:
-            comment_dict["updated_at"] = comment.updated_at.isoformat()
+        if comment.last_modified_at:
+            comment_dict["last_modified_at"] = comment.last_modified_at.isoformat()
         return comment_dict
     
     @staticmethod
@@ -164,7 +164,7 @@ class CommentService:
                 username=user.username,
                 parent_id=PydanticObjectId(parent_id) if parent_id else None,
                 created_at=now,
-                updated_at=None,
+                last_modified_at=None,
                 is_deleted=False
             )
             

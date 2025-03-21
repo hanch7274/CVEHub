@@ -445,7 +445,7 @@ export const normalizeKeys = (data, direction = 'toBackend') => {
   const keyMap = {
     cveId: 'cve_id',
     createdAt: 'created_at',
-    updatedAt: 'updated_at',
+    lastModifiedAt: 'last_modified_at',
     // 기타 필드 매핑
   };
   

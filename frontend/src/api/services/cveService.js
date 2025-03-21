@@ -2,10 +2,20 @@
 import api from '../config/axios';
 import { CASE_CONVERSION_CONFIG } from '../../config';
 import logger from '../../utils/logging';
-import { camelToSnake, snakeToCamel } from '../../utils/caseConverter';
+import { camelToSnake } from '../../utils/caseConverter';
 
 // 변환에서 제외할 필드 목록
 const EXCLUDED_FIELDS = CASE_CONVERSION_CONFIG.EXCLUDED_FIELDS;
+
+// 날짜 필드 목록 (로깅용)
+const DATE_FIELDS = [
+  'created_at', 'createdAt', 
+  'last_modified_at', 'lastModifiedAt',
+  'updated_at', 'updatedAt',
+  'published_date', 'publishedDate',
+  'expiration_date', 'expirationDate',
+  'timestamp', 'date'
+];
 
 /**
  * CVE 데이터를 관리하는 서비스 클래스
@@ -128,7 +138,10 @@ class CVEService {
         dataSize: JSON.stringify(response.data).length
       });
       
-      return response.data;
+      // 데이터는 이미 axios 인터셉터에서 처리됨
+      const processedData = response.data;
+      
+      return processedData;
     } catch (error) {
       logger.error('cveService', 'CVE 상세 정보 조회 실패', { 
         cveId, 
@@ -642,6 +655,5 @@ class CVEService {
   }
 }
 
-// 싱글톤 인스턴스 생성 및 내보내기
-const cveService = new CVEService();
-export default cveService;
+// cveService 싱글톤 객체 생성 및 내보내기
+export default new CVEService();

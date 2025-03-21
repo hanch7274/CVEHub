@@ -16,7 +16,7 @@ class CVEListItem(BaseModel):
     title: Optional[str] = None
     status: str
     created_at: datetime
-    last_modified_date: Optional[datetime] = None
+    last_modified_at: Optional[datetime] = None
     severity: Optional[str] = None
 
 class CVEListResponse(BaseModel):
@@ -35,7 +35,7 @@ class CVEDetailResponse(BaseModel):
     status: str
     severity: Optional[str] = None
     created_at: datetime
-    last_modified_date: Optional[datetime] = None
+    last_modified_at: Optional[datetime] = None
     references: List[Reference] = []
     pocs: List[PoCBase] = []
     snort_rules: List[SnortRuleBase] = []

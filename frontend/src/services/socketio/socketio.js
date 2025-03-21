@@ -1,11 +1,11 @@
 import { io } from 'socket.io-client';
-import { SOCKET_EVENTS, SOCKET_STATE, WS_LOG_CONTEXT, WS_DIRECTION, WS_STATUS } from './constants';
+import { SOCKET_EVENTS, SOCKET_STATE, WS_DIRECTION, WS_STATUS } from './constants';
 import logger, { LOG_LEVEL } from '../../utils/logging';
 import { getAccessToken } from '../../utils/storage/tokenStorage';
 import { getSocketIOURL } from './utils';
 import { SOCKET_IO_PATH, CASE_CONVERSION_CONFIG, SOCKET_CONFIG } from '../../config';
 import { snakeToCamel, camelToSnake } from '../../utils/caseConverter';
-import { getUTCTimestamp, DATE_FORMATS, formatWithTimeZone } from '../../utils/dateUtils';
+import { getUTCTimestamp, DATE_FORMATS, formatWithTimeZone, TIME_ZONES } from '../../utils/dateUtils';
 
 // 로그 레벨 설정 (개발 환경에서 디버그 레벨로 설정)
 if (process.env.NODE_ENV === 'development') {
@@ -52,8 +52,8 @@ class SocketIOService {
             exp: decodedPayload.exp,
             iat: decodedPayload.iat,
             sub: decodedPayload.sub,
-            expiresIn: decodedPayload.exp ? formatWithTimeZone(new Date(decodedPayload.exp * 1000), 'Asia/Seoul', DATE_FORMATS.API) : 'unknown',
-            currentTime: formatWithTimeZone(new Date(), 'Asia/Seoul', DATE_FORMATS.API),
+            expiresIn: decodedPayload.exp ? formatWithTimeZone(new Date(decodedPayload.exp * 1000), DATE_FORMATS.DISPLAY.FULL, TIME_ZONES.KST) : 'unknown',
+currentTime: formatWithTimeZone(new Date(), DATE_FORMATS.DISPLAY.FULL, TIME_ZONES.KST),
             timeLeft: decodedPayload.exp ? Math.floor((decodedPayload.exp * 1000 - Date.now()) / 1000) + '초' : 'unknown'
           });
         } else {
@@ -349,7 +349,7 @@ class SocketIOService {
           console.log('%c 📨 크롤러 업데이트 변환 데이터', 'background: #2196f3; color: white;', convertedData);
 
           // 크롤러 업데이트 이벤트 처리 - 중앙화된 처리
-          if (convertedData && (convertedData.data && convertedData.data.type === SOCKET_EVENTS.CRAWLER_UPDATE_PROGRESS || convertedData.type === SOCKET_EVENTS.CRAWLER_UPDATE_PROGRESS)) {
+          if (convertedData && ((convertedData.data && convertedData.data.type === SOCKET_EVENTS.CRAWLER_UPDATE_PROGRESS) || convertedData.type === SOCKET_EVENTS.CRAWLER_UPDATE_PROGRESS)) {
             
             // 중첩된 데이터 구조 확인 및 처리
             const targetData = convertedData.data && convertedData.data.data 

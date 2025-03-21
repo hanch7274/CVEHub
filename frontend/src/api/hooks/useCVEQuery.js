@@ -5,12 +5,12 @@ import logger from '../../utils/logging';
 import { QUERY_KEYS } from '../queryKeys';
 import { useSocketIO } from '../../contexts/SocketIOContext';
 import { SOCKET_EVENTS } from '../../services/socketio/constants';
+import api from '../config/axios';  // axios 인스턴스 경로 수정
 
 // 이벤트 이름 상수 추가 (SOCKET_EVENTS에 없는 이벤트 이름)
 const SUBSCRIPTION_EVENTS = {
   SUBSCRIPTION_ERROR: 'subscription:error',
   UNSUBSCRIPTION_ERROR: 'unsubscription:error'
-  // SUBSCRIBE_CVES와 UNSUBSCRIBE_CVES는 SOCKET_EVENTS로 이동
 };
 
 /**
@@ -387,7 +387,7 @@ export const useCVESubscription = (cveId) => {
   const handleSubscriptionUpdated = useCallback((data) => {
     if (!data || !data.cveId || data.cveId !== cveId) return;
     
-    logger.info(`[useCVESubscription] 구독자 목록 업데이트: ${data.cveId}`, data.subscribers);
+    logger.info(`[useCVESubscription] 구독자 목록 업데이트: ${data.cveId}`, data);
     setSubscribers(data.subscribers || []);
     
     // 사용자가 현재 구독 목록에 있는지 확인
@@ -699,6 +699,32 @@ export const useTotalCVECount = (options = {}) => {
   });
 };
 
+/**
+ * CVE 통계 정보를 가져오는 훅
+ * 
+ * @param {Object} options - react-query 옵션
+ * @returns {Object} 쿼리 결과 객체
+ */
+export const useCVEStats = (options = {}) => {
+  return useQuery({
+    queryKey: QUERY_KEYS.CVE.stats(),
+    queryFn: async () => {
+      try {
+        console.log('CVE 통계 데이터 요청 중...');
+        const response = await api.get('/cves/stats');
+        console.log('CVE 통계 데이터 응답:', response.data);
+        return response.data;
+      } catch (error) {
+        console.error('CVE 통계 데이터 요청 오류:', error);
+        throw error;
+      }
+    },
+    staleTime: 5 * 60 * 1000, // 5분
+    refetchOnWindowFocus: false,
+    ...options
+  });
+};
+
 // 모든 CVE 관련 훅을 기본 내보내기로 묶어서 제공
 export default {
   useCVEList,
@@ -709,5 +735,6 @@ export default {
   useCVESubscription,
   handleCVESubscriptionUpdate,
   setupCVESubscriptions,
-  useTotalCVECount
+  useTotalCVECount,
+  useCVEStats
 };

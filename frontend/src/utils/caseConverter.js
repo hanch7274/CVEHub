@@ -1,5 +1,3 @@
-import { CASE_CONVERSION_CONFIG } from '../config';
-
 /**
  * 스네이크 케이스에서 카멜 케이스로 변환
  * @param {*} data 변환할 데이터
@@ -11,32 +9,21 @@ import { CASE_CONVERSION_CONFIG } from '../config';
 export const snakeToCamel = (data, options = {}) => {
   const { 
     isTopLevel = true, 
-    excludeFields = CASE_CONVERSION_CONFIG.EXCLUDED_FIELDS || []
+    excludeFields = []
   } = typeof options === 'boolean' ? { isTopLevel: options } : options;
   
-  // 로깅 함수 - 디버깅 목적
-  const logDebug = (message, data) => {
-    if (isTopLevel) {
-      console.log(`[CaseConverter] ${message}`, data);
-    }
-  };
-  
-  // null이나 undefined인 경우 그대로 반환
+  // null 또는 undefined인 경우 그대로 반환
   if (data === null || data === undefined) {
-    logDebug('null 또는 undefined 데이터 반환', data);
     return data;
   }
-
-  // 배열인 경우 각 항목에 대해 재귀적으로 변환
+  
+  // 배열인 경우 각 요소를 재귀적으로 변환
   if (Array.isArray(data)) {
-    const result = data.map(item => snakeToCamel(item, { isTopLevel: false, excludeFields }));
-    logDebug('배열 변환 완료', { length: result.length, sample: result.slice(0, 2) });
-    return result;
+    return data.map(item => snakeToCamel(item, { isTopLevel: false, excludeFields }));
   }
-
+  
   // 객체가 아닌 경우 그대로 반환
   if (typeof data !== 'object') {
-    logDebug('객체가 아닌 데이터 반환', { type: typeof data, value: data });
     return data;
   }
 
@@ -47,15 +34,32 @@ export const snakeToCamel = (data, options = {}) => {
     // 제외 필드 목록에 있는 경우 변환하지 않음
     const shouldConvert = !excludeFields.includes(key);
     
+    // 이미 카멜 케이스인 경우 변환하지 않음
+    const isAlreadyCamel = !key.includes('_');
+    
     // 키 변환 (snake_case -> camelCase)
-    const convertedKey = shouldConvert ? key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase()) : key;
-        
-    // 값이 객체나 배열인 경우 재귀적으로 변환
-    result[convertedKey] = typeof value === 'object' && value !== null
-      ? snakeToCamel(value, { isTopLevel: false, excludeFields })
-      : value;
+    const convertedKey = shouldConvert && !isAlreadyCamel 
+      ? key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase()) 
+      : key;
+    
+    // 값 처리
+    let processedValue = value;
+    
+    // null 또는 undefined인 경우 그대로 사용
+    if (value === null || value === undefined) {
+      processedValue = value;
+    }
+    // 날짜 필드이고 빈 객체인 경우 null로 변환 (특수 처리)
+    else if ((key === 'created_at' || key === 'last_modified_at' || key === 'createdAt' || key === 'lastModifiedAt') &&
+        typeof value === 'object' && Object.keys(value).length === 0) {
+      processedValue = null;
+    } else if (typeof value === 'object') {
+      // 일반적인 객체나 배열인 경우 재귀적으로 변환
+      processedValue = snakeToCamel(value, { isTopLevel: false, excludeFields });
+    }
+    
+    result[convertedKey] = processedValue;
   });
-  
   
   return result;
 };
@@ -71,39 +75,21 @@ export const snakeToCamel = (data, options = {}) => {
 export const camelToSnake = (data, options = {}) => {
   const { 
     isTopLevel = true, 
-    excludeFields = CASE_CONVERSION_CONFIG.EXCLUDED_FIELDS || [] 
+    excludeFields = [] 
   } = typeof options === 'boolean' ? { isTopLevel: options } : options;
-  
-  // 로깅 함수 - 디버깅 목적
-  const logDebug = (message, data) => {
-    if (isTopLevel) {
-      console.log(`[CaseConverter] ${message}`, data);
-    }
-  };
-  
-  logDebug('변환 시작 (camelCase -> snake_case)', {
-    dataType: data === null ? 'null' : typeof data,
-    isArray: Array.isArray(data),
-    hasData: data !== null && data !== undefined,
-    excludeFields
-  });
   
   // null이나 undefined인 경우 그대로 반환
   if (data === null || data === undefined) {
-    logDebug('null 또는 undefined 데이터 반환', data);
     return data;
   }
 
   // 배열인 경우 각 항목에 대해 재귀적으로 변환
   if (Array.isArray(data)) {
-    const result = data.map(item => camelToSnake(item, { isTopLevel: false, excludeFields }));
-    logDebug('배열 변환 완료', { length: result.length, sample: result.slice(0, 2) });
-    return result;
+    return data.map(item => camelToSnake(item, { isTopLevel: false, excludeFields }));
   }
 
   // 객체가 아닌 경우 그대로 반환
   if (typeof data !== 'object') {
-    logDebug('객체가 아닌 데이터 반환', { type: typeof data, value: data });
     return data;
   }
 
@@ -114,17 +100,24 @@ export const camelToSnake = (data, options = {}) => {
     // 제외 필드 목록에 있는 경우 변환하지 않음
     const shouldConvert = !excludeFields.includes(key);
     
+    // 이미 스네이크 케이스인 경우 변환하지 않음
+    const isAlreadySnake = key.includes('_');
+    
     // 키 변환 (camelCase -> snake_case)
-    const convertedKey = shouldConvert 
+    const convertedKey = shouldConvert && !isAlreadySnake
       ? key.replace(/([A-Z])/g, '_$1').toLowerCase() 
       : key;
     
     // 값이 객체나 배열인 경우 재귀적으로 변환
-    result[convertedKey] = typeof value === 'object' && value !== null
-      ? camelToSnake(value, { isTopLevel: false, excludeFields })
-      : value;
+    let processedValue = value;
+    if (value === null || value === undefined) {
+      processedValue = value;
+    } else if (typeof value === 'object') {
+      processedValue = camelToSnake(value, { isTopLevel: false, excludeFields });
+    }
+    
+    result[convertedKey] = processedValue;
   });
-  
   
   return result;
 };

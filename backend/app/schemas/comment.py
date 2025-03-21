@@ -34,7 +34,7 @@ class CommentResponse(BaseModel):
     user_id: PydanticObjectId = Field(..., description="작성자 ID")
     parent_id: Optional[PydanticObjectId] = Field(None, description="부모 댓글 ID")
     created_at: datetime = Field(..., description="생성 시간")
-    updated_at: Optional[datetime] = Field(None, description="수정 시간")
+    last_modified_at: Optional[datetime] = Field(None, description="수정 시간")
     is_deleted: bool = Field(False, description="삭제 여부")
 
     class Config:

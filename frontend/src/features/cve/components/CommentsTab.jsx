@@ -23,19 +23,6 @@ import logger from '../../../utils/logging';
 const extractMentions = (content) =>
   content.match(/@(\w+)/g)?.map(mention => mention.substring(1)) || [];
 
-// 시간 포맷팅
-const formatDate = (dateString) => {
-  if (!dateString) return '';
-  try {
-    // KST 시간대로 변환 (UTC+9)
-    const date = new Date(dateString);
-    return formatDistanceToNow(date, { addSuffix: true, locale: ko });
-  } catch (error) {
-    console.error('Error formatting date:', error);
-    return dateString;
-  }
-};
-
 const CommentsTab = React.memo(({
   cve,
   onUpdate,
@@ -323,7 +310,7 @@ const CommentsTab = React.memo(({
     try {
       setLoading(true);
       // CVE detail에 이미 comments가 포함되어 있으므로 별도 요청 제거
-      const organized = organizeComments(cve.comments || []);
+      organizeComments(cve.comments || []);
       const currentActiveCount = (cve.comments || []).filter(comment => !comment.isDeleted).length;
       onCommentCountChange?.(currentActiveCount);
     } catch (error) {
@@ -527,7 +514,7 @@ const CommentsTab = React.memo(({
       
       return prevComment.id !== nextComment.id || 
              prevComment.content !== nextComment.content ||
-             prevComment.updatedAt !== nextComment.updatedAt ||
+             prevComment.lastModifiedAt !== nextComment.lastModifiedAt ||
              prevComment.isDeleted !== nextComment.isDeleted;
     });
   

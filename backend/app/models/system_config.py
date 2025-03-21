@@ -12,7 +12,7 @@ class SystemConfig(Document):
     
     key: str = Field(..., description="설정 키")
     value: Dict = Field(default={}, description="설정 값 (딕셔너리 형태)")
-    updated_at: datetime = Field(default_factory=datetime.now, description="마지막 업데이트 시간")
+    last_modified_at: datetime = Field(default_factory=datetime.now, description="마지막 업데이트 시간")
     
     class Settings:
         name = "system_configs"
@@ -51,7 +51,7 @@ class SystemConfig(Document):
             
             # 업데이트 시간 저장
             config.value[crawler_type] = update_time.isoformat()
-            config.updated_at = datetime.now()
+            config.last_modified_at = datetime.now()
             
             await config.save()
             return config.value

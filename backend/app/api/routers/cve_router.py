@@ -172,6 +172,32 @@ async def get_cve_list(
             detail=f"CVE 목록 조회 중 오류가 발생했습니다: {str(e)}"
         )
 
+# ----- CVE 통계 API 엔드포인트 -----
+
+@router.get("/stats", response_model=Dict[str, int])
+async def get_cve_stats(
+    cve_service: CVEService = Depends(get_cve_service)
+):
+    """CVE 통계 정보를 가져옵니다."""
+    try:
+        logger.info("CVE 통계 정보 요청")
+        
+        # 통계 계산
+        stats = await cve_service.get_cve_stats()
+        
+        logger.info("CVE 통계 정보 제공 완료")
+        return stats
+        
+    except Exception as e:
+        logger.error(f"CVE 통계 조회 중 오류 발생: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail="CVE 통계 조회 중 오류가 발생했습니다."
+        )
+
+# ----- CVE 상세 조회 API 엔드포인트 -----
+
 @router.get("/{cve_id}", response_model=CVEDetailResponse)
 async def get_cve_by_id(
     cve_id: str,
@@ -251,8 +277,8 @@ async def head_cve(
         response = Response()
         
         # Last-Modified 헤더 설정
-        if 'last_modified_date' in cve and cve['last_modified_date']:
-            last_modified = cve['last_modified_date'].strftime("%a, %d %b %Y %H:%M:%S GMT")
+        if 'last_modified_at' in cve and cve['last_modified_at']:
+            last_modified = cve['last_modified_at'].strftime("%a, %d %b %Y %H:%M:%S GMT")
             response.headers["Last-Modified"] = last_modified
         
         # ETag 헤더 설정 (선택 사항)
@@ -613,65 +639,6 @@ async def bulk_upsert_cves(
             detail=f"CVE 대량 업서트 중 오류가 발생했습니다: {str(e)}"
         )
 
-# ----- WebSocket 알림 전송 유틸리티 함수 -----
-
-async def send_cve_notification(type: str, cve: Optional[Union[CVEModel, Dict[str, Any]]] = None, cve_id: Optional[str] = None, message: Optional[str] = None):
-    """WebSocket을 통해 CVE 관련 알림을 전송합니다."""
-    try:
-        if type == "add" or type == "update":
-            if cve:
-                # cve_id 추출 (객체 또는 딕셔너리에서)
-                if hasattr(cve, "cve_id"):
-                    # CVEModel 객체인 경우
-                    notification_cve_id = cve.cve_id
-                    cve_data = json.loads(json.dumps(cve.dict(), cls=DateTimeEncoder))
-                elif isinstance(cve, dict) and "cve_id" in cve:
-                    # 딕셔너리인 경우
-                    notification_cve_id = cve["cve_id"]
-                    cve_data = json.loads(json.dumps(cve, cls=DateTimeEncoder))
-                else:
-                    # cve_id를 직접 사용
-                    notification_cve_id = cve_id
-                    cve_data = cve
-                
-                data = {
-                    "event": f"cve_{type}d",  # "cve_added" 또는 "cve_updated"
-                    "cve_id": notification_cve_id,
-                    "data": cve_data,
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-                if type == "add":
-                    message_type = WSMessageType.CVE_CREATED
-                else:
-                    message_type = WSMessageType.CVE_UPDATED
-                    
-                await socketio_manager.broadcast_cve_update(
-                    cve_id=data["cve_id"],
-                    data=data,
-                    event_type=message_type
-                )
-                logger.info(f"Sent WebSocket notification: {type} for CVE {data['cve_id']}")
-                
-        elif type == "delete":
-            data = {
-                "event": "cve_deleted",
-                "cve_id": cve_id,
-                "message": message or f"CVE {cve_id} deleted",
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            await socketio_manager.broadcast_cve_update(
-                cve_id=cve_id,
-                data=data,
-                event_type=WSMessageType.CVE_DELETED
-            )
-            logger.info(f"Sent WebSocket notification: delete for CVE {cve_id}")
-            
-    except Exception as e:
-        logger.error(f"Error sending WebSocket notification: {str(e)}")
-        logger.error(traceback.format_exc())
-
 # ----- 관리자 전용 API 엔드포인트 -----
 
 @router.post("/admin/check-empty-date-fields", response_model=dict)
@@ -748,3 +715,62 @@ async def check_empty_date_fields_sync(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"빈 날짜 필드 검사 작업 중 오류가 발생했습니다: {str(e)}"
         )
+
+# ----- WebSocket 알림 전송 유틸리티 함수 -----
+
+async def send_cve_notification(type: str, cve: Optional[Union[CVEModel, Dict[str, Any]]] = None, cve_id: Optional[str] = None, message: Optional[str] = None):
+    """WebSocket을 통해 CVE 관련 알림을 전송합니다."""
+    try:
+        if type == "add" or type == "update":
+            if cve:
+                # cve_id 추출 (객체 또는 딕셔너리에서)
+                if hasattr(cve, "cve_id"):
+                    # CVEModel 객체인 경우
+                    notification_cve_id = cve.cve_id
+                    cve_data = json.loads(json.dumps(cve.dict(), cls=DateTimeEncoder))
+                elif isinstance(cve, dict) and "cve_id" in cve:
+                    # 딕셔너리인 경우
+                    notification_cve_id = cve["cve_id"]
+                    cve_data = json.loads(json.dumps(cve, cls=DateTimeEncoder))
+                else:
+                    # cve_id를 직접 사용
+                    notification_cve_id = cve_id
+                    cve_data = cve
+                
+                data = {
+                    "event": f"cve_{type}d",  # "cve_added" 또는 "cve_updated"
+                    "cve_id": notification_cve_id,
+                    "data": cve_data,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                if type == "add":
+                    message_type = WSMessageType.CVE_CREATED
+                else:
+                    message_type = WSMessageType.CVE_UPDATED
+                    
+                await socketio_manager.broadcast_cve_update(
+                    cve_id=data["cve_id"],
+                    data=data,
+                    event_type=message_type
+                )
+                logger.info(f"Sent WebSocket notification: {type} for CVE {data['cve_id']}")
+                
+        elif type == "delete":
+            data = {
+                "event": "cve_deleted",
+                "cve_id": cve_id,
+                "message": message or f"CVE {cve_id} deleted",
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            await socketio_manager.broadcast_cve_update(
+                cve_id=cve_id,
+                data=data,
+                event_type=WSMessageType.CVE_DELETED
+            )
+            logger.info(f"Sent WebSocket notification: delete for CVE {cve_id}")
+            
+    except Exception as e:
+        logger.error(f"Error sending WebSocket notification: {str(e)}")
+        logger.error(traceback.format_exc())

@@ -127,7 +127,7 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
             for comment in cve.comments:
                 if str(comment.id) == comment_id:
                     comment.content = comment_data.get("content")
-                    comment.updated_at = datetime.now()
+                    comment.last_modified_at = datetime.now()
                     await cve.save()
                     break
         return cve

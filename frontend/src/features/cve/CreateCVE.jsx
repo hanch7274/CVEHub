@@ -220,12 +220,12 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
     const cveWithDates = {
       ...cveData,
       createdAt: currentTime,
-      lastModifiedDate: currentTime,
+      lastModifiedAt: currentTime,
       publishedDate: currentTime
     };
     
     // 날짜 필드 검증
-    const dateFields = ['createdAt', 'lastModifiedDate', 'publishedDate'];
+    const dateFields = ['createdAt', 'lastModifiedAt', 'publishedDate'];
     let hasEmptyDateField = false;
     
     dateFields.forEach(field => {

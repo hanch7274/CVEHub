@@ -414,7 +414,7 @@ class BaseCrawlerService(ABC, LoggingMixin):
             # 저장할 정보 구성
             update_info = {
                 "crawler": self.crawler_id,
-                "updated_at": datetime.now().isoformat(),
+                "last_modified_at": datetime.now().isoformat(),
                 "count": len(updated_cves),
                 "severity_counts": severity_counts,
                 "samples": updated_cves[:10] if updated_cves else []  # 대표 샘플 10개만 저장
@@ -469,7 +469,7 @@ class BaseCrawlerService(ABC, LoggingMixin):
             # 시간 정보 설정
             now = get_utc_now()
             data["created_at"] = now
-            data["last_modified_date"] = now
+            data["last_modified_at"] = now
             data["created_by"] = creator
             data["last_modified_by"] = creator
             data["status"] = "신규등록"
@@ -512,7 +512,7 @@ class BaseCrawlerService(ABC, LoggingMixin):
             self.log_info(f"기존 CVE 업데이트: {cve_id}")
             
             # 업데이트 시간 설정
-            data["last_modified_date"] = get_utc_now()
+            data["last_modified_at"] = get_utc_now()
             data["last_modified_by"] = creator
             
             # 필드 제한된 패치 데이터 생성

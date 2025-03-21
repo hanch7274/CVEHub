@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Dict, Any
-from beanie import Document
+from typing import Optional, Dict, Any, List
+from beanie import Document, PydanticObjectId
 from pydantic import BaseModel, Field
 import pytz
 from zoneinfo import ZoneInfo
@@ -41,7 +41,7 @@ class Notification(Document):
 
     class Config:
         json_encoders = {
-            datetime: lambda dt: dt.isoformat()
+            datetime: lambda dt: dt.replace(tzinfo=ZoneInfo("UTC")).isoformat().replace('+00:00', 'Z') if dt else None
         }
 
     def dict(self, *args, **kwargs):

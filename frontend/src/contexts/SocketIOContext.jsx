@@ -2,12 +2,11 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { useQueryClient } from '@tanstack/react-query';
 import { useSnackbar } from 'notistack';
 import socketIOService from '../services/socketio/socketio';
-import { QUERY_KEYS } from '../api/queryKeys';
 import logger from '../utils/logging';
 import { SOCKET_STATE, SOCKET_EVENTS, WS_LOG_CONTEXT, WS_DIRECTION, WS_STATUS } from '../services/socketio/constants';
 import { getAccessToken } from '../utils/storage/tokenStorage';
 import { WS_BASE_URL, SOCKET_IO_PATH, SOCKET_CONFIG } from '../config';
-import { formatToKST, DATE_FORMATS, formatWithTimeZone } from '../utils/dateUtils';
+import { DATE_FORMATS, formatWithTimeZone, TIME_ZONES } from '../utils/dateUtils';
 
 // Context 생성
 const SocketIOContext = createContext(null);
@@ -101,20 +100,17 @@ const SocketIOProvider = ({ children }) => {
           const currentTime = Date.now();
           const timeLeft = Math.floor((expiresAt - currentTime) / 1000);
           
-          logger.info('SocketIOContext', '토큰 검증 결과', {
-            function: 'connect',
-            tokenLength: currentToken.length,
-            isExpired: expiresAt < currentTime,
-            timeLeft: timeLeft + '초',
-            expiresAt: formatWithTimeZone(new Date(expiresAt), 'Asia/Seoul', DATE_FORMATS.API),
-            currentTime: formatWithTimeZone(new Date(currentTime), 'Asia/Seoul', DATE_FORMATS.API)
+          console.debug('토큰 디버깅 정보', {
+            token: currentToken.substring(0, 15) + '...' + currentToken.substring(currentToken.length - 5),
+            expiresAt: formatWithTimeZone(new Date(expiresAt), DATE_FORMATS.DISPLAY.FULL, TIME_ZONES.KST),
+            currentTime: formatWithTimeZone(new Date(currentTime), DATE_FORMATS.DISPLAY.FULL, TIME_ZONES.KST)
           });
           
           if (expiresAt < currentTime) {
             logger.error('SocketIOContext', '토큰이 만료되어 웹소켓 연결을 시도하지 않습니다.', { 
               function: 'connect',
-              expiresAt: formatWithTimeZone(new Date(expiresAt), 'Asia/Seoul', DATE_FORMATS.API),
-              currentTime: formatWithTimeZone(new Date(currentTime), 'Asia/Seoul', DATE_FORMATS.API)
+              expiresAt: formatWithTimeZone(new Date(expiresAt), DATE_FORMATS.DISPLAY.FULL, TIME_ZONES.KST),
+              currentTime: formatWithTimeZone(new Date(currentTime), DATE_FORMATS.DISPLAY.FULL, TIME_ZONES.KST)
             });
             return;
           }

@@ -222,7 +222,7 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
             is_admin=current_user.is_admin,
             is_active=current_user.is_active,
             created_at=current_user.created_at,
-            updated_at=current_user.updated_at
+            last_modified_at=current_user.last_modified_at
         )
     except Exception as e:
         logger.error(f"사용자 정보 반환 중 오류 발생: {str(e)}")

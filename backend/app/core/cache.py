@@ -8,11 +8,9 @@ from datetime import datetime, timedelta
 import redis.asyncio as redis_async
 import logging
 from .config import get_settings
-import asyncio
-import traceback
-from .datetime_utils import DateTimeFormatter
 
 logger = logging.getLogger(__name__)
+import asyncio
 settings = get_settings()
 
 # Redis 연결 설정

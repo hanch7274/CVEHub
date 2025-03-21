@@ -3,6 +3,7 @@ from typing import Optional, List
 from beanie import Document, Link, PydanticObjectId
 from pydantic import BaseModel, Field
 from .user import User
+from zoneinfo import ZoneInfo
 
 class Comment(Document):
     id: Optional[PydanticObjectId] = Field(default_factory=PydanticObjectId, alias="_id")
@@ -13,13 +14,14 @@ class Comment(Document):
     depth: int = 0
     is_deleted: bool = False
     created_at: datetime
-    updated_at: Optional[datetime] = None
+    last_modified_at: Optional[datetime] = None
     mentions: List[str] = []
 
     class Config:
         populate_by_name = True
         json_encoders = {
-            PydanticObjectId: str
+            PydanticObjectId: str,
+            datetime: lambda dt: dt.replace(tzinfo=ZoneInfo("UTC")).isoformat().replace('+00:00', 'Z') if dt else None
         }
 
     @property

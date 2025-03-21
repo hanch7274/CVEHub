@@ -29,7 +29,7 @@ class UserResponse(UserBase):
     """사용자 정보 응답 스키마"""
     id: str
     created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    last_modified_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -41,7 +41,7 @@ class UserResponse(UserBase):
                 "is_active": True,
                 "is_admin": False,
                 "created_at": "2023-01-01T00:00:00Z",
-                "updated_at": "2023-01-01T00:00:00Z"
+                "last_modified_at": "2023-01-01T00:00:00Z"
             }
         }
 
@@ -50,7 +50,7 @@ class UserInDB(UserBase):
     id: str
     hashed_password: str
     created_at: datetime
-    updated_at: datetime
+    last_modified_at: datetime
 
     class Config:
         from_attributes = True

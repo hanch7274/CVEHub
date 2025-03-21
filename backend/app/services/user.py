@@ -55,7 +55,7 @@ class UserService:
                 is_admin=user.is_admin,
                 is_active=user.is_active,
                 created_at=user.created_at,
-                updated_at=user.updated_at
+                last_modified_at=user.last_modified_at
             )
             
             self.logger.info(f"사용자 인증 성공: {email}")
@@ -98,7 +98,7 @@ class UserService:
                 is_admin=getattr(user_data, 'is_admin', False),
                 is_active=True,
                 created_at=now,
-                updated_at=now
+                last_modified_at=now
             )
             
             await new_user.save()
@@ -111,7 +111,7 @@ class UserService:
                 is_admin=new_user.is_admin,
                 is_active=new_user.is_active,
                 created_at=new_user.created_at,
-                updated_at=new_user.updated_at
+                last_modified_at=new_user.last_modified_at
             )
         except Exception as e:
             self.logger.error(f"사용자 생성 중 오류 발생: {str(e)}")
@@ -135,7 +135,7 @@ class UserService:
                 is_admin=user.is_admin,
                 is_active=user.is_active,
                 created_at=user.created_at,
-                updated_at=user.updated_at
+                last_modified_at=user.last_modified_at
             )
         except Exception as e:
             self.logger.error(f"사용자 조회 중 오류 발생: {str(e)}")
@@ -159,7 +159,7 @@ class UserService:
                 is_admin=user.is_admin,
                 is_active=user.is_active,
                 created_at=user.created_at,
-                updated_at=user.updated_at
+                last_modified_at=user.last_modified_at
             )
         except Exception as e:
             self.logger.error(f"사용자 조회 중 오류 발생: {str(e)}")
@@ -184,7 +184,7 @@ class UserService:
                 update_data["hashed_password"] = self.get_password_hash(update_data.pop("password"))
             
             # 업데이트 시간 설정
-            update_data["updated_at"] = datetime.utcnow()
+            update_data["last_modified_at"] = datetime.utcnow()
             
             # 사용자 정보 업데이트
             await user.update({"$set": update_data})
@@ -200,7 +200,7 @@ class UserService:
                 is_admin=updated_user.is_admin,
                 is_active=updated_user.is_active,
                 created_at=updated_user.created_at,
-                updated_at=updated_user.updated_at
+                last_modified_at=updated_user.last_modified_at
             )
         except Exception as e:
             self.logger.error(f"사용자 정보 수정 중 오류 발생: {str(e)}")
@@ -282,7 +282,7 @@ class UserService:
                     is_admin=user.is_admin,
                     is_active=user.is_active,
                     created_at=user.created_at,
-                    updated_at=user.updated_at
+                    last_modified_at=user.last_modified_at
                 )
                 for user in users
             ]
@@ -364,7 +364,7 @@ class UserService:
                 is_admin=user.is_admin,
                 is_active=user.is_active,
                 created_at=user.created_at,
-                updated_at=user.updated_at
+                last_modified_at=user.last_modified_at
             )
         except Exception as e:
             self.logger.error(f"리프레시 토큰 검증 중 오류 발생: {str(e)}")

@@ -80,7 +80,7 @@ class CVEService:
                 "title": 1,
                 "status": 1,
                 "created_at": 1,
-                "last_modified_date": 1,
+                "last_modified_at": 1,
                 "description": 1,
                 "severity": 1,
             }
@@ -92,7 +92,7 @@ class CVEService:
                 skip=skip,
                 limit=limit,
                 sort=[
-                    ("last_modified_date", DESCENDING),
+                    ("last_modified_at", DESCENDING),
                     ("created_at", DESCENDING)
                 ]
             )
@@ -150,7 +150,7 @@ class CVEService:
             cve_dict = cve.dict()
             
             # 날짜 필드 로깅 (디버깅 용도)
-            date_fields = ["created_at", "last_modified_date"]
+            date_fields = ["created_at", "last_modified_at"]
             for field in date_fields:
                 if field in cve_dict:
                     logger.debug(f"CVE {cve_id}의 {field} 필드 값: {cve_dict[field]} (타입: {type(cve_dict[field]).__name__})")
@@ -189,7 +189,7 @@ class CVEService:
             cve_data["created_by"] = username
             cve_data["created_at"] = current_time
             cve_data["last_modified_by"] = username
-            cve_data["last_modified_date"] = current_time
+            cve_data["last_modified_at"] = current_time
             
             # 크롤러 정보 추가
             if is_crawler and crawler_name:
@@ -257,11 +257,11 @@ class CVEService:
                 
             # 업데이트 시간 설정
             current_time = get_utc_now()
-            update_data['last_modified_date'] = current_time
+            update_data['last_modified_at'] = current_time
             
             # 변경 기록 추적
             changes = []
-            excluded_fields = ['last_modified_date', '_id', 'id']
+            excluded_fields = ['last_modified_at', '_id', 'id']
             
             for field, new_value in update_data.items():
                 if field in excluded_fields:
@@ -481,7 +481,7 @@ class CVEService:
                 "cves_with_empty_fields": [],
                 "fields_empty": {
                     "created_at": 0,
-                    "last_modified_date": 0
+                    "last_modified_at": 0
                 }
             }
             
@@ -496,7 +496,7 @@ class CVEService:
                 
                 # 빈 필드 확인
                 empty_fields = []
-                date_fields = ["created_at", "last_modified_date"]
+                date_fields = ["created_at", "last_modified_at"]
                 
                 for field in date_fields:
                     # 필드가 없거나, None이거나, 빈 객체이거나, 빈 문자열인 경우
@@ -522,5 +522,59 @@ class CVEService:
             
         except Exception as e:
             logger.error(f"빈 날짜 필드 검사 작업 중 오류 발생: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+
+    async def get_cve_stats(self) -> Dict[str, int]:
+        """
+        CVE 통계 데이터를 계산합니다.
+        
+        Returns:
+            각종 통계 데이터를 포함한 딕셔너리
+        """
+        try:
+            logger.info("CVE 통계 데이터 계산 시작")
+            
+            # 모든 CVE 수 (MongoDB 쿼리 최적화 사용)
+            total_count = await self.repository.collection.count_documents({})
+            
+            # 심각도 높음 (High 또는 Critical)
+            high_severity_count = await self.repository.collection.count_documents({
+                "$or": [
+                    {"severity": {"$regex": "high", "$options": "i"}},
+                    {"severity": {"$regex": "critical", "$options": "i"}}
+                ]
+            })
+            
+            # 최근 7일 내 등록된 CVE
+            one_week_ago = get_utc_now() - timedelta(days=7)
+            new_last_week_count = await self.repository.collection.count_documents({
+                "created_at": {"$gte": one_week_ago}
+            })
+            
+            # 분석 중인 CVE
+            in_progress_count = await self.repository.collection.count_documents({
+                "status": "분석중"
+            })
+            
+            # 완료된 CVE
+            completed_count = await self.repository.collection.count_documents({
+                "status": "릴리즈 완료"
+            })
+            
+            # 결과 반환
+            stats = {
+                "totalCount": total_count,
+                "highSeverityCount": high_severity_count,
+                "newLastWeekCount": new_last_week_count,
+                "inProgressCount": in_progress_count,
+                "completedCount": completed_count
+            }
+            
+            logger.info(f"CVE 통계 데이터 계산 완료: {stats}")
+            return stats
+            
+        except Exception as e:
+            logger.error(f"CVE 통계 데이터 계산 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
             raise

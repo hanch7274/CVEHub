@@ -15,6 +15,7 @@ export const QUERY_KEYS = {
     details: () => [...QUERY_KEYS.CVE.all, 'detail'],
     detail: (id) => [...QUERY_KEYS.CVE.details(), id],
     totalCount: () => [...QUERY_KEYS.CVE.all, 'totalCount'],
+    stats: () => [...QUERY_KEYS.CVE.all, 'stats'],
   },
   
   // 사용자 관련 query keys

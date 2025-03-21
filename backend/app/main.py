@@ -11,6 +11,8 @@ from beanie import init_beanie
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 from zoneinfo import ZoneInfo
+import time
+import httpx
 
 from .models.user import User, RefreshToken
 from .models.cve_model import CVEModel
@@ -188,7 +190,14 @@ async def root():
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, datetime):
-            return obj.isoformat()
+            # UTC 시간대 정보를 명시적으로 추가하여 ISO 포맷으로 반환
+            if obj.tzinfo is None:
+                obj = obj.replace(tzinfo=ZoneInfo("UTC"))
+            # 항상 Z로 끝나는 ISO 형식으로 통일 (밀리초 포함)
+            iso_format = obj.isoformat().replace('+00:00', 'Z')
+            # 디버깅 로그 추가
+            print(f"CustomJSONEncoder: datetime 변환 - 원본: {obj}, 변환결과: {iso_format}")
+            return iso_format
         return super().default(obj)
 
 # FastAPI의 JSONResponse에 커스텀 인코더 적용

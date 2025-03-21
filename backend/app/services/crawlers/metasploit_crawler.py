@@ -127,7 +127,7 @@ class MetasploitCrawlerService(BaseCrawlerService):
                 'references': references,
                 'pocs': pocs,
                 'created_at': current_time,
-                'last_modified_date': current_time,
+                'last_modified_at': current_time,
                 'created_by': self.crawler_name
             }
         except Exception as e:
@@ -223,7 +223,7 @@ class MetasploitCrawlerService(BaseCrawlerService):
                     references=cve_data['references'],
                     pocs=cve_data['pocs'],
                     created_at=cve_data['created_at'],
-                    last_modified_date=cve_data['last_modified_date'],
+                    last_modified_at=cve_data['last_modified_at'],
                     created_by="Metasploit-Crawler",
                     modification_history=modification_history
                 )
@@ -241,8 +241,8 @@ class MetasploitCrawlerService(BaseCrawlerService):
                     if new_poc['url'] not in existing_poc_urls:
                         cve.pocs.append(new_poc)
                         
-                # last_modified_date 업데이트
-                cve.last_modified_date = cve_data['last_modified_date']
+                # last_modified_at 업데이트
+                cve.last_modified_at = cve_data['last_modified_at']
                 
             await cve.save()
             return True

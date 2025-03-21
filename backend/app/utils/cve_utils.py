@@ -110,7 +110,7 @@ def create_basic_cve_data(
         "status": "신규등록",  # 기본 상태
         "source": source,
         "created_at": now,
-        "last_modified_date": now,
+        "last_modified_at": now,
         "created_by": creator,
         "last_modified_by": creator,
         "modification_history": [initial_history]

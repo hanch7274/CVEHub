@@ -196,6 +196,14 @@ class NucleiCrawlerService(BaseCrawlerService):
             self.updated_cves = []
             total_count = len(cve_data.get('items', []))
             
+            # 처리 결과 통계 초기화
+            result = {
+                "added": 0,
+                "updated": 0,
+                "unchanged": 0,
+                "failed": 0
+            }
+            
             for idx, item in enumerate(cve_data.get('items', [])):
                 try:
                     # 진행률 계산 및 보고 (75% ~ 95%)

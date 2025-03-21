@@ -389,7 +389,7 @@ const Comment = React.memo(({
   // 최적화된 비교 로직
   return prevProps.comment.id === nextProps.comment.id &&
          prevProps.comment.content === nextProps.comment.content &&
-         prevProps.comment.updatedAt === nextProps.comment.updatedAt &&
+         prevProps.comment.lastModifiedAt === nextProps.comment.lastModifiedAt &&
          prevProps.comment.isDeleted === nextProps.comment.isDeleted &&
          prevProps.isEditing === nextProps.isEditing &&
          prevProps.replyMode === nextProps.replyMode;

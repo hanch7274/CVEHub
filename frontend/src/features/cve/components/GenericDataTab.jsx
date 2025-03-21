@@ -28,6 +28,7 @@ import { api } from '../../../utils/auth';
 import { useSnackbar } from 'notistack';
 import { SOCKET_EVENTS } from '../../../services/socketio/constants';
 import useWebSocketHook from '../../../api/hooks/useWebSocketHook';
+import { TIME_ZONES } from '../../../utils/dateUtils';
 
 /**
  * 재사용 가능한 데이터 탭 컴포넌트
@@ -47,7 +48,7 @@ const GenericDataTab = memo(({
   const queryClient = useQueryClient();
   
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [, setError] = useState(null);
   const [open, setOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
   const [newItem, setNewItem] = useState(tabConfig.defaultItem);
@@ -343,7 +344,10 @@ const GenericDataTab = memo(({
   };
 
   // 웹소켓 훅 사용
-  const { sendMessage } = useWebSocketHook(
+  const { 
+    // eslint-disable-next-line no-unused-vars
+    sendMessage 
+  } = useWebSocketHook(
     SOCKET_EVENTS.DATA_UPDATED,
     (data) => {
       // 이벤트 수신 시 처리 로직
@@ -482,7 +486,7 @@ const GenericDataTab = memo(({
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
                     {new Date(item.dateAdded).toLocaleString('ko-KR', { 
-                      timeZone: 'Asia/Seoul'
+                      timeZone: TIME_ZONES.DEFAULT
                     })}
                   </Typography>
                 </Box>
