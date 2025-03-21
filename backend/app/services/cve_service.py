@@ -12,6 +12,7 @@ import logging
 import traceback
 from pydantic import ValidationError
 import json
+from ..utils.datetime_utils import get_utc_now, format_datetime
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -22,32 +23,14 @@ class CVEService:
     def __init__(self):
         self.repository = CVERepository()
 
-    async def get_cves(
-        self, 
-        skip: int = 0, 
-        limit: int = 10,
-        status: Optional[str] = None
-    ) -> Tuple[List[CVEModel], int]:
-        """CVE 목록을 조회합니다."""
-        try:
-            if status:
-                cves = await self.repository.get_by_status(status, skip, limit)
-                total = await self.repository.count({"status": status})
-            else:
-                cves = await self.repository.get_all(skip, limit)
-                total = await self.repository.count()
-            return cves, total
-        except Exception as e:
-            logger.error(f"CVE 목록 조회 중 오류 발생: {str(e)}")
-            logger.error(traceback.format_exc())
-            raise
-
     async def get_cve_list(
         self,
         page: int = 1,
         limit: int = 10,
+        status: Optional[str] = None,
         severity: Optional[str] = None,
-        search: Optional[str] = None
+        search: Optional[str] = None,
+        skip: Optional[int] = None  # 호환성을 위한 파라미터
     ) -> Dict[str, Any]:
         """
         페이지네이션을 적용한 CVE 목록을 조회합니다.
@@ -55,8 +38,10 @@ class CVEService:
         Args:
             page: 페이지 번호 (1부터 시작)
             limit: 페이지당 항목 수
+            status: 상태 필터
             severity: 심각도 필터
             search: 검색어
+            skip: 직접 건너뛸 항목 수 지정 (page와 함께 사용하지 않음)
             
         Returns:
             Dict: {
@@ -67,11 +52,14 @@ class CVEService:
             }
         """
         try:
-            # skip 값 계산 (페이지 번호는 1부터 시작)
-            skip = (page - 1) * limit
+            logger.info(f"CVE 목록 조회 시작: page={page}, limit={limit}, status={status}, severity={severity}, search={search}, skip={skip}")
             
-            # 검색 쿼리 구성
+            # 쿼리 구성
             query = {}
+            
+            if status:
+                query["status"] = status
+                
             if severity:
                 query["severity"] = severity
                 
@@ -81,6 +69,10 @@ class CVEService:
                     {"title": {"$regex": search, "$options": "i"}},
                     {"description": {"$regex": search, "$options": "i"}}
                 ]
+            
+            # skip 값 계산 (직접 지정하지 않은 경우)
+            if skip is None:
+                skip = (page - 1) * limit
             
             # 필요한 필드만 선택
             projection = {
@@ -108,58 +100,51 @@ class CVEService:
             # 전체 개수 카운트
             total = await self.repository.count(query)
             
+            logger.debug(f"CVE 목록 조회 완료: 총 {total}개 중 {len(cves)}개 조회됨")
+            
             return {
                 "total": total,
                 "items": cves,
-                "page": page,
+                "page": page if skip is None else skip // limit + 1,
                 "limit": limit
             }
         except Exception as e:
             logger.error(f"CVE 목록 조회 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
             raise
-
-    async def get_cve(self, cve_id: str) -> Optional[CVEModel]:
+    
+    async def get_cve(
+        self, 
+        cve_id: str, 
+        as_model: bool = False,
+        include_details: bool = True
+    ) -> Union[Optional[CVEModel], Optional[Dict[str, Any]]]:
         """
-        CVE ID로 CVE를 조회합니다.
+        CVE ID로 CVE 정보를 조회합니다.
         
         Args:
             cve_id: 조회할 CVE ID
+            as_model: 모델 형태로 반환할지 여부 (True: CVEModel, False: Dict)
+            include_details: 상세 정보 포함 여부 (기본값: True)
             
         Returns:
-            CVE 모델 (없으면 None)
+            CVEModel 또는 Dict (없으면 None)
         """
         try:
-            logger.debug(f"CVE ID로 조회: {cve_id}")
+            logger.info(f"CVE '{cve_id}' 정보 조회 시작")
             
             # 대소문자 구분 없이 CVE ID로 조회
             cve = await self.repository.find_by_cve_id(cve_id)
             
-            if cve:
-                logger.debug(f"CVE 찾음: {cve.id}, {cve.cve_id}")
-            else:
-                logger.debug(f"CVE를 찾을 수 없음: {cve_id}")
-            
-            return cve
-        except Exception as e:
-            logger.error(f"CVE 조회 중 오류: {str(e)}")
-            return None
-            
-        
-    async def get_cve_detail(self, cve_id: str) -> Optional[Dict[str, Any]]:
-        """
-        CVE 상세 정보를 조회합니다.
-        
-        Args:
-            cve_id: 조회할 CVE ID
-            
-        Returns:
-            Dict: CVE 상세 정보 (없으면 None)
-        """
-        try:
-            cve = await self.get_cve(cve_id)
             if not cve:
+                logger.debug(f"CVE를 찾을 수 없음: {cve_id}")
                 return None
+                
+            logger.debug(f"CVE 찾음: {cve.id}, {cve.cve_id}")
+                
+            # 모델 그대로 반환 요청시
+            if as_model:
+                return cve
                 
             # 모델을 딕셔너리로 변환
             cve_dict = cve.dict()
@@ -168,21 +153,14 @@ class CVEService:
             date_fields = ["created_at", "last_modified_date"]
             for field in date_fields:
                 if field in cve_dict:
-                    logger.info(f"CVE {cve_id}의 {field} 필드 값: {cve_dict[field]} (타입: {type(cve_dict[field]).__name__})")
+                    logger.debug(f"CVE {cve_id}의 {field} 필드 값: {cve_dict[field]} (타입: {type(cve_dict[field]).__name__})")
                     
-                    # 빈 객체나 빈 문자열인 경우 로그만 남기고 값은 변경하지 않음
-                    if (isinstance(cve_dict[field], dict) and len(cve_dict[field]) == 0) or \
-                       (isinstance(cve_dict[field], str) and not cve_dict[field].strip()):
-                        logger.warning(f"CVE {cve_id}의 {field} 필드가 비어있습니다. 데이터 확인이 필요합니다.")
-            
-            # 필요한 추가 정보 조회 (예: 관련 댓글 등)
-            # 예시: cve_dict["related_comments"] = await self.get_cve_comments(cve_id)
-            
             return cve_dict
+            
         except Exception as e:
-            logger.error(f"CVE {cve_id} 상세 조회 중 오류 발생: {str(e)}")
+            logger.error(f"CVE '{cve_id}' 정보 조회 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
-            raise
+            return None
 
     async def create_cve(self, cve_data: Union[dict, CreateCVERequest], username: str, is_crawler: bool = False, crawler_name: Optional[str] = None) -> Optional[CVEModel]:
         """
@@ -198,13 +176,15 @@ class CVEService:
             생성된 CVE 모델 또는 None
         """
         try:
+            logger.info(f"CVE 생성 시작: 사용자={username}, 크롤러={is_crawler}")
+            
             # pydantic 모델을 딕셔너리로 변환
             if not isinstance(cve_data, dict):
                 cve_data = cve_data.dict()
                 
             # 날짜 필드 KST 설정
-            current_time = datetime.now(ZoneInfo("UTC"))  # UTC 기준 시간 사용
-            
+            current_time = get_utc_now()
+                
             # 추가 필드 설정
             cve_data["created_by"] = username
             cve_data["created_at"] = current_time
@@ -213,40 +193,33 @@ class CVEService:
             
             # 크롤러 정보 추가
             if is_crawler and crawler_name:
-                cve_data["crawler_info"] = {
+                cve_data["source"] = {
+                    "type": "crawler",
                     "name": crawler_name,
-                    "timestamp": current_time
+                    "crawled_at": current_time
                 }
-
-            # 필수 날짜 필드 검증
-            required_date_fields = ['created_at', 'last_modified_date']
-            missing_date_fields = []
             
-            for field in required_date_fields:
-                if field not in cve_data or not cve_data[field]:
-                    missing_date_fields.append(field)
-                elif isinstance(cve_data[field], dict) and len(cve_data[field]) == 0:
-                    missing_date_fields.append(field)
-                elif isinstance(cve_data[field], str) and not cve_data[field].strip():
-                    missing_date_fields.append(field)
-            
-            if missing_date_fields:
-                raise ValueError(f"다음 날짜 필드는 필수입니다: {', '.join(missing_date_fields)}")
+            # 기존 CVE 중복 체크 (cve_id가 있는 경우)
+            if "cve_id" in cve_data and cve_data["cve_id"]:
+                existing_cve = await self.get_cve(cve_data["cve_id"], as_model=True)
+                if existing_cve:
+                    logger.warning(f"이미 존재하는 CVE ID: {cve_data['cve_id']}")
+                    # 이미 존재하는 CVE ID이므로 생성하지 않고 None 반환
+                    return None
             
             # CVE 생성
-            cve = await self.repository.create(cve_data)
-            if cve:
-                logging.info(f"CVE created successfully: {cve.cve_id}")
-                # id 필드를 문자열로 변환하여 응답 유효성 검사 오류 해결
-                cve.id = str(cve.id)
-                return cve
+            new_cve = await self.repository.create(cve_data)
             
-            logging.error("Failed to create CVE: Repository returned None")
-            return None
+            if new_cve:
+                logger.info(f"CVE 생성 성공: CVE ID={new_cve.cve_id}, MongoDB ID={new_cve.id}")
+                return new_cve
+            else:
+                logger.error("CVE 생성 실패: Repository에서 None 반환")
+                return None
         
         except Exception as e:
-            logging.error(f"Error in create_cve: {str(e)}")
-            logging.error(traceback.format_exc())
+            logger.error(f"CVE 생성 중 오류 발생: {str(e)}")
+            logger.error(traceback.format_exc())
             return None
 
     async def update_cve(self, cve_id: str, update_data: Union[dict, PatchCVERequest], updated_by: str = None) -> Optional[Dict[str, Any]]:
@@ -264,30 +237,11 @@ class CVEService:
         try:
             logger.info(f"CVE 업데이트 요청: cve_id={cve_id}, updated_by={updated_by}")
             
-            # cve_id 형식 확인 로깅
-            is_object_id = len(cve_id) == 24 and all(c in '0123456789abcdef' for c in cve_id)
-            is_cve_format = cve_id.startswith("CVE-") and len(cve_id) > 4
-            logger.debug(f"cve_id 형식: {cve_id}, ObjectId 형식: {is_object_id}, CVE 형식: {is_cve_format}")
-            
             # 기존 CVE 조회
-            existing_cve = await self.get_cve(cve_id)
+            existing_cve = await self.get_cve(cve_id, as_model=True)
             if not existing_cve:
                 logger.warning(f"업데이트할 CVE를 찾을 수 없음: {cve_id}")
-                
-                # 다른 방식으로 조회 시도
-                if is_cve_format:
-                    logger.debug(f"CVE ID 형식으로 다시 조회 시도: {cve_id}")
-                    # 대소문자 구분 없이 조회
-                    try:
-                        alt_cve = await self.repository.find_by_cve_id(cve_id)
-                        if alt_cve:
-                            logger.info(f"대소문자 구분 없이 CVE 찾음: {alt_cve.cve_id}")
-                            existing_cve = alt_cve
-                    except Exception as e:
-                        logger.error(f"대소문자 구분 없이 조회 중 오류: {str(e)}")
-                
-                if not existing_cve:
-                    return None
+                return None
                 
             logger.debug(f"기존 CVE 정보: id={existing_cve.id}, cve_id={existing_cve.cve_id}")
                 
@@ -301,24 +255,22 @@ class CVEService:
                 update_data = update_data.copy()  # 원본 데이터 변경 방지
                 del update_data['_id']
                 
-            # 업데이트 시간 설정 - 명시적으로 UTC 시간대 사용
-            current_time = datetime.now(ZoneInfo("UTC"))
+            # 업데이트 시간 설정
+            current_time = get_utc_now()
             update_data['last_modified_date'] = current_time
             
             # 변경 기록 추적
             changes = []
-            # 제외할 필드 목록
             excluded_fields = ['last_modified_date', '_id', 'id']
             
             for field, new_value in update_data.items():
                 if field in excluded_fields:
-                    # 제외 필드는 변경 기록에서 제외
                     continue
                     
                 if field in existing_cve.dict() and existing_cve.dict()[field] != new_value:
                     changes.append({
                         "field": field,
-                        "field_name": field,  # 향후 필드 한글명 매핑 가능
+                        "field_name": field,
                         "action": "edit",
                         "summary": f"{field} 필드 변경",
                         "old_value": existing_cve.dict()[field],
@@ -331,7 +283,7 @@ class CVEService:
             if changes:
                 modification_history = ModificationHistory(
                     username=updated_by or "system",
-                    modified_at=current_time,  # UTC 시간 사용
+                    modified_at=current_time,
                     changes=changes
                 )
                 
@@ -346,49 +298,18 @@ class CVEService:
                 update_data['last_modified_by'] = updated_by
             
             # 기존 CVE의 created_at 필드 보존
-            if 'created_at' not in update_data and 'created_at' in existing_cve:
-                update_data['created_at'] = existing_cve['created_at']
-                logger.info(f"CVE {cve_id} 업데이트: created_at 필드 보존: {update_data['created_at']}")
+            if 'created_at' not in update_data and hasattr(existing_cve, 'created_at'):
+                update_data['created_at'] = existing_cve.created_at
             
             # 업데이트 실행
-            logger.debug(f"repository.update 호출: id={existing_cve.id}, cve_id={existing_cve.cve_id}")
-            
-            # 중요: 여기서 existing_cve.id를 문자열로 변환하여 전달
-            # 이 부분이 MongoDB ObjectId를 문자열로 변환하는 부분
             id_for_update = str(existing_cve.id)
-            logger.debug(f"업데이트에 사용할 ID: {id_for_update}, 타입: {type(id_for_update)}")
-            
-            # 업데이트 데이터에 cve_id 필드 추가 (없는 경우)
-            if 'cve_id' not in update_data and hasattr(existing_cve, 'cve_id'):
-                update_data['cve_id'] = existing_cve.cve_id
-                logger.debug(f"업데이트 데이터에 cve_id 추가: {existing_cve.cve_id}")
-            
-            # 필수 날짜 필드 검증
-            required_date_fields = ['last_modified_date']
-            missing_date_fields = []
-            
-            for field in required_date_fields:
-                if field not in update_data or not update_data[field]:
-                    missing_date_fields.append(field)
-                elif isinstance(update_data[field], dict) and len(update_data[field]) == 0:
-                    missing_date_fields.append(field)
-                elif isinstance(update_data[field], str) and not update_data[field].strip():
-                    missing_date_fields.append(field)
-            
-            if missing_date_fields:
-                raise ValueError(f"다음 날짜 필드는 필수입니다: {', '.join(missing_date_fields)}")
-            
-            # 날짜 필드 로깅
-            for field in required_date_fields:
-                if field in update_data:
-                    logger.info(f"CVE {cve_id} 업데이트: {field} 필드 값: {update_data[field]} (타입: {type(update_data[field]).__name__})")
             
             try:
                 result = await self.repository.update(id_for_update, update_data)
-                logger.info(f"업데이트 결과: {result}")
                 
                 if result:
-                    updated_cve = await self.get_cve_detail(cve_id)
+                    logger.info(f"CVE {cve_id} 업데이트 성공")
+                    updated_cve = await self.get_cve(cve_id)
                     return updated_cve
                 
                 logger.warning(f"CVE 업데이트 실패: {cve_id}")
@@ -396,9 +317,7 @@ class CVEService:
             except Exception as e:
                 logger.error(f"repository.update 호출 중 오류: {str(e)}")
                 logger.error(traceback.format_exc())
-                
-                # 기존 CVE 정보 반환 (업데이트는 실패했지만 조회는 가능)
-                return await self.get_cve_detail(cve_id)
+                raise
         except Exception as e:
             logger.error(f"CVE 업데이트 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
@@ -409,7 +328,7 @@ class CVEService:
         CVE를 삭제합니다.
         
         Args:
-            cve_id: 삭제할 CVE ID 또는 MongoDB ObjectId
+            cve_id: 삭제할 CVE ID
             
         Returns:
             삭제 성공 여부
@@ -417,23 +336,8 @@ class CVEService:
         try:
             logger.info(f"CVE 삭제 시도: {cve_id}")
             
-            # ObjectId 형식인지 확인
-            is_object_id = len(cve_id) == 24 and all(c in '0123456789abcdef' for c in cve_id)
-            
-            # ObjectId 형식이면 직접 삭제, 아니면 CVE ID로 조회 후 삭제
-            if is_object_id:
-                try:
-                    # 직접 ObjectId로 삭제 시도
-                    result = await self.repository.delete(cve_id)
-                    if result:
-                        logger.info(f"ObjectId로 CVE 삭제 성공: {cve_id}")
-                        return True
-                except Exception as e:
-                    logger.warning(f"ObjectId로 CVE 삭제 실패: {cve_id}, 오류: {str(e)}")
-                    # 실패하면 아래 CVE ID 조회 로직으로 계속 진행
-            
-            # CVE ID로 조회
-            cve = await self.repository.find_by_cve_id(cve_id)
+            # CVE 조회 (모델로 받기)
+            cve = await self.get_cve(cve_id, as_model=True)
             if not cve:
                 logger.warning(f"삭제할 CVE를 찾을 수 없음: {cve_id}")
                 return False
@@ -449,67 +353,6 @@ class CVEService:
             return result
         except Exception as e:
             logger.error(f"CVE 삭제 중 오류 발생: {str(e)}")
-            logger.error(traceback.format_exc())
-            raise
-
-    async def search_cves(
-        self, 
-        query: str,
-        skip: int = 0,
-        limit: int = 10
-    ) -> Dict[str, Any]:
-        """
-        CVE를 검색합니다.
-        
-        Args:
-            query: 검색어
-            skip: 건너뛸 항목 수
-            limit: 반환할 최대 항목 수
-            
-        Returns:
-            Dict: {"total": 총 개수, "items": 검색 결과 목록}
-        """
-        try:
-            search_query = {
-                "$or": [
-                    {"cve_id": {"$regex": query, "$options": "i"}},
-                    {"title": {"$regex": query, "$options": "i"}},
-                    {"description": {"$regex": query, "$options": "i"}}
-                ]
-            }
-            
-            # 필요한 필드만 선택
-            projection = {
-                "cve_id": 1,
-                "title": 1,
-                "status": 1,
-                "created_at": 1,
-                "last_modified_date": 1,
-                "description": 1,
-                "severity": 1,
-            }
-            
-            # DB 쿼리 실행
-            cves = await self.repository.find_with_projection(
-                query=search_query,
-                projection=projection,
-                skip=skip,
-                limit=limit,
-                sort=[
-                    ("last_modified_date", DESCENDING),
-                    ("created_at", DESCENDING)
-                ]
-            )
-            
-            # 전체 개수 카운트
-            total = await self.repository.count(search_query)
-            
-            return {
-                "total": total,
-                "items": cves
-            }
-        except Exception as e:
-            logger.error(f"CVE 검색 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
             raise
 
@@ -551,7 +394,7 @@ class CVEService:
                         continue
                         
                     # 이미 존재하는 CVE인지 확인
-                    existing_cve = await self.get_cve(cve_id)
+                    existing_cve = await self.get_cve(cve_id, as_model=True)
                     
                     if existing_cve:
                         # 업데이트

@@ -101,7 +101,7 @@ async def get_cves(
         logging.error(f"Error in get_cves: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
+            detail="CVE 목록 조회 중 오류가 발생했습니다."
         )
 
 @router.get("/list", response_model=CVEListResponse)
@@ -173,30 +173,26 @@ async def get_cve_list(
         )
 
 @router.get("/{cve_id}", response_model=CVEDetailResponse)
-async def get_cve(
-    cve_id: str = Path(..., description="조회할 CVE ID"),
-    bypass_cache: bool = Query(False, description="캐시 우회 여부"),
+async def get_cve_by_id(
+    cve_id: str,
+    bypass_cache: bool = Query(False, description="캐시를 우회하고 항상 데이터베이스에서 조회합니다."),
     current_user: User = Depends(get_current_user),
     cve_service: CVEService = Depends(get_cve_service)
 ):
     """
-    CVE 상세 정보를 가져옵니다 (캐싱 적용)
+    CVE ID로 CVE 상세 정보를 조회합니다.
     
     Args:
         cve_id: 조회할 CVE ID
-        bypass_cache: 캐시 우회 여부 (기본값: False)
+        bypass_cache: 캐시를 우회할지 여부
         current_user: 현재 인증된 사용자
         cve_service: CVE 서비스 인스턴스
         
     Returns:
         CVE 상세 정보
-        
-    Raises:
-        404: CVE를 찾을 수 없는 경우
-        500: 서버 오류 발생 시
     """
     try:
-        logger.info(f"사용자 '{current_user.username}'이(가) CVE 상세정보 요청: {cve_id}, 캐시 우회: {bypass_cache}")
+        logger.info(f"사용자 '{current_user.username}'이(가) CVE '{cve_id}' 상세 정보 요청")
         
         cache_key = f"{CACHE_KEY_PREFIXES['cve_detail']}{cve_id}"
         
@@ -209,7 +205,7 @@ async def get_cve(
         
         # 캐시에 없거나 우회 옵션이 설정된 경우 DB에서 조회
         start_time = datetime.now()
-        result = await cve_service.get_cve_detail(cve_id)
+        result = await cve_service.get_cve(cve_id, include_details=True)
         elapsed_time = (datetime.now() - start_time).total_seconds()
         
         if not result:
@@ -229,11 +225,11 @@ async def get_cve(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"CVE 상세 정보 조회 중 오류 발생: {str(e)}")
+        logger.error(f"CVE '{cve_id}' 상세 정보 조회 중 오류 발생: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"CVE 상세 조회 중 오류가 발생했습니다: {str(e)}"
+            detail="CVE 상세 정보 조회 중 오류가 발생했습니다."
         )
 
 # ----- 단일 CVE 조회 API 엔드포인트 -----
@@ -255,12 +251,13 @@ async def head_cve(
         response = Response()
         
         # Last-Modified 헤더 설정
-        if cve.last_modified_date:
-            last_modified = cve.last_modified_date.strftime("%a, %d %b %Y %H:%M:%S GMT")
+        if 'last_modified_date' in cve and cve['last_modified_date']:
+            last_modified = cve['last_modified_date'].strftime("%a, %d %b %Y %H:%M:%S GMT")
             response.headers["Last-Modified"] = last_modified
         
         # ETag 헤더 설정 (선택 사항)
-        response.headers["ETag"] = f'W/"{cve_id}-{cve.version if hasattr(cve, "version") else "1"}"'
+        version = cve.get('version', '1')
+        response.headers["ETag"] = f'W/"{cve_id}-{version}"'
         
         return response
     
@@ -294,14 +291,22 @@ async def create_cve(
         
         # CVE 생성
         cve = await cve_service.create_cve(cve_data, creator)
+        if not cve:
+            raise HTTPException(
+                status_code=500,
+                detail="CVE 생성 중 오류가 발생했습니다."
+            )
+            
+        # 모델을 딕셔너리로 변환
+        cve_dict = cve.dict() if hasattr(cve, 'dict') else cve
         
         # 소켓 알림 전송
-        await send_cve_notification("add", cve)
+        await send_cve_notification("add", cve_dict)
         
         # 캐시 무효화
         await invalidate_cve_caches(cve_data.cve_id)
         
-        return cve
+        return cve_dict
     
     except HTTPException as http_exc:
         logger.error(f"HTTP error in create_cve: {http_exc.detail}")
@@ -349,7 +354,7 @@ async def update_cve(
                     # 대소문자 구분 없이 조회 시도
                     alt_cve = await cve_service.get_cve(cve_id)
                     if alt_cve:
-                        logger.info(f"대소문자 구분 없이 CVE 찾음: {alt_cve.cve_id}")
+                        logger.info(f"대소문자 구분 없이 CVE 찾음: {alt_cve.get('cve_id', '')}")
                         existing_cve = alt_cve
                 except Exception as e:
                     logger.error(f"대소문자 구분 없이 조회 중 오류: {str(e)}")
@@ -362,7 +367,7 @@ async def update_cve(
                     detail=error_msg
                 )
         
-        logger.debug(f"기존 CVE 정보: id={existing_cve.id}, cve_id={existing_cve.cve_id}")
+        logger.debug(f"기존 CVE 정보: id={existing_cve.get('id', '')}, cve_id={existing_cve.get('cve_id', '')}")
         
         # 업데이트 데이터 준비
         update_dict = update_data.dict(exclude_unset=True)
@@ -439,6 +444,8 @@ async def delete_cve(
 ):
     """CVE를 삭제합니다 (관리자 전용)."""
     try:
+        logger.info(f"사용자 '{current_user.username}'이(가) CVE '{cve_id}' 삭제 요청")
+        
         deleted = await cve_service.delete_cve(cve_id)
         if not deleted:
             raise HTTPException(
@@ -452,16 +459,17 @@ async def delete_cve(
         # 캐시 무효화
         await invalidate_cve_caches(cve_id)
         
+        logger.info(f"CVE '{cve_id}' 삭제 완료")
         return {"success": True, "message": f"CVE ID {cve_id}가 삭제되었습니다."}
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in delete_cve: {str(e)}")
+        logger.error(f"CVE '{cve_id}' 삭제 중 오류 발생: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(
             status_code=500,
-            detail=f"CVE 삭제 중 오류가 발생했습니다: {str(e)}"
+            detail="CVE 삭제 중 오류가 발생했습니다."
         )
 
 # ----- CVE 검색 API 엔드포인트 -----
@@ -491,7 +499,11 @@ async def search_cves(
         logger.info(f"사용자 '{current_user.username}'이(가) CVE 검색 요청. 검색어: '{query}', skip: {skip}, limit: {limit}")
         
         start_time = datetime.now()
-        result = await cve_service.search_cves(query, skip, limit)
+        result = await cve_service.get_cve_list(
+            page=skip // limit + 1 if limit > 0 else 1,
+            limit=limit,
+            search=query
+        )
         
         # 성능 측정 및 로깅
         elapsed_time = (datetime.now() - start_time).total_seconds()
