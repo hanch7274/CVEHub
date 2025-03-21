@@ -6,6 +6,7 @@ from ..models.cve_model import CVEModel, CreateCVERequest, PatchCVERequest
 from ..database import get_database
 from fastapi.logger import logger
 from bson import ObjectId
+import traceback
 
 class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest]):
     def __init__(self):
@@ -91,10 +92,19 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
             ]
         }
         return await self.model.find(search_query).skip(skip).limit(limit).to_list()
-
-    async def get_by_cve_id(self, cve_id: str) -> Optional[CVEModel]:
-        """CVE ID로 CVE를 조회합니다."""
-        return await self.get_by_field("cve_id", cve_id)
+            
+    async def find_by_cve_id(self, cve_id: str) -> Optional[CVEModel]:
+        """CVE ID 문자열로 CVE를 조회합니다 (대소문자 구분 없음)."""
+        try:
+            import re
+            pattern = re.compile(f"^{cve_id}$", re.IGNORECASE)
+            cve = await self.collection.find_one({"cve_id": pattern})
+            if cve:
+                return CVEModel(**cve)
+            return None
+        except Exception as e:
+            logger.error(f"CVE ID 조회 중 오류: {str(e)}")
+            return None
 
     async def get_by_status(self, status: str, skip: int = 0, limit: int = 10) -> List[CVEModel]:
         """상태별로 CVE를 조회합니다."""
@@ -102,7 +112,7 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
 
     async def add_comment(self, cve_id: str, comment_data: dict) -> Optional[CVEModel]:
         """CVE에 댓글을 추가합니다."""
-        cve = await self.get_by_cve_id(cve_id)
+        cve = await self.find_by_cve_id(cve_id)
         if cve:
             if not cve.comments:
                 cve.comments = []
@@ -112,7 +122,7 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
 
     async def update_comment(self, cve_id: str, comment_id: str, comment_data: dict) -> Optional[CVEModel]:
         """CVE의 댓글을 수정합니다."""
-        cve = await self.get_by_cve_id(cve_id)
+        cve = await self.find_by_cve_id(cve_id)
         if cve and cve.comments:
             for comment in cve.comments:
                 if str(comment.id) == comment_id:
@@ -124,7 +134,7 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
 
     async def delete_comment(self, cve_id: str, comment_id: str, permanent: bool = False) -> Optional[CVEModel]:
         """CVE의 댓글을 삭제합니다."""
-        cve = await self.get_by_cve_id(cve_id)
+        cve = await self.find_by_cve_id(cve_id)
         if cve and cve.comments:
             if permanent:
                 cve.comments = [c for c in cve.comments if str(c.id) != comment_id]
@@ -138,7 +148,7 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
 
     async def add_poc(self, cve_id: str, poc_data: dict) -> Optional[CVEModel]:
         """CVE에 PoC를 추가합니다."""
-        cve = await self.get_by_cve_id(cve_id)
+        cve = await self.find_by_cve_id(cve_id)
         if cve:
             if not cve.pocs:
                 cve.pocs = []
@@ -148,7 +158,7 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
 
     async def add_snort_rule(self, cve_id: str, rule_data: dict) -> Optional[CVEModel]:
         """CVE에 Snort Rule을 추가합니다."""
-        cve = await self.get_by_cve_id(cve_id)
+        cve = await self.find_by_cve_id(cve_id)
         if cve:
             if not cve.snort_rules:
                 cve.snort_rules = []
@@ -156,51 +166,150 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
             await cve.save()
         return cve
 
-    async def update(self, cve_id: str, data: dict) -> bool:
-        """CVE 업데이트"""
+    async def update(self, cve_id: str, update_data: dict) -> bool:
+        """CVE 정보 업데이트"""
         try:
-            # 업데이트 로그 추가
             logger.info(f"CVE 업데이트 시도: {cve_id}")
             
-            # 내부 데이터 처리를 위한 방어적 복사
-            update_data = data.copy()
+            # _id 필드가 있으면 제거 (MongoDB에서 _id는 변경 불가)
+            if '_id' in update_data:
+                logger.warning(f"업데이트 데이터에서 _id 필드 제거: {update_data['_id']}")
+                update_data = update_data.copy()  # 원본 데이터 변경 방지
+                del update_data['_id']
+            
+            # ObjectId 형식인지 확인
+            is_object_id = len(cve_id) == 24 and all(c in '0123456789abcdef' for c in cve_id)
+            
+            # 쿼리 조건 설정
+            query_condition = None
+            if is_object_id:
+                try:
+                    from bson.objectid import ObjectId
+                    query_condition = {"_id": ObjectId(cve_id)}
+                    logger.debug(f"ObjectId로 쿼리 조건 설정: {query_condition}")
+                except Exception as e:
+                    logger.error(f"ObjectId 변환 실패: {str(e)}")
+            
+            # ObjectId가 아니거나 변환 실패 시 cve_id로 조회
+            if not query_condition:
+                query_condition = {"cve_id": cve_id}
+                logger.debug(f"CVE ID로 쿼리 조건 설정: {query_condition}")
+                
+                # 문서가 존재하는지 확인
+                doc = await self.collection.find_one(query_condition)
+                if not doc:
+                    logger.warning(f"문서를 찾을 수 없음: {cve_id}, 대소문자 구분 없이 시도")
+                    # 대소문자 구분 없이 시도
+                    import re
+                    alt_query = {"cve_id": re.compile(f"^{re.escape(cve_id)}$", re.IGNORECASE)}
+                    alt_doc = await self.collection.find_one(alt_query)
+                    if alt_doc:
+                        logger.debug(f"대소문자 구분 없이 문서 찾음: {alt_doc.get('cve_id')}")
+                        query_condition = alt_query
+                    else:
+                        logger.warning(f"대소문자 구분 없이도 문서를 찾을 수 없음")
             
             # MongoDB 업데이트 실행
             try:
+                logger.debug(f"최종 업데이트 쿼리: {query_condition}, 데이터: {update_data}")
                 result = await self.collection.update_one(
-                    {"cve_id": cve_id}, 
+                    query_condition, 
                     {"$set": update_data}
                 )
                 logger.info(f"업데이트 결과: matched={result.matched_count}, modified={result.modified_count}")
                 return result.modified_count > 0
             except Exception as e:
                 # update_one 실패 시 replace_one 시도
-                logger.error(f"update_one 실패 ({cve_id}): {str(e)}, replace_one 시도")
-                return await self.replace(cve_id, update_data)
+                logger.error(f"update_one 실패 ({cve_id}): {str(e)}")
+                # replace 메서드는 더 이상 사용하지 않음
+                # 대신 오류를 전파하여 상위 레벨에서 처리
+                raise
         except Exception as e:
             logger.error(f"CVE 업데이트 중 오류: {str(e)}")
+            logger.error(traceback.format_exc())
             # 오류 전파
             raise
 
+    async def update_field(self, cve_id: str, update_data: dict) -> bool:
+        """
+        CVE의 특정 필드만 업데이트합니다.
+        
+        Args:
+            cve_id: 업데이트할 CVE ID
+            update_data: 업데이트할 필드와 값 (예: {"created_at": datetime.now()})
+            
+        Returns:
+            bool: 업데이트 성공 여부
+        """
+        try:
+            logger.info(f"CVE 필드 업데이트 시도: {cve_id}, 필드: {list(update_data.keys())}")
+            
+            # 쿼리 조건 설정 (CVE ID로 검색)
+            query = {"cve_id": cve_id}
+            
+            # 업데이트 작업 정의
+            update_operation = {"$set": update_data}
+            
+            # 업데이트 실행
+            result = await self.collection.update_one(query, update_operation)
+            
+            # 업데이트 결과 확인
+            if result.modified_count > 0:
+                logger.info(f"CVE {cve_id}의 필드 업데이트 성공: {list(update_data.keys())}")
+                return True
+            else:
+                logger.warning(f"CVE {cve_id}의 필드 업데이트 실패: 일치하는 문서 없음 또는 변경 사항 없음")
+                return False
+                
+        except Exception as e:
+            logger.error(f"CVE 필드 업데이트 중 오류 발생: {str(e)}")
+            logger.error(traceback.format_exc())
+            return False
+
     async def replace(self, cve_id: str, data: dict) -> bool:
-        """CVE 문서 전체 교체"""
+        """CVE 문서 전체 교체 (사용하지 않음)"""
         try:
             # MongoDB replace_one 실행
             logger.info(f"CVE replace 시도: {cve_id}")
             
-            # _id 필드는 특별 처리
-            if '_id' in data and isinstance(data['_id'], str):
-                from bson.objectid import ObjectId
-                data['_id'] = ObjectId(data['_id'])
+            # 데이터 복사본 생성
+            data_copy = data.copy()
+            
+            # _id 필드 제거 (MongoDB가 자동으로 처리하도록)
+            if '_id' in data_copy:
+                logger.warning(f"replace 데이터에서 _id 필드 제거: {data_copy['_id']}")
+                del data_copy['_id']
+            
+            # 쿼리 조건 설정
+            is_object_id = len(cve_id) == 24 and all(c in '0123456789abcdef' for c in cve_id)
+            
+            if is_object_id:
+                try:
+                    from bson.objectid import ObjectId
+                    query_condition = {"_id": ObjectId(cve_id)}
+                except Exception:
+                    query_condition = {"cve_id": cve_id}
+            else:
+                query_condition = {"cve_id": cve_id}
+            
+            # 문서가 존재하는지 확인
+            doc = await self.collection.find_one(query_condition)
+            if not doc:
+                logger.warning(f"replace: 문서를 찾을 수 없음: {cve_id}")
+                return False
+            
+            # 기존 _id 유지
+            if '_id' in doc:
+                data_copy['_id'] = doc['_id']
             
             result = await self.collection.replace_one(
-                {"cve_id": cve_id}, 
-                data,
-                upsert=True
+                query_condition, 
+                data_copy,
+                upsert=False  # 문서가 없으면 생성하지 않음
             )
             
-            logger.info(f"Replace 결과: matched={result.matched_count}, modified={result.modified_count}, upserted_id={result.upserted_id}")
-            return True
+            logger.info(f"Replace 결과: matched={result.matched_count}, modified={result.modified_count}")
+            return result.modified_count > 0
         except Exception as e:
             logger.error(f"CVE replace 중 오류: {str(e)}", exc_info=True)
             # 디버깅을 위한 JSON 덤프 시도

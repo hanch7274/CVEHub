@@ -2,7 +2,6 @@ from pydantic_settings import BaseSettings
 from typing import List
 from functools import lru_cache
 from datetime import timedelta
-import os
 
 class Settings(BaseSettings):
     # App settings
@@ -31,13 +30,8 @@ class Settings(BaseSettings):
     WS_PING_INTERVAL: int = 30
     WS_PING_TIMEOUT: int = 10
     WS_CLOSE_TIMEOUT: int = 5
-
-    # Crawler settings
-    REPO_PATH: str = "/app/nuclei-templates"  # Docker 컨테이너 내부 경로
-
-    # emerging-threats 크롤러 설정
-    EMERGING_DIR: str = "/app/emerging-threats"
-
+    LOG_PING_PONG: bool = False
+    
     # 데이터 디렉토리 설정 추가
     DATA_DIR: str = "data"
 

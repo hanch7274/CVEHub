@@ -24,31 +24,24 @@ export const refreshToken = async () => {
   }
 
   try {
-    console.log('=== Token Refresh Debug ===');
     console.log('Attempting to refresh token...');
 
-    // 요청 데이터는 백엔드 API 요구사항에 맞춰 스네이크 케이스 사용
-    // (axios 인터셉터에서 자동 변환됨)
+    // api 인스턴스 대신 기본 axios 사용하여 순환 참조 방지
+    // 또한 skipAuthRefresh 플래그를 추가하여 인터셉터에서 토큰 갱신 로직 건너뛰기
     const response = await axios.post(
       `${API_BASE_URL}${API_ENDPOINTS.AUTH.REFRESH}`, 
       {
-        refreshToken: currentRefreshToken  // 카멜케이스로 변경 (인터셉터에서 스네이크 케이스로 변환됨)
+        refresh_token: currentRefreshToken  // 직접 스네이크 케이스 사용 (인터셉터를 거치지 않으므로)
       },
-      { 
+      {
         headers: {
           'Content-Type': 'application/json'
-        }
+        },
+        skipAuthRefresh: true  // 이 플래그로 인터셉터에서 토큰 갱신 로직 건너뛰기
       }
     );
 
-    console.log('=== Token Refresh Response Debug ===');
-    console.log('Response Status:', response.status);
-    console.log('Response Data:', {
-      hasAccessToken: !!response.data.accessToken || !!response.data.access_token,
-      hasRefreshToken: !!response.data.refreshToken || !!response.data.refresh_token,
-      hasUser: !!response.data.user,
-      responseKeys: Object.keys(response.data)
-    });
+    console.log('Token refresh response received');
 
     // 카멜케이스 필드명 사용 (스네이크 케이스 필드명은 fallback으로 유지)
     const accessToken = response.data.accessToken || response.data.access_token;
@@ -71,13 +64,9 @@ export const refreshToken = async () => {
     console.log('Token refresh successful');
     return accessToken;
   } catch (error) {
-    console.error('=== Token Refresh Error Debug ===');
-    console.error('Error Details:', {
+    console.error('Token refresh error:', {
       status: error.response?.status,
-      statusText: error.response?.statusText,
-      data: error.response?.data,
-      message: error.message,
-      stack: error.stack
+      message: error.message
     });
 
     if (error.response?.status === 401 || error.response?.status === 403) {
@@ -176,7 +165,8 @@ export const login = async (credentials) => {
 // 로그아웃
 export const logout = async () => {
   try {
-    await api.post('/auth/logout');
+    const refreshToken = getRefreshToken();
+    await api.post('/auth/logout', { refresh_token: refreshToken });
     clearAuthStorage();
   } catch (error) {
     console.error('Logout error:', error);

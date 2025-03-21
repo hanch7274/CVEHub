@@ -59,33 +59,30 @@ const NotificationBell = memo(() => {
 
   // 초기 데이터 로드
   useEffect(() => {
-    console.log('=== NotificationBell: Component Mounted ===');
+    // 불필요한 로그 제거
   }, []);
 
   const loadNotifications = useCallback(async (newPage = 0) => {
     try {
-      console.log('=== NotificationBell: Loading Notifications ===');
-      console.log('Page:', newPage);
-      console.log('Items per page:', ITEMS_PER_PAGE);
-      
+      // 불필요한 로그 제거
       setPage(newPage);
       await refetchNotifications();
       
       if (notificationsData) {
-        console.log('Notifications loaded successfully:', {
-          resultLength: notificationsData.items.length,
-          total: notificationsData.total,
-          unreadCount: notificationsData.unreadCount
-        });
+        // 중요한 정보만 로깅
+        if (notificationsData.unreadCount > 0) {
+          console.log('%c 🔔 알림 로드 완료', 'background: #2196f3; color: white; padding: 2px 4px; border-radius: 2px;', {
+            unreadCount: notificationsData.unreadCount,
+            total: notificationsData.total
+          });
+        }
         
         setHasMore(notificationsData.items.length === ITEMS_PER_PAGE);
       }
     } catch (error) {
-      console.error('=== NotificationBell: Load Notifications Error ===');
-      console.error('Error Details:', {
+      console.error('%c ❌ 알림 로드 오류', 'background: #f44336; color: white; padding: 2px 4px; border-radius: 2px;', {
         message: error.message,
-        code: error.code,
-        stack: error.stack
+        code: error.code
       });
       setSnackbar({
         open: true,
@@ -126,16 +123,15 @@ const NotificationBell = memo(() => {
 
   const handleMarkAllAsRead = async () => {
     try {
-      console.log('=== NotificationBell: Marking All As Read ===');
+      // 불필요한 로그 제거
       await markAllAsReadMutation.mutateAsync();
-      console.log('All notifications marked as read successfully');
+      // 성공 시에만 간결하게 로깅
+      console.log('%c ✅ 모든 알림 읽음 처리 완료', 'background: #4caf50; color: white; padding: 2px 4px; border-radius: 2px;');
       await loadNotifications(0);
     } catch (error) {
-      console.error('=== NotificationBell: Mark All As Read Error ===');
-      console.error('Error Details:', {
+      console.error('%c ❌ 알림 읽음 처리 오류', 'background: #f44336; color: white; padding: 2px 4px; border-radius: 2px;', {
         message: error.message,
-        code: error.code,
-        stack: error.stack
+        code: error.code
       });
       setSnackbar({
         open: true,
@@ -199,16 +195,21 @@ const NotificationBell = memo(() => {
       const id = getNotificationId(notification);
       
       if (!id) {
-        console.error('=== NotificationBell: Invalid notification ID ===');
+        console.error('%c ❌ 알림 ID 오류', 'background: #f44336; color: white; padding: 2px 4px; border-radius: 2px;', '유효하지 않은 알림 ID');
         return;
       }
       
-      console.log('=== NotificationBell: Marking Notification As Read ===');
-      console.log('Notification ID:', id);
+      // 불필요한 로그 제거
       
       // 읽음 처리
       await markAsReadMutation.mutateAsync(id);
-      console.log('Notification marked as read successfully');
+      // 성공 시에만 간결하게 로깅 (CVE ID가 있는 경우만)
+      if (notification.metadata && notification.metadata.cve_id) {
+        console.log('%c ✅ 알림 읽음 처리 완료', 'background: #4caf50; color: white; padding: 2px 4px; border-radius: 2px;', {
+          id,
+          cveId: notification.metadata.cve_id
+        });
+      }
       
       // CVE 관련 알림인 경우 상세 정보 표시
       if (notification.metadata && notification.metadata.cve_id) {
@@ -216,11 +217,9 @@ const NotificationBell = memo(() => {
         setDialogOpen(true);
       }
     } catch (error) {
-      console.error('=== NotificationBell: Mark As Read Error ===');
-      console.error('Error Details:', {
+      console.error('%c ❌ 알림 읽음 처리 오류', 'background: #f44336; color: white; padding: 2px 4px; border-radius: 2px;', {
         message: error.message,
-        code: error.code,
-        stack: error.stack
+        code: error.code
       });
       setSnackbar({
         open: true,

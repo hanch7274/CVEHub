@@ -115,7 +115,7 @@ async def trigger_crawl(
         
         return CrawlerResponse(
             message="크롤링이 성공적으로 완료되었습니다",
-            status="completed",
+            stage="completed",
             crawler_type="nuclei"
         )
     except Exception as e:
@@ -154,10 +154,10 @@ async def run_crawler(
             logger.error(f"Failed to run crawler: {result.get('message')}")
             
             # 이미 실행 중인 경우는 별도 처리
-            if result.get("status") == "already_running":
+            if result.get("stage") == "already_running":
                 return CrawlerResponse(
                     message=result.get("message"),
-                    status=result.get("status"),
+                    stage=result.get("stage"),
                     crawler_type=result.get("crawler_type")
                 )
                 
@@ -168,7 +168,7 @@ async def run_crawler(
         
         return CrawlerResponse(
             message=result.get("message"),
-            status=result.get("status"),
+            stage=result.get("stage"),
             crawler_type=result.get("crawler_type")
         )
     except HTTPException:

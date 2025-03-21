@@ -18,8 +18,6 @@ import {
   Stepper,
   Step,
   StepLabel,
-  DialogActions,
-  Alert,
   Card,
   Grid,
   Avatar
@@ -27,14 +25,8 @@ import {
 import { 
   CloudDownload as CloudDownloadIcon,
   Close as CloseIcon,
-  Check as CheckIcon,
   Error as ErrorIcon,
-  Cancel as CancelIcon,
   Settings as SettingsIcon,
-  Refresh as RefreshIcon,
-  MoreVert as MoreVertIcon,
-  ArrowDropDown as ArrowDropDownIcon,
-  Search as SearchIcon,
   DataObject as DataObjectIcon,
   Storage as StorageIcon,
   CheckCircle as CheckCircleIcon,
@@ -44,14 +36,19 @@ import {
 } from '@mui/icons-material';
 import { useQueryClient } from '@tanstack/react-query';
 import api from '../../../api/config/axios';
-import useWebSocketHook from '../../../api/hooks/useWebSocketHook';
+import { useSocketIO } from '../../../contexts/SocketIOContext'; // 중앙 집중식 웹소켓 관리 컨텍스트
 import { formatDistance } from 'date-fns';
 import { ko } from 'date-fns/locale';
+import logger, { LOG_LEVEL } from '../../../utils/logging';
+import { SOCKET_EVENTS } from '../../../services/socketio/constants';
+import useWebSocketHook from '../../../api/hooks/useWebSocketHook'; // 웹소켓 훅 사용
 
-// 웹소켓 이벤트 타입
-const WS_EVENT = {
-  CRAWLER_UPDATE_PROGRESS: 'crawler_update_progress'
-};
+// 로그 레벨 설정 (개발 환경에서 디버그 레벨로 설정)
+if (process.env.NODE_ENV === 'development') {
+  logger.setLogLevel(LOG_LEVEL.DEBUG);
+  logger.setEnabled(true);
+  logger.info('CrawlerUpdateButton', '로그 레벨 설정됨', { level: 'DEBUG', enabled: true });
+}
 
 // 크롤러 진행 단계 정의
 const CRAWLER_STAGES = [
@@ -59,63 +56,303 @@ const CRAWLER_STAGES = [
     key: 'preparing',
     label: '준비 중',
     description: '크롤러 초기화 및 저장소 연결 준비',
-    icon: <SettingsIcon />,
-    color: '#3f51b5'
+    icon: <SettingsIcon fontSize="small" />,
+    color: '#3f51b5',
+    backendValues: ['준비 중', '준비', '초기화', '연결', '진행 중']
   },
   {
-    key: 'collecting',
+    key: 'fetching',
     label: '데이터 수집',
-    description: '원격 저장소에서 최신 데이터를 가져오는 중',
-    icon: <SearchIcon />,
-    color: '#2196f3'
+    description: '소스에서 데이터 수집 중',
+    icon: <CloudDownloadIcon fontSize="small" />,
+    color: '#2196f3',
+    backendValues: ['데이터 수집', '수집', '진행 중']
   },
   {
     key: 'processing',
     label: '데이터 처리',
-    description: 'CVE 정보 파싱 및 가공 중',
-    icon: <DataObjectIcon />,
-    color: '#00bcd4'
+    description: '수집된 데이터 처리 및 분석',
+    icon: <DataObjectIcon fontSize="small" />,
+    color: '#00bcd4',
+    backendValues: ['데이터 처리', '처리', '진행 중']
   },
   {
-    key: 'updating',
-    label: '데이터베이스 업데이트',
-    description: '새로운 CVE 정보 저장 중',
-    icon: <StorageIcon />,
-    color: '#009688'
+    key: 'saving',
+    label: '저장 중',
+    description: '처리된 데이터 데이터베이스에 저장',
+    icon: <StorageIcon fontSize="small" />,
+    color: '#009688',
+    backendValues: ['저장 중', '저장', '데이터베이스 업데이트', '업데이트', '진행 중']
   },
   {
     key: 'completed',
     label: '완료',
-    description: '모든 작업이 완료되었습니다',
-    icon: <CheckCircleIcon />,
-    color: '#4caf50'
+    description: '크롤링 작업 완료',
+    icon: <CheckCircleIcon fontSize="small" />,
+    color: '#4caf50',
+    backendValues: ['완료', 'done', 'complete', 'finished', 'completed']
+  },
+  {
+    key: 'error',
+    label: '오류',
+    description: '크롤링 작업 중 오류 발생',
+    icon: <ErrorIcon fontSize="small" />,
+    color: '#f44336',
+    backendValues: ['오류', 'error', '실패', 'failed']
   }
 ];
 
-// 스테이지 문자열을 인덱스로 변환하는 함수
-const getStageIndex = (stage) => {
-  if (!stage) return 0;
+// 단계 인덱스 가져오기 (단순화된 버전)
+const getStageIndex = (stageName) => {
+  if (!stageName) {
+    console.log('%c 🔍 단계 이름 없음', 'background: #ff9800; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', '기본값 0 반환');
+    return 0;
+  }
   
-  // 단계가 '오류'인 경우
-  if (stage === '오류') return -1;
+  // 문자열로 변환 및 소문자화
+  const lowerStageName = String(stageName).toLowerCase().trim();
   
-  // 진행률에 따라 완료 여부 결정
-  if (stage === '완료') return 4;
+  console.log('%c 🔍 단계 매핑 시도', 'background: #2196f3; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', { 
+    stageName: lowerStageName
+  });
   
-  // 단계명으로 매핑 (백엔드와 일치시킴)
-  const stageMap = {
-    '초기화': 0,
-    '준비 중': 0,
-    '연결': 1,
-    '데이터 수집': 1,
-    '수집': 1,
-    '처리': 2,
-    '데이터 처리': 2,
-    '업데이트': 3,
-    '데이터베이스 업데이트': 3
-  };
+  // 1. 키 매칭 (표준 방식)
+  const stageIndex = CRAWLER_STAGES.findIndex(stage => stage.key === lowerStageName);
   
-  return stageMap[stage] !== undefined ? stageMap[stage] : 0;
+  if (stageIndex >= 0) {
+    console.log(`%c 🔍 키 매칭 성공`, 'background: #4caf50; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+      stageName: lowerStageName,
+      matchedKey: CRAWLER_STAGES[stageIndex].key,
+      matchedStage: CRAWLER_STAGES[stageIndex].label,
+      index: stageIndex
+    });
+    return stageIndex;
+  }
+  
+  // 2. 백엔드 값 매칭 (하위 호환성)
+  for (let i = 0; i < CRAWLER_STAGES.length; i++) {
+    if (CRAWLER_STAGES[i].backendValues && 
+        CRAWLER_STAGES[i].backendValues.some(value => 
+          value.toLowerCase() === lowerStageName || 
+          lowerStageName.includes(value.toLowerCase()) || 
+          value.toLowerCase().includes(lowerStageName)
+        )) {
+      console.log(`%c 🔍 백엔드 값 매칭 성공`, 'background: #4caf50; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+        stageName: lowerStageName,
+        matchedStage: CRAWLER_STAGES[i].label,
+        index: i
+      });
+      return i;
+    }
+  }
+  
+  // 매칭 실패 시 기본값 (준비 단계) 반환
+  console.log(`%c 🔍 매칭 실패`, 'background: #ff9800; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+    stageName: lowerStageName,
+    defaultStage: CRAWLER_STAGES[0].label,
+    index: 0
+  });
+  return 0;
+};
+
+/**
+ * 웹소켓 이벤트 데이터 처리 함수
+ * 
+ * @param {object} data - 웹소켓 이벤트 데이터
+ * @param {function} setActiveStep - 활성 단계 설정 함수
+ * @param {function} setProgress - 진행 상태 설정 함수
+ * @param {function} setIsRunning - 실행 상태 설정 함수
+ * @param {function} setHasError - 오류 상태 설정 함수
+ * @param {function} setLastUpdate - 마지막 업데이트 시간 설정 함수
+ * @param {function} setLastWebSocketUpdate - 마지막 웹소켓 업데이트 시간 설정 함수
+ * @param {function} handleCrawlerComplete - 크롤러 작업 완료 콜백 함수
+ * 
+ * @returns {object} 처리 결과 (processed: boolean, data: object)
+ */
+const processWebSocketData = (data, setActiveStep, setProgress, setIsRunning, setHasError, setLastUpdate, setLastWebSocketUpdate, handleCrawlerComplete) => {
+  console.log('%c 🔄 processWebSocketData 함수 호출됨', 'background: #673ab7; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+    rawData: JSON.stringify(data),
+    dataType: typeof data
+  });
+
+  try {
+    // 데이터 유효성 검사
+    if (!data || typeof data !== 'object') {
+      console.warn('%c ⚠️ 유효하지 않은 데이터 형식', 'background: #ff9800; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+        data: data,
+        dataType: typeof data
+      });
+      return { processed: false, error: 'Invalid data format' };
+    }
+
+    // 데이터 구조 확인 및 추출
+    let processedData = data;
+    
+    // 중첩된 데이터 구조 처리 (data.data 형태)
+    if (data.data && typeof data.data === 'object') {
+      console.log('%c 🔄 중첩된 데이터 구조 감지됨', 'background: #2196f3; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+        nestedData: JSON.stringify(data.data)
+      });
+      
+      // data.data.data 형태의 중첩 구조 확인 (더 깊은 중첩)
+      if (data.data.data && typeof data.data.data === 'object') {
+        console.log('%c 🔄 2차 중첩된 데이터 구조 감지됨', 'background: #9c27b0; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+          nestedData: JSON.stringify(data.data.data)
+        });
+        processedData = data.data.data;
+      } else {
+        processedData = data.data;
+      }
+    }
+    
+    // 타입 필드가 있는 경우 해당 구조에 맞게 처리
+    if (processedData.type === 'crawler_update_progress' && processedData.data) {
+      console.log('%c 🔄 타입 기반 데이터 구조 감지됨', 'background: #4caf50; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+        type: processedData.type,
+        typeData: JSON.stringify(processedData.data)
+      });
+      processedData = processedData.data;
+    }
+    
+    console.log('%c 🔄 추출된 데이터', 'background: #2196f3; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+      processedData: JSON.stringify(processedData)
+    });
+
+    // 단계 정보 업데이트
+    if (setActiveStep) {
+      // stage 정보가 문자열인 경우 (가장 일반적인 케이스)
+      if (typeof processedData.stage === 'string') {
+        const stageIndex = getStageIndex(processedData.stage);
+        console.log('%c 🔄 스테이지 업데이트 (문자열)', 'background: #4caf50; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+          stage: processedData.stage,
+          stageIndex: stageIndex
+        });
+        setActiveStep(stageIndex);
+        
+        // 단계 레이블이 있으면 업데이트
+        if (processedData.stage_label && setProgress) {
+          setProgress(prevProgress => ({
+            ...prevProgress,
+            stage: processedData.stage_label
+          }));
+        }
+      } 
+      // stage가 명시적으로 'error'인 경우
+      else if (processedData.error || processedData.hasError) {
+        console.log('%c 🔄 오류 상태 감지됨', 'background: #f44336; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;');
+        const errorIndex = getStageIndex('error');
+        setActiveStep(errorIndex);
+        
+        // 오류 상태 표시
+        if (setHasError) {
+          setHasError(true);
+        }
+      }
+    }
+
+    // 진행 상태 업데이트
+    if (setProgress) {
+      // 진행 상태 객체 구성
+      const updatedProgress = {
+        // 1. stage_label이 있으면 우선 사용
+        // 2. 없으면 CRAWLER_STAGES에서 현재 스테이지의 레이블 사용
+        // 3. 둘 다 없으면 백엔드에서 보낸 stage 사용
+        // 4. 그것도 없으면 빈 문자열
+        stage: processedData.stage_label || 
+              (processedData.stage && CRAWLER_STAGES[getStageIndex(processedData.stage)]?.label) || 
+              processedData.stage || 
+              '',
+        // 명시적 percent 필드가 있으면 사용, 없으면 기존값 유지 또는 0
+        percent: typeof processedData.percent === 'number' ? processedData.percent : 0,
+        // 메시지가 있으면 사용, 없으면 기존값 유지 또는 빈 문자열
+        message: processedData.message || ''
+      };
+      
+      console.log('%c 🔄 진행률 업데이트', 'background: #4caf50; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+        progress: updatedProgress
+      });
+      
+      setProgress(prevProgress => ({
+        ...prevProgress,
+        ...updatedProgress
+      }));
+    }
+
+    // 실행 상태 업데이트
+    if (setIsRunning) {
+      // stage 키 기반으로 실행 중 상태 판단
+      const stageValue = processedData.stage?.toLowerCase();
+      
+      // CRAWLER_STAGES에서 정의된 backendValues 배열 활용
+      // 완료 상태 확인
+      const completedValues = CRAWLER_STAGES.find(stage => stage.key === 'completed')?.backendValues || [];
+      const isCompleted = stageValue ? 
+        completedValues.includes(stageValue) || 
+        completedValues.some(value => stageValue.includes(value)) : 
+        false;
+      
+      // 오류 상태 확인
+      const errorValues = CRAWLER_STAGES.find(stage => stage.key === 'error')?.backendValues || [];
+      const isError = stageValue ? 
+        errorValues.includes(stageValue) || 
+        errorValues.some(value => stageValue.includes(value)) : 
+        false;
+      
+      // 실행 중 상태
+      const isRunningStatus = stageValue ? (!isCompleted && !isError) : false;
+      
+      console.log('%c 🔄 실행 상태 업데이트', 'background: #2196f3; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+        stage: processedData.stage,
+        isRunning: isRunningStatus,
+        isCompleted: isCompleted,
+        isError: isError
+      });
+      
+      setIsRunning(isRunningStatus);
+      
+      // 오류 상태 설정
+      if (setHasError) {
+        setHasError(isError);
+      }
+
+      // 완료된 경우 콜백 호출
+      if (!isRunningStatus && isCompleted && handleCrawlerComplete) {
+        console.log('%c 🔄 작업 완료, 콜백 호출', 'background: #4caf50; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;');
+        handleCrawlerComplete();
+      }
+    }
+
+    // 마지막 업데이트 시간 설정
+    if (setLastUpdate) {
+      const now = new Date();
+      console.log('%c 🔄 마지막 업데이트 시간 설정', 'background: #2196f3; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+        timestamp: now.toISOString()
+      });
+      setLastUpdate(now);
+    }
+
+    // 마지막 웹소켓 업데이트 시간 설정
+    if (setLastWebSocketUpdate) {
+      const now = new Date();
+      console.log('%c 🔄 마지막 웹소켓 업데이트 시간 설정', 'background: #2196f3; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+        timestamp: now.toISOString()
+      });
+      setLastWebSocketUpdate(now);
+    }
+
+    console.log('%c ✅ 데이터 처리 완료', 'background: #4caf50; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+      processedData: JSON.stringify(processedData),
+      result: { processed: true }
+    });
+    return { processed: true, data: processedData };
+  } catch (error) {
+    console.error('%c ❌ 데이터 처리 중 오류 발생', 'background: #f44336; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+      error: error.message,
+      stack: error.stack,
+      data: data ? JSON.stringify(data) : 'undefined'
+    });
+    return { processed: false, error: error.message };
+  }
 };
 
 const CrawlerUpdateButton = () => {
@@ -133,6 +370,9 @@ const CrawlerUpdateButton = () => {
   const [pollTimer, setPollTimer] = useState(null);
   const [lastWebSocketUpdate, setLastWebSocketUpdate] = useState(null);
   const queryClient = useQueryClient();
+  
+  // 중앙 웹소켓 관리 컨텍스트 사용
+  const socketIO = useSocketIO();
 
   // 다이얼로그 외부 요소 참조 추가
   const buttonRef = useRef(null);
@@ -140,159 +380,89 @@ const CrawlerUpdateButton = () => {
 
   // 크롤러 옵션
   const CRAWLERS = [
-    { id: 'nuclei', name: 'Nuclei Templates' },
-    { id: 'metasploit', name: 'Metasploit' },
-    { id: 'emerging_threats', name: 'EmergingThreats Rules' }
+    { id: 'nuclei', name: 'Nuclei Templates', type: 'nuclei' },
+    { id: 'metasploit', name: 'Metasploit', type: 'metasploit' },
+    { id: 'emerging_threats', name: 'EmergingThreats Rules', type: 'emerging_threats' }
   ];
 
   // 크롤러 상태 로드 함수 wrapped in useCallback
   const loadCrawlerStatus = useCallback(async () => {
+    // 초기 크롤러 상태 로드
     try {
       setLoading(true);
       const status = await api.get('/crawler/status');
+      
+      console.log('%c 🔄 크롤러 상태 로드', 'background: #673ab7; color: white; padding: 2px 4px; border-radius: 2px; font-weight: bold;', {
+        status: status.data
+      });
+      
+      // 실행 상태 설정
       setIsRunning(status.data.isRunning);
-      setLastUpdate(status.data.lastUpdate || {});
+      
+      // 단계 정보가 있는 경우 설정
+      if (status.data.currentStatus) {
+        const currentStatus = status.data.currentStatus;
+        
+        // 활성 단계 설정
+        if (typeof currentStatus.stage === 'string') {
+          const stageIndex = getStageIndex(currentStatus.stage);
+          setActiveStep(stageIndex);
+        }
+        
+        // 진행 상태 초기화
+        setProgress({
+          stage: currentStatus.stage_label || 
+                (currentStatus.stage && CRAWLER_STAGES[getStageIndex(currentStatus.stage)]?.label) || 
+                currentStatus.stage || 
+                CRAWLER_STAGES[0].label,
+          percent: typeof currentStatus.percent === 'number' ? currentStatus.percent : 0,
+          message: currentStatus.message || ''
+        });
+      }
+      
+      // 크롤러별 마지막 업데이트 시간 처리
+      const newLastUpdate = {};
+      
+      // 1. results 객체에 있는 각 크롤러의 정보를 확인
+      if (status.data.results) {
+        // results에 포함된 크롤러들만 해당 결과 시간 적용
+        Object.keys(status.data.results).forEach(crawlerType => {
+          // 크롤러 타입에 해당하는 ID 찾기
+          const crawler = CRAWLERS.find(c => c.type === crawlerType);
+          if (crawler) {
+            newLastUpdate[crawler.id] = status.data.lastUpdate;
+          }
+        });
+      }
+      
+      // 2. results에 없는 크롤러는 '없음'으로 표시되도록 함
+      CRAWLERS.forEach(crawler => {
+        if (!newLastUpdate[crawler.id]) {
+          newLastUpdate[crawler.id] = null;
+        }
+      });
+      
+      // 3. 전체 시스템 마지막 업데이트 시간도 저장
+      newLastUpdate['default'] = status.data.lastUpdate;
+      
+      // 상태 업데이트
+      setLastUpdate(newLastUpdate);
     } catch (error) {
-      console.error('상태 로드 실패:', error);
+      logger.error('크롤러', '상태 로드 실패:', error);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedCrawler]);
 
   // 폴링 중지 함수 wrapped in useCallback
   const stopPolling = useCallback(() => {
     if (pollTimer) {
+      logger.info('폴링 중지');
       clearInterval(pollTimer);
       setPollTimer(null);
     }
   }, [pollTimer]);
-
-  // 초기 상태 로드
-  useEffect(() => {
-    loadCrawlerStatus();
-
-    // 크롤러 진행 상태 전용 이벤트 리스너 추가
-    const handleCrawlerProgress = (event) => {
-      console.log('[CrawlerUpdateButton] 커스텀 이벤트 감지:', event.detail);
-      
-      if (event.detail && event.detail.data) {
-        const data = event.detail.data;
-        
-        // 진행 상태 업데이트
-        setProgress({
-          stage: data.stage || '진행 중',
-          percent: data.percent || 0,
-          message: data.message || ''
-        });
-        
-        // 단계 업데이트
-        const stageIndex = getStageIndex(data.stage);
-        if (stageIndex >= 0) {
-          setActiveStep(stageIndex);
-          setHasError(false);
-        }
-        
-        // 상태 설정
-        setIsRunning(data.isRunning !== false);
-        
-        // 완료 또는 오류 상태 처리
-        if (data.stage === '완료' || data.stage === '오류') {
-          setIsRunning(false);
-          stopPolling();
-          
-          if (data.stage === '완료') {
-            handleCrawlerComplete();
-          }
-        }
-      }
-    };
-    
-    // 이벤트 리스너 등록
-    window.addEventListener('websocket:crawler_progress', handleCrawlerProgress);
-    
-    return () => {
-      stopPolling();
-      window.removeEventListener('websocket:crawler_progress', handleCrawlerProgress);
-    };
-  }, [loadCrawlerStatus, stopPolling]);
-
-  // 웹소켓 메시지 처리
-  useWebSocketHook('message', (message) => {
-    // 크롤러 업데이트 메시지 확인
-    const isCrawlerProgressMessage = 
-      typeof message?.type === 'string' && 
-      (message.type === 'crawler_update_progress' ||
-       message.type === WS_EVENT.CRAWLER_UPDATE_PROGRESS ||
-       (message.type.toLowerCase().includes('crawler') && 
-        message.type.toLowerCase().includes('progress')));
-    
-    if (isCrawlerProgressMessage) {
-      // 실제 크롤러 업데이트 메시지인 경우에만 로그 출력
-      console.log('[크롤러] 진행 상황 업데이트:', {
-        단계: message.data?.stage,
-        진행률: message.data?.percent + '%',
-        메시지: message.data?.message
-      });
-      
-      const data = message.data;
-      if (!data) {
-        console.warn('[크롤러] 데이터가 없는 메시지 수신');
-        return;
-      }
-      
-      // 웹소켓 상태 업데이트 시간 기록
-      setLastWebSocketUpdate(new Date());
-      
-      // 진행 상황 업데이트
-      setProgress({
-        stage: data.stage,
-        percent: data.percent,
-        message: data.message
-      });
-      
-      // 완료 또는 오류 상태일 때는 항상 isRunning을 false로 설정
-      if (data.stage === '완료' || data.stage === '오류') {
-        setIsRunning(false);
-      } else {
-        setIsRunning(data.isRunning);
-      }
-      
-      // 현재 단계 업데이트
-      const stageIndex = getStageIndex(data.stage);
-      if (stageIndex >= 0) {
-        setActiveStep(stageIndex);
-        setHasError(false);
-      } else {
-        setHasError(true);
-      }
-      
-      // 업데이트된 CVE 목록이 있으면 표시
-      if (data.updated_cves) {
-        if (Array.isArray(data.updated_cves)) {
-          setUpdatedCVEs({
-            count: data.updated_cves.length,
-            items: data.updated_cves
-          });
-        } else if (typeof data.updated_cves === 'object') {
-          setUpdatedCVEs(data.updated_cves);
-        } else {
-          console.warn('업데이트된 CVE 데이터 형식이 예상과 다릅니다:', data.updated_cves);
-        }
-      }
-      
-      // 완료 또는 오류 상태이면 폴링 중지
-      if (data.stage === '완료' || data.stage === '오류') {
-        stopPolling();
-        if (!progressOpen && selectedCrawler) {
-          setProgressOpen(true);
-        }
-        if (data.stage === '완료') {
-          handleCrawlerComplete();
-        }
-      }
-    }
-  });
-
+  
   // 폴링 시작 함수
   const startPolling = () => {
     // 이미 폴링 중이라면 중지
@@ -300,7 +470,7 @@ const CrawlerUpdateButton = () => {
       clearInterval(pollTimer);
     }
     
-    console.log('웹소켓 백업으로 폴링을 시작합니다.');
+    logger.info('폴링 시작');
     
     // 폴링 시작
     try {
@@ -311,49 +481,99 @@ const CrawlerUpdateButton = () => {
             return;
           }
           
-          const status = await api.get('/crawler/status');
-          console.log('[폴링] 크롤러 상태:', status);
+          // 상태 로드 함수 호출 (중복 코드 제거)
+          await loadCrawlerStatus();
           
-          // 상태 업데이트
-          if (status && status.data.currentStatus) {
-            const currentStatus = status.data.currentStatus;
-            
-            // 진행 상태 업데이트
-            setProgress({
-              stage: currentStatus.stage || '준비 중',
-              percent: currentStatus.percent || 0,
-              message: currentStatus.message || '진행 중...'
-            });
-            
-            // 스테이지 업데이트
-            const stageIndex = getStageIndex(currentStatus.stage);
-            if (stageIndex >= 0) {
-              setActiveStep(stageIndex);
-              setHasError(false);
-            }
-            
-            // 완료 또는 오류 상태 처리
-            if (currentStatus.stage === '완료' || currentStatus.stage === '오류') {
-              stopPolling();
-              setIsRunning(false);
-              
-              if (currentStatus.stage === '완료') {
-                handleCrawlerComplete();
-              }
-            }
-          } else {
-            console.log('[폴링] 크롤러 현재 상태 정보 없음');
-          }
         } catch (error) {
-          console.error('[폴링] 오류 발생:', error);
+          logger.error('폴링', '크롤러 상태 조회 실패:', error);
         }
-      }, 5000); // 5초 간격으로 폴링
+      }, 3000); // 3초마다 폴링
       
       setPollTimer(timer);
     } catch (error) {
-      console.error('폴링 시작 중 오류:', error);
+      logger.error('폴링', '타이머 설정 실패:', error);
     }
   };
+
+  // 크롤러 작업이 완료될 때 CVE 목록 갱신
+  const handleCrawlerComplete = useCallback((updatedCves) => {
+    logger.info('크롤러 작업 완료, CVE 목록 갱신');
+    enqueueSnackbar('크롤러 작업이 완료되었습니다. CVE 목록을 갱신합니다.', { 
+      variant: 'success',
+      autoHideDuration: 4000
+    });
+    
+    // 쿼리 무효화하여 데이터 갱신
+    queryClient.invalidateQueries({ queryKey: ['cves'] });
+
+    // 크롤러 작업 초기화
+    stopPolling();
+    setIsRunning(false);
+    setProgress(prevProgress => ({
+      ...prevProgress,
+      message: '작업이 완료되었습니다. 결과를 확인하세요.'
+    }));
+    
+    // 업데이트된 CVE 정보 설정 (있는 경우)
+    if (updatedCves) {
+      setUpdatedCVEs(updatedCves);
+    }
+  }, [enqueueSnackbar, queryClient, stopPolling]);
+
+  // 크롤러 업데이트 이벤트 핸들러
+  const handleCrawlerUpdateEvent = useCallback((data) => {
+    logger.info('CrawlerUpdateButton', '크롤러 업데이트 이벤트 수신', {
+      eventType: SOCKET_EVENTS.CRAWLER_UPDATE_PROGRESS,
+      stage: data?.stage,
+      percent: data?.percent
+    });
+    
+    // 웹소켓 데이터 처리
+    processWebSocketData(
+      data, 
+      setActiveStep, 
+      setProgress, 
+      setIsRunning, 
+      setHasError, 
+      setLastUpdate, 
+      setLastWebSocketUpdate, 
+      handleCrawlerComplete
+    );
+  }, [handleCrawlerComplete]);
+  
+  // useWebSocketHook을 사용한 웹소켓 이벤트 구독
+  useWebSocketHook(SOCKET_EVENTS.CRAWLER_UPDATE_PROGRESS, handleCrawlerUpdateEvent, {
+    optimisticUpdate: false // 낙관적 업데이트는 불필요
+  });
+  
+  // 웹소켓 연결 상태 모니터링 
+  useEffect(() => {
+    logger.info('CrawlerUpdateButton', '웹소켓 연결 상태 모니터링 시작', {
+      isConnected: socketIO.connected
+    });
+    
+    // 폴링은 웹소켓 연결이 불안정한 경우의 백업 메커니즘으로 유지
+    if (isRunning && !socketIO.connected) {
+      logger.info('CrawlerUpdateButton', '웹소켓 연결 없음 - 폴링 시작');
+      startPolling();
+    } else if (!isRunning && pollTimer) {
+      // 실행 중이 아니라면 폴링 중지
+      logger.info('CrawlerUpdateButton', '크롤러 실행 중지됨 - 폴링 중지');
+      stopPolling();
+    }
+    
+    return () => {
+      // 컴포넌트 언마운트 시 폴링 정리
+      if (pollTimer) {
+        stopPolling();
+      }
+    };
+  }, [socketIO.connected, isRunning, startPolling, stopPolling, pollTimer]);
+
+  // 상태 초기화
+  useEffect(() => {
+    loadCrawlerStatus();
+  }, [loadCrawlerStatus]);
 
   // 메뉴 열기
   const handleClick = (event) => {
@@ -382,10 +602,10 @@ const CrawlerUpdateButton = () => {
       setHasError(false);
       setUpdatedCVEs(null);
       
-      await api.post('/crawler/run', { id: crawler.id });
+      await api.post(`/crawler/run/${crawler.type}`, { id: crawler.id });
       startPolling();      
     } catch (error) {
-      console.error('크롤러 실행 오류:', error);
+      logger.error('크롤러', '실행 오류:', error);
       setHasError(true);
       const errorMessage = error.response?.data?.detail || '크롤러 실행 중 오류가 발생했습니다.';
       setProgress({
@@ -400,16 +620,34 @@ const CrawlerUpdateButton = () => {
     }
   };
 
-  // 마지막 업데이트 시간 포맷팅 함수
-  const formatLastUpdate = (dateString) => {
-    if (!dateString) return '없음';
-    try {
-      const date = new Date(dateString);
+// 마지막 업데이트 시간 포맷팅 함수
+const formatLastUpdate = (lastUpdate) => {
+
+  // 값이 없는 경우
+  if (!lastUpdate) return '없음';
+  
+  try {
+    // 문자열인 경우 (API에서 직접 날짜 문자열을 반환하는 경우)
+    if (typeof lastUpdate === 'string') {
+      const date = new Date(lastUpdate);
       return formatDistance(date, new Date(), { addSuffix: true, locale: ko });
-    } catch (e) {
-      return '알 수 없음';
     }
-  };
+    
+    // 객체인 경우 (API에서 객체를 반환하는 경우 대비)
+    if (typeof lastUpdate === 'object' && Object.keys(lastUpdate).length > 0) {
+      const dateString = lastUpdate.datetime || lastUpdate.date || lastUpdate.timestamp;
+      if (dateString) {
+        const date = new Date(dateString);
+        return formatDistance(date, new Date(), { addSuffix: true, locale: ko });
+      }
+    }
+    
+    return '없음';
+  } catch (e) {
+    console.error('날짜 포맷팅 오류:', e);
+    return '알 수 없음';
+  }
+};
 
   // 다이얼로그 닫기 함수 개선
   const handleCloseDialog = useCallback(() => {
@@ -439,26 +677,6 @@ const CrawlerUpdateButton = () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [progressOpen, isRunning, handleCloseDialog]);
-
-  // 크롤러 작업이 완료될 때 CVE 목록 갱신
-  const handleCrawlerComplete = () => {
-    console.log('크롤러 작업 완료, CVE 목록 갱신');
-    enqueueSnackbar('크롤러 작업이 완료되었습니다. CVE 목록을 갱신합니다.', { 
-      variant: 'success',
-      autoHideDuration: 4000
-    });
-    
-    // 쿼리 무효화하여 데이터 갱신
-    queryClient.invalidateQueries({ queryKey: ['cves'] });
-    
-    // 크롤러 작업 초기화
-    stopPolling();
-    setIsRunning(false);
-    setProgress({ stage: '준비 중', percent: 0, message: '준비 중...' });
-    setTimeout(() => {
-      setProgressOpen(false);
-    }, 3000);
-  };
 
   return (
     <>
@@ -501,7 +719,11 @@ const CrawlerUpdateButton = () => {
                 title={`마지막 업데이트: ${formatLastUpdate(lastUpdate[crawler.id])}`}
                 placement="right"
               >
-                <InfoIcon fontSize="small" color="action" sx={{ ml: 1 }} />
+                <InfoIcon 
+                  fontSize="small" 
+                  color={lastUpdate[crawler.id] ? "action" : "disabled"}
+                  sx={{ ml: 1 }} 
+                />
               </Tooltip>
             </MenuItem>
           ))}
@@ -554,21 +776,45 @@ const CrawlerUpdateButton = () => {
                     <StepLabel
                       error={hasError && index === activeStep}
                       optional={index === activeStep ? (
-                        <Typography variant="caption">{progress.message}</Typography>
+                        <Typography variant="caption" color={index === activeStep ? (hasError ? 'error.main' : 'primary.main') : 'text.secondary'}>
+                          {index === activeStep ? progress.message || stage.description : stage.description}
+                        </Typography>
                       ) : null}
                       StepIconProps={{
                         icon: hasError && index === activeStep ? <ErrorIcon color="error" /> : (
                           <Avatar sx={{ 
-                            bgcolor: index <= activeStep ? stage.color : 'grey.300',
+                            bgcolor: index < activeStep 
+                              ? stage.color 
+                              : index === activeStep 
+                                ? (hasError ? 'error.main' : stage.color) 
+                                : 'grey.300',
                             width: 24, 
-                            height: 24 
+                            height: 24,
+                            boxShadow: index === activeStep && !hasError ? '0 0 0 2px #fff, 0 0 0 4px ' + stage.color : 'none',
+                            animation: index === activeStep && !hasError && isRunning ? 'pulse 1.5s infinite' : 'none',
+                            '@keyframes pulse': {
+                              '0%': { boxShadow: '0 0 0 0 rgba(33, 150, 243, 0.4)' },
+                              '70%': { boxShadow: '0 0 0 6px rgba(33, 150, 243, 0)' },
+                              '100%': { boxShadow: '0 0 0 0 rgba(33, 150, 243, 0)' }
+                            }
                           }}>
                             {stage.icon}
                           </Avatar>
                         )
                       }}
                     >
-                      {stage.label}
+                      <Typography 
+                        variant="body2" 
+                        fontWeight={index === activeStep ? 'bold' : 'normal'}
+                        color={index === activeStep ? (hasError ? 'error.main' : 'primary.main') : 'text.primary'}
+                      >
+                        {stage.label}
+                        {index === activeStep && isRunning && !hasError && (
+                          <Box component="span" sx={{ ml: 0.5, display: 'inline-flex', alignItems: 'center' }}>
+                            <CircularProgress size={12} color="primary" thickness={5} sx={{ color: stage.color }} />
+                          </Box>
+                        )}
+                      </Typography>
                     </StepLabel>
                   </Step>
                 ))}
@@ -577,28 +823,84 @@ const CrawlerUpdateButton = () => {
 
             <Box sx={{ mb: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                <Typography variant="subtitle1" fontWeight="500">
-                  {progress.stage || '준비 중'}
+                <Typography variant="subtitle1" fontWeight="500" sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center',
+                  color: hasError ? 'error.main' : (CRAWLER_STAGES[activeStep]?.color || 'primary.main')
+                }}>
+                  {CRAWLER_STAGES[activeStep]?.icon && (
+                    <Box component="span" sx={{ mr: 1, display: 'inline-flex' }}>
+                      {CRAWLER_STAGES[activeStep]?.icon}
+                    </Box>
+                  )}
+                  {progress.stage || CRAWLER_STAGES[activeStep]?.label}
                 </Typography>
-                <Typography variant="subtitle1" fontWeight="500">
+                <Typography variant="subtitle1" fontWeight="500" sx={{
+                  color: hasError ? 'error.main' : (progress.percent >= 100 ? 'success.main' : 'primary.main')
+                }}>
                   {progress.percent}%
                 </Typography>
               </Box>
-              <LinearProgress 
-                variant="determinate" 
-                value={progress.percent || 0} 
-                sx={{ 
-                  height: 10, 
-                  borderRadius: 5,
-                  bgcolor: 'background.paper',
-                  '& .MuiLinearProgress-bar': {
-                    bgcolor: hasError ? 'error.main' : CRAWLER_STAGES[activeStep]?.color || 'primary.main'
-                  }
-                }} 
-              />
-              <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
-                {progress.message || '초기화 중...'}
-              </Typography>
+              <Box sx={{ position: 'relative', mb: 1 }}>
+                <LinearProgress 
+                  variant="determinate" 
+                  value={progress.percent || 0} 
+                  sx={{ 
+                    height: 10, 
+                    borderRadius: 5,
+                    bgcolor: 'background.paper',
+                    '& .MuiLinearProgress-bar': {
+                      bgcolor: hasError ? 'error.main' : CRAWLER_STAGES[activeStep]?.color || 'primary.main',
+                      transition: 'transform 0.3s ease-in-out'
+                    }
+                  }} 
+                />
+                {/* 진행 상태에 따른 애니메이션 효과 */}
+                {isRunning && !hasError && (
+                  <LinearProgress
+                    variant="indeterminate"
+                    sx={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      height: 10,
+                      borderRadius: 5,
+                      opacity: 0.3,
+                      bgcolor: 'transparent',
+                      '& .MuiLinearProgress-bar': {
+                        bgcolor: CRAWLER_STAGES[activeStep]?.color || 'primary.main',
+                      }
+                    }}
+                  />
+                )}
+              </Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Typography variant="body2" sx={{ 
+                  color: 'text.secondary',
+                  maxWidth: '85%',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}>
+                  {progress.message || '초기화 중...'}
+                </Typography>
+                {/* 상태 아이콘 표시 */}
+                {isRunning ? (
+                  <CircularProgress size={16} color="primary" thickness={5} />
+                ) : hasError ? (
+                  <ErrorIcon fontSize="small" color="error" />
+                ) : progress.percent >= 100 ? (
+                  <CheckCircleIcon fontSize="small" color="success" />
+                ) : null}
+              </Box>
+              
+              {/* 마지막 웹소켓 업데이트 시간 표시 */}
+              {lastWebSocketUpdate && (
+                <Typography variant="caption" sx={{ mt: 1, display: 'block', textAlign: 'right', color: 'text.secondary' }}>
+                  마지막 업데이트: {formatDistance(lastWebSocketUpdate, new Date(), { addSuffix: true, locale: ko })}
+                </Typography>
+              )}
             </Box>
 
             <Card 

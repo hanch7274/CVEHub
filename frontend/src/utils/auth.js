@@ -19,6 +19,29 @@ let queryClient = null;
 let isRefreshing = false;
 let failedQueue = [];
 
+// 디버그 모드 설정
+const DEBUG_MODE = process.env.NODE_ENV === 'development';
+
+// 디버그 로그 출력 함수
+const debugLog = (...args) => {
+  if (DEBUG_MODE) {
+    // 로그 타입에 따라 색상 지정
+    const isError = args[0]?.includes('Error') || args[0]?.includes('실패');
+    const isWarning = args[0]?.includes('Warning') || args[0]?.includes('경고');
+    const isAuth = args[0]?.includes('Auth') || args[0]?.includes('Token');
+    
+    // 중요 로그만 컬러로 출력
+    if (isError) {
+      console.log('%c 🔴 Auth Error', 'background: #f44336; color: white; padding: 2px 4px; border-radius: 2px;', ...args);
+    } else if (isWarning) {
+      console.log('%c 🟠 Auth Warning', 'background: #ff9800; color: white; padding: 2px 4px; border-radius: 2px;', ...args);
+    } else if (isAuth) {
+      console.log('%c 🔵 Auth Info', 'background: #2196f3; color: white; padding: 2px 4px; border-radius: 2px;', ...args);
+    }
+    // 일반 디버그 로그는 출력하지 않음
+  }
+};
+
 const processQueue = (error, token = null) => {
   failedQueue.forEach(prom => {
     if (error) {
@@ -47,8 +70,8 @@ export const refreshTokenFn = async () => {
       throw new Error('Refresh token not found');
     }
 
-    console.log('=== Token Refresh Debug ===');
-    console.log('Current refresh token:', refreshToken);
+    debugLog('=== Token Refresh Debug ===');
+    debugLog('Current refresh token:', refreshToken);
 
     const response = await api.post(
       `${process.env.REACT_APP_API_URL || 'http://localhost:8000'}/auth/refresh`,
@@ -83,8 +106,8 @@ export const refreshTokenFn = async () => {
 
     return newAccessToken;
   } catch (error) {
-    console.error('=== Token Refresh Error ===');
-    console.error('Error:', error.response?.status, error.response?.data);
+    console.error('%c 🔴 Token Refresh Error', 'background: #f44336; color: white; padding: 2px 4px; border-radius: 2px;', '=== Token Refresh Error ===');
+    console.error('%c 🔴 Token Refresh Error', 'background: #f44336; color: white; padding: 2px 4px; border-radius: 2px;', 'Error:', error.response?.status, error.response?.data);
     clearAuthStorage();
     throw error;
   }
@@ -98,20 +121,31 @@ api.interceptors.response.use(
   (response) => {
     // 응답 데이터를 카멜 케이스로 변환
     if (response.data) {
-      console.log('[Axios Interceptor] 응답 데이터 변환 전:', {
-        url: response.config.url,
-        method: response.config.method,
-        dataType: typeof response.data,
-        isArray: Array.isArray(response.data),
-        originalKeys: typeof response.data === 'object' ? Object.keys(response.data) : []
-      });
+      // 중요한 API 요청에 대해서만 로깅 (auth 관련)
+      const isAuthEndpoint = response.config.url && (
+        response.config.url.includes('/auth/') || 
+        response.config.url.includes('/login') || 
+        response.config.url.includes('/signup')
+      );
+      
+      if (isAuthEndpoint && DEBUG_MODE) {
+        console.log('%c 🔵 Auth Response', 'background: #2196f3; color: white; padding: 2px 4px; border-radius: 2px;', '[Axios Interceptor] 응답 데이터 변환 전:', {
+          url: response.config.url,
+          method: response.config.method,
+          dataType: typeof response.data,
+          isArray: Array.isArray(response.data),
+          originalKeys: typeof response.data === 'object' ? Object.keys(response.data) : []
+        });
+      }
       
       response.data = snakeToCamel(response.data);
       
-      console.log('[Axios Interceptor] 응답 데이터 변환 후:', {
-        convertedKeys: typeof response.data === 'object' ? Object.keys(response.data) : [],
-        sample: response.data
-      });
+      if (isAuthEndpoint && DEBUG_MODE) {
+        console.log('%c 🔵 Auth Response', 'background: #2196f3; color: white; padding: 2px 4px; border-radius: 2px;', '[Axios Interceptor] 응답 데이터 변환 후:', {
+          convertedKeys: typeof response.data === 'object' ? Object.keys(response.data) : [],
+          sample: response.data
+        });
+      }
     }
     return response;
   },
@@ -217,7 +251,7 @@ export const login = async (email, password) => {
     
     return response.data;
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('%c 🔴 Login Error', 'background: #f44336; color: white; padding: 2px 4px; border-radius: 2px;', 'Login error:', error);
     throw error;
   }
 };
@@ -241,7 +275,7 @@ export const logout = async () => {
       await api.post('/auth/logout', { refresh_token: refreshToken });
     }
   } catch (error) {
-    console.error('Logout error:', error);
+    console.error('%c 🔴 Logout Error', 'background: #f44336; color: white; padding: 2px 4px; border-radius: 2px;', 'Logout error:', error);
   } finally {
     // 로컬 저장소에서 사용자 정보 및 토큰 삭제
     clearAuthStorage();

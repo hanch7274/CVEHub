@@ -30,7 +30,7 @@ class MetasploitCrawlerService(BaseCrawlerService):
         # 기본 디렉토리가 없으면 생성
         os.makedirs(base_dir, exist_ok=True)
         
-        self.repo_path = os.path.join(base_dir, "metasploit-framework")
+        self.repo_path = os.path.join(settings.DATA_DIR, "metasploit-framework")
         self.modules_path = os.path.join(self.repo_path, "modules/exploits")
         
         # modules_path의 상위 디렉토리도 생성
@@ -116,7 +116,7 @@ class MetasploitCrawlerService(BaseCrawlerService):
                 'source': 'Metasploit-Framework',
                 'url': module_url,
                 'description': f'Metasploit: {name}',
-                'date_added': current_time,
+                'created_at': current_time,
                 'added_by': self.crawler_name
             }]
             
@@ -147,7 +147,7 @@ class MetasploitCrawlerService(BaseCrawlerService):
                 # 새로운 CVE인 경우 전체 데이터 저장
                 
                 # 히스토리 정보 추가
-                current_time = datetime.now(ZoneInfo("Asia/Seoul"))
+                current_time = datetime.now(ZoneInfo("UTC"))
                 changes = []
                 
                 # 기본 CVE 생성 정보

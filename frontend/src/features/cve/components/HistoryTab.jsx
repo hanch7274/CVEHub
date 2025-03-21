@@ -32,7 +32,7 @@ import {
   Assignment as AssignmentIcon,
   Note as NoteIcon
 } from '@mui/icons-material';
-import { formatToKST } from '../../../utils/dateUtils';
+import { formatForDisplay } from '../../../utils/dateUtils';
 
 // 필드별 아이콘 매핑
 const FIELD_ICONS = {
@@ -78,7 +78,7 @@ const HistoryTab = ({ modificationHistory = [] }) => {
         {modificationHistory.map((history, historyIndex) => (
           <TimelineItem key={historyIndex}>
             <TimelineOppositeContent color="text.secondary">
-              {formatToKST(history.modifiedAt)}
+              {formatForDisplay(history.modifiedAt)}
             </TimelineOppositeContent>
             <TimelineSeparator>
               <TimelineDot color="primary">

@@ -294,88 +294,97 @@ class CrawlerScheduler(LoggingMixin):
                     message=f"{crawler_type} 업데이트를 시작합니다."
                 )
                 
-                # 크롤러 실행
-                update_result = await crawler.run()
-                
-                # 크롤러 실행 성공 시
-                if update_result and update_result.get("status") == "success":
-                    # 마지막 업데이트 시간 저장
-                    self._last_update[crawler_type] = start_time
-                    await self._save_last_update(crawler_type, start_time)
+                try:
+                    # 크롤러 실행
+                    update_result = await crawler.run()
                     
-                    # 결과 저장
-                    self._update_results[crawler_type] = update_result
-                    
-                    # 완료 단계
-                    if update_result and isinstance(update_result.get("updated_cves"), dict):
-                        updated_count = update_result["updated_cves"].get("count", 0)
-                        success_message = f"{crawler_type} 업데이트가 완료되었습니다. {updated_count}개의 CVE가 업데이트되었습니다."
+                    # 크롤러 실행 성공 시
+                    if update_result and update_result.get("stage") == "success":
+                        # 마지막 업데이트 시간 저장
+                        self._last_update[crawler_type] = start_time
+                        await self._save_last_update(crawler_type, start_time)
                         
-                        # 업데이트가 없는 경우
-                        if updated_count == 0:
-                            success_message = f"{crawler_type} 업데이트가 완료되었습니다. 업데이트된 CVE가 없습니다."
+                        # 결과 저장
+                        self._update_results[crawler_type] = update_result
                         
-                        # 완료 메시지 전송
+                        # 완료 단계
+                        if update_result and isinstance(update_result.get("updated_cves"), dict):
+                            updated_count = update_result["updated_cves"].get("count", 0)
+                            success_message = f"{crawler_type} 업데이트가 완료되었습니다. {updated_count}개의 CVE가 업데이트되었습니다."
+                            
+                            # 업데이트가 없는 경우
+                            if updated_count == 0:
+                                success_message = f"{crawler_type} 업데이트가 완료되었습니다. 업데이트된 CVE가 없습니다."
+                            
+                            # 완료 메시지 전송
+                            await self._broadcast_progress(
+                                crawler_type=crawler_type,
+                                stage="완료",
+                                percent=100,
+                                message=success_message,
+                                updated_cves=update_result.get("updated_cves")
+                            )
+                        else:
+                            # 기본 완료 메시지
+                            await self._broadcast_progress(
+                                crawler_type=crawler_type,
+                                stage="완료",
+                                percent=100,
+                                message=f"{crawler_type} 업데이트가 완료되었습니다."
+                            )
+                        
+                        return True
+                    else:
+                        # 오류 메시지
+                        error_message = update_result.get("message", f"{crawler_type} 업데이트 중 오류가 발생했습니다.") if update_result else f"{crawler_type} 업데이트 중 오류가 발생했습니다."
+                        
+                        # 오류 상태 브로드캐스트
                         await self._broadcast_progress(
                             crawler_type=crawler_type,
-                            stage="완료",
-                            percent=100,
-                            message=success_message,
-                            updated_cves=update_result.get("updated_cves")
+                            stage="오류",
+                            percent=0,
+                            message=error_message
                         )
                         
-                        # 상태 업데이트 - 실행 중 상태를 false로 명확히 설정
-                        self._running_crawlers[crawler_type] = False
-                        # 다른 크롤러가 실행 중인지 확인
-                        if not any(self._running_crawlers.values()):
-                            self._is_running = False  # 모든 크롤러가 종료되면 전역 상태 업데이트
+                        return False
+                except Exception as e:
+                    # 크롤러 실행 중 오류 발생
+                    error_message = f"크롤러 실행 중 오류 발생: {str(e)}"
+                    self.log_error(error_message, e)
                     
-                    return True, f"{crawler_type} 업데이트가 완료되었습니다."
-                else:
-                    # 오류 상태
+                    # 오류 상태 브로드캐스트
                     await self._broadcast_progress(
                         crawler_type=crawler_type,
                         stage="오류",
-                        percent=100,
-                        message=f"{crawler_type} 업데이트 중 오류가 발생했습니다."
+                        percent=0,
+                        message=error_message
                     )
-                    return False, "업데이트 중 오류가 발생했습니다."
+                    
+                    return False
+                finally:
+                    # 크롤러 실행 상태 해제
+                    self._running_crawlers[crawler_type] = False
+                    
+                    # 다른 크롤러가 실행 중인지 확인
+                    if not any(self._running_crawlers.values()):
+                        self._is_running = False
         except Exception as e:
-            logger.error(f"{crawler_type} 크롤러 실행 중 오류: {str(e)}")
-            logger.error(traceback.format_exc())
-            
-            # 오류 메시지 명시적으로 웹소켓으로 전송
+            # 전체 프로세스 오류
             error_message = f"크롤러 실행 중 오류 발생: {str(e)}"
+            self.log_error(error_message, e)
             
             try:
-                # 오류 상태 전송
+                # 오류 상태 브로드캐스트
                 await self._broadcast_progress(
                     crawler_type=crawler_type,
                     stage="오류",
                     percent=0,
                     message=error_message
                 )
-                
-                # 특정 사용자에게도 메시지 전송
-                if user_id:
-                    await socketio_manager.send_to_specific_user(user_id, {
-                        "type": "crawler_update_error",
-                        "data": {
-                            "crawler": crawler_type,
-                            "stage": "오류",
-                            "percent": 0,
-                            "message": error_message,
-                            "isRunning": False
-                        }
-                    })
-            except Exception as ws_error:
-                logger.error(f"오류 메시지 전송 실패: {ws_error}")
+            except Exception as broadcast_error:
+                self.log_error(f"오류 메시지 전송 실패: {str(broadcast_error)}", broadcast_error)
             
-            # 상태 변수 안전하게 업데이트 (Lock 사용 없이)
-            self._running_crawlers[crawler_type] = False
-            self._is_running = False
-            
-            return False, error_message
+            return False
     
     def is_update_running(self) -> bool:
         """현재 업데이트가 진행 중인지 확인"""

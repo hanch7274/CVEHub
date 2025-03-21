@@ -223,7 +223,8 @@ class CommentService:
             # 댓글 수정
             old_content = cve.comments[comment_index].content
             cve.comments[comment_index].content = content
-            cve.comments[comment_index].updated_at = datetime.now(ZoneInfo("Asia/Seoul"))
+            cve.comments[comment_index].last_modified_at = datetime.now(ZoneInfo("UTC"))
+            cve.comments[comment_index].last_modified_by = user.username
             
             await cve.save()
             
@@ -282,7 +283,8 @@ class CommentService:
             else:
                 # 논리적 삭제 - is_deleted 플래그 설정
                 cve.comments[comment_index].is_deleted = True
-                cve.comments[comment_index].updated_at = datetime.now(ZoneInfo("Asia/Seoul"))
+                cve.comments[comment_index].last_modified_at = datetime.now(ZoneInfo("UTC"))
+                cve.comments[comment_index].last_modified_by = user.username
             
             await cve.save()
             

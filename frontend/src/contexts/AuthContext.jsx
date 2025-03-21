@@ -30,16 +30,50 @@ export const AuthProvider = ({ children }) => {
   } = useAuthQuery();
   
   // 로컬 상태 추가
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [accessToken, setAccessToken] = useState(getAccessToken());
+  const initRef = useRef(false);
+
+  // 초기 인증 상태 확인
+  useEffect(() => {
+    const checkInitialAuth = async () => {
+      try {
+        const hasAccessToken = !!getAccessToken()?.trim();
+        const hasRefreshToken = !!getRefreshToken()?.trim();
+        
+        logger.info('AuthContext', '초기 인증 상태 확인', { 
+          hasAccessToken, 
+          hasRefreshToken,
+          isLoading,
+          isAuthenticated
+        });
+        
+        // 토큰이 없으면 로딩 상태 즉시 해제
+        if (!hasAccessToken) {
+          setLoading(false);
+          return;
+        }
+        
+        // 토큰이 있으면 사용자 정보 로딩 상태 유지
+        // useAuthQuery의 쿼리가 완료되면 isLoading이 false가 됨
+        if (!isLoading) {
+          setLoading(false);
+        }
+      } catch (error) {
+        logger.error('AuthContext', '초기 인증 상태 확인 중 오류', error);
+        setLoading(false);
+      }
+    };
+    
+    checkInitialAuth();
+  }, [isLoading, isAuthenticated]);
 
   // 토큰 상태 정기 확인 (1초마다)
   useEffect(() => {
-    logger.info('AuthContext', '초기화됨');
+    if (initRef.current) return;
     
-    // 초기 토큰 상태 확인
-    const hasAccessToken = !!getAccessToken()?.trim();
-    const hasRefreshToken = !!getRefreshToken()?.trim();
+    logger.info('AuthContext', '초기화됨');
+    initRef.current = true;
     
     // 정기적으로 토큰 상태 확인
     const tokenCheckInterval = setInterval(() => {

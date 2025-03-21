@@ -5,15 +5,48 @@
  * 환경 변수는 .env 파일 또는 docker-compose.yml에서 관리됩니다.
  */
 
-// API 기본 URL - process.env 값이 없을 경우 기본값 설정
-export const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+// 브라우저 환경에서 현재 호스트 기반 URL 가져오기
+const getCurrentOrigin = () => {
+  if (typeof window !== 'undefined') {
+    return window.location.origin;
+  }
+  return null;
+};
 
-// WebSocket 기본 URL - process.env 값이 없을 경우 기본값 설정
-// Socket.IO 연결에 사용되며, 경로는 '/socket.io'로 백엔드에 마운트됨
-export const WS_BASE_URL = process.env.REACT_APP_WS_URL || 'http://localhost:8000';
+// API 기본 URL - 우선순위: 환경변수 > 현재 호스트 > 기본값
+export const API_BASE_URL = process.env.REACT_APP_API_URL || getCurrentOrigin() || 'http://localhost:8000';
+
+// WebSocket 기본 URL - 우선순위: 환경변수 > 현재 호스트 > 기본값
+// Socket.IO 연결에 사용됨
+export const WS_BASE_URL = process.env.REACT_APP_WS_URL || getCurrentOrigin() || 'http://localhost:8000';
 
 // Socket.IO 경로 설정 - 백엔드의 마운트 경로와 일치해야 함
 export const SOCKET_IO_PATH = '/socket.io';
+
+// WebSocket 연결 설정
+export const SOCKET_CONFIG = {
+  RECONNECTION: true,
+  RECONNECTION_ATTEMPTS: parseInt(process.env.REACT_APP_WS_RECONNECTION_ATTEMPTS) || 10,
+  RECONNECTION_DELAY: parseInt(process.env.REACT_APP_WS_RECONNECTION_DELAY) || 1000,
+  RECONNECTION_DELAY_MAX: parseInt(process.env.REACT_APP_WS_RECONNECTION_DELAY_MAX) || 30000,
+  TIMEOUT: parseInt(process.env.REACT_APP_WS_TIMEOUT) || 20000,
+  LOG_PING_PONG: process.env.REACT_APP_WS_LOG_PING_PONG === 'true' || false,
+  AUTO_CONNECT: false, // 수동으로 연결 관리
+  CONNECTION_CHECK_INTERVAL: 5000, // 연결 상태 체크 간격 (ms)
+  CONNECTION_CHECK_TIMEOUT: 10000, // 연결 체크 타임아웃 (ms)
+};
+
+// 인증이 필요하지 않은 공개 엔드포인트 목록
+export const PUBLIC_ENDPOINTS = [
+    '/auth/token',
+    '/auth/login',
+    '/auth/signup',
+    '/auth/refresh',
+    '/auth/verify',
+    '/auth/password/reset',
+    '/auth/password/reset/verify',
+    '/health'
+];
 
 // API 엔드포인트 설정
 export const API_ENDPOINTS = {
@@ -71,7 +104,7 @@ export const API_ENDPOINTS = {
 };
 
 // 케이스 변환 관련 설정
-export const CASE_CONVERSION = {
+export const CASE_CONVERSION_CONFIG = {
     // 변환 활성화 여부
     ENABLED: true,
     
@@ -85,3 +118,18 @@ export const CASE_CONVERSION = {
 // 기타 설정
 export const DEFAULT_ERROR_MESSAGE = '오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
 export const TOKEN_REFRESH_THRESHOLD = 5 * 60 * 1000; // 5분 (밀리초) 
+
+// 토큰 갱신 관련 설정
+export const TOKEN_REFRESH_CONFIG = {
+    // 토큰 만료 전 갱신 시작 시간 (초)
+    REFRESH_BEFORE_EXPIRY: 300, // 5분
+    
+    // 토큰 갱신 최대 재시도 횟수
+    MAX_RETRY_COUNT: 3,
+    
+    // 토큰 갱신 요청 간 최소 간격 (밀리초)
+    MIN_REFRESH_INTERVAL: 10 * 1000, // 10초
+    
+    // 디버그 모드
+    DEBUG: false
+};

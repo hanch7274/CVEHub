@@ -27,6 +27,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../utils/auth';
 import { useSnackbar } from 'notistack';
 import { SOCKET_EVENTS } from '../../../services/socketio/constants';
+import useWebSocketHook from '../../../api/hooks/useWebSocketHook';
 
 /**
  * 재사용 가능한 데이터 탭 컴포넌트
@@ -37,7 +38,7 @@ const GenericDataTab = memo(({
   currentUser,                  // 현재 사용자
   refreshTrigger,               // 새로고침 트리거
   tabConfig,                    // 탭 구성 설정
-  sendMessage,                  // 메시지 전송 함수 (상위 컴포넌트에서 전달)
+  parentSendMessage,            // 메시지 전송 함수 (상위 컴포넌트에서 전달)
 
   // 선택적 속성 (기본값 설정)
   onCountChange = () => {}      // 항목 수가 변경될 때 호출되는 콜백
@@ -50,9 +51,10 @@ const GenericDataTab = memo(({
   const [open, setOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
   const [newItem, setNewItem] = useState(tabConfig.defaultItem);
+  const [cveData, setCve] = useState(cve);
 
   // 데이터 배열 참조
-  const items = cve[tabConfig.dataField] || [];
+  const items = cveData[tabConfig.dataField] || [];
 
   // 아이템 세부 정보 업데이트 처리
   const updateItemState = (item, field, value) => {
@@ -151,37 +153,50 @@ const GenericDataTab = memo(({
 
       const updatedItems = [...items, finalItem];
       
-      const response = await api.post('/cve', {
-        cveId: cve.cveId,
-        data: { [tabConfig.dataField]: updatedItems }
-      });
+      try {
+        const response = await api.patch(`/cves/${cveData.cveId}`, {
+          [tabConfig.dataField]: updatedItems
+        }, {
+          skipAuthRefresh: false // 명시적으로 skipAuthRefresh 설정
+        });
 
-      if (response) {
-        // WebSocket 메시지 전송 - 필드 정보 추가
-        await sendMessage(
-          SOCKET_EVENTS.DATA_UPDATED,
-          {
-            cveId: cve.cveId,
-            field: tabConfig.wsFieldName,
-            cve: response.data
-          }
-        );
-        
-        // 포커스 해제 후 상태 업데이트
-        document.activeElement?.blur();
-        setTimeout(() => {
-          setOpen(false);
-          setNewItem(tabConfig.defaultItem);
+        if (response) {
+          // 즉시 UI 업데이트 (낙관적 업데이트)
+          setCve(prevCve => ({
+            ...prevCve,
+            [tabConfig.dataField]: updatedItems
+          }));
           
-          // 성공 메시지 표시
-          enqueueSnackbar(`${tabConfig.itemName}이(가) 추가되었습니다.`, { variant: 'success' });
-        }, 0);
+          // WebSocket 메시지 전송 - 필드 정보 추가
+          await parentSendMessage(
+            SOCKET_EVENTS.DATA_UPDATED,
+            {
+              cveId: cveData.cveId,
+              field: tabConfig.wsFieldName,
+              cve: response.data
+            },
+            null
+          );
+          
+          // 포커스 해제 후 상태 업데이트
+          document.activeElement?.blur();
+          setTimeout(() => {
+            setOpen(false);
+            setNewItem(tabConfig.defaultItem);
+            
+            // 성공 메시지 표시
+            enqueueSnackbar(`${tabConfig.itemName}이(가) 추가되었습니다.`, { variant: 'success' });
+          }, 0);
+        }
+      } catch (error) {
+        console.error(`Failed to add ${tabConfig.itemName}:`, error);
+        enqueueSnackbar(error.message || `${tabConfig.itemName} 추가 중 오류가 발생했습니다.`, { variant: 'error' });
+      } finally {
+        setLoading(false);
       }
     } catch (error) {
-      console.error(`Failed to add ${tabConfig.itemName}:`, error);
+      console.error(`[${tabConfig.itemName}Tab] Error in handleAddItem:`, error);
       enqueueSnackbar(error.message || `${tabConfig.itemName} 추가 중 오류가 발생했습니다.`, { variant: 'error' });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -194,29 +209,42 @@ const GenericDataTab = memo(({
       // 기존 아이템 배열에서 해당 인덱스만 제외
       const updatedItems = items.filter((_, i) => i !== index);
 
-      const response = await api.post('/cve', {
-        cveId: cve.cveId,
-        data: { [tabConfig.dataField]: updatedItems }
-      });
+      try {
+        const response = await api.patch(`/cves/${cveData.cveId}`, {
+          [tabConfig.dataField]: updatedItems
+        }, {
+          skipAuthRefresh: false // 명시적으로 skipAuthRefresh 설정
+        });
 
-      if (response) {
-        // WebSocket 메시지 전송 - 필드 정보 추가
-        await sendMessage(
-          SOCKET_EVENTS.DATA_UPDATED,
-          {
-            cveId: cve.cveId,
-            field: tabConfig.wsFieldName,
-            cve: response.data
-          }
-        );
-        
-        enqueueSnackbar(`${tabConfig.itemName}이(가) 삭제되었습니다.`, { variant: 'success' });
+        if (response) {
+          // 즉시 UI 업데이트 (낙관적 업데이트)
+          setCve(prevCve => ({
+            ...prevCve,
+            [tabConfig.dataField]: updatedItems
+          }));
+          
+          // WebSocket 메시지 전송 - 필드 정보 추가
+          await parentSendMessage(
+            SOCKET_EVENTS.DATA_UPDATED,
+            {
+              cveId: cveData.cveId,
+              field: tabConfig.wsFieldName,
+              cve: response.data
+            },
+            null
+          );
+          
+          enqueueSnackbar(`${tabConfig.itemName}이(가) 삭제되었습니다.`, { variant: 'success' });
+        }
+      } catch (error) {
+        console.error(`Failed to delete ${tabConfig.itemName}:`, error);
+        enqueueSnackbar(error.message || `${tabConfig.itemName} 삭제 중 오류가 발생했습니다.`, { variant: 'error' });
+      } finally {
+        setLoading(false);
       }
     } catch (error) {
-      console.error(`Failed to delete ${tabConfig.itemName}:`, error);
+      console.error(`[${tabConfig.itemName}Tab] Error in handleDeleteItem:`, error);
       enqueueSnackbar(error.message || `${tabConfig.itemName} 삭제 중 오류가 발생했습니다.`, { variant: 'error' });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -250,40 +278,52 @@ const GenericDataTab = memo(({
         tabConfig.prepareItemForSave(updatedItemData, true, kstTime) : 
         updatedItemData;
 
-      // 기존 아이템 배열을 복사하고 선택된 인덱스의 데이터만 업데이트
-      const updatedItems = items.map((item, index) =>
-        index === selectedItem.id ? finalItem : item
+      const updatedItems = items.map((item, i) =>
+        i === selectedItem.id ? finalItem : item
       );
 
-      const response = await api.post('/cve', {
-        cveId: cve.cveId,
-        data: { [tabConfig.dataField]: updatedItems }
-      });
+      try {
+        const response = await api.patch(`/cves/${cveData.cveId}`, {
+          [tabConfig.dataField]: updatedItems
+        }, {
+          skipAuthRefresh: false // 명시적으로 skipAuthRefresh 설정
+        });
 
-      if (response) {
-        // WebSocket 메시지 전송 - 필드 정보 추가
-        await sendMessage(
-          SOCKET_EVENTS.DATA_UPDATED,
-          {
-            cveId: cve.cveId,
-            field: tabConfig.wsFieldName,
-            cve: response.data
-          }
-        );
-        
-        // 포커스 해제 후 상태 업데이트
-        document.activeElement?.blur();
-        setTimeout(() => {
-          enqueueSnackbar(`${tabConfig.itemName}이(가) 수정되었습니다.`, { variant: 'success' });
-          setOpen(false);
-          setSelectedItem(null);
-        }, 0);
+        if (response) {
+          // 즉시 UI 업데이트 (낙관적 업데이트)
+          setCve(prevCve => ({
+            ...prevCve,
+            [tabConfig.dataField]: updatedItems
+          }));
+          
+          // WebSocket 메시지 전송 - 필드 정보 추가
+          await parentSendMessage(
+            SOCKET_EVENTS.DATA_UPDATED,
+            {
+              cveId: cveData.cveId,
+              field: tabConfig.wsFieldName,
+              cve: response.data
+            },
+            null
+          );
+          
+          // 포커스 해제 후 상태 업데이트
+          document.activeElement?.blur();
+          setTimeout(() => {
+            enqueueSnackbar(`${tabConfig.itemName}이(가) 수정되었습니다.`, { variant: 'success' });
+            setOpen(false);
+            setSelectedItem(null);
+          }, 0);
+        }
+      } catch (error) {
+        console.error(`[${tabConfig.itemName}Tab] Error in handleUpdateItem:`, error);
+        enqueueSnackbar(error.message || `${tabConfig.itemName} 수정 중 오류가 발생했습니다.`, { variant: 'error' });
+      } finally {
+        setLoading(false);
       }
     } catch (error) {
       console.error(`[${tabConfig.itemName}Tab] Error in handleUpdateItem:`, error);
       enqueueSnackbar(error.message || `${tabConfig.itemName} 수정 중 오류가 발생했습니다.`, { variant: 'error' });
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -301,6 +341,24 @@ const GenericDataTab = memo(({
       }
     }, 0);
   };
+
+  // 웹소켓 훅 사용
+  const { sendMessage } = useWebSocketHook(
+    SOCKET_EVENTS.DATA_UPDATED,
+    (data) => {
+      // 이벤트 수신 시 처리 로직
+      if (data?.cveId === cveData.cveId && data?.field === tabConfig.wsFieldName) {
+        console.debug('GenericDataTab', `${tabConfig.itemName} 데이터 업데이트 이벤트 수신`, {
+          cveId: data.cveId,
+          field: data.field
+        });
+      }
+    },
+    {
+      optimisticUpdate: true,
+      queryKey: ['cve', cveData.cveId]
+    }
+  );
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>

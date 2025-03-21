@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useCallback, useState, useRef } from 'react';
-import { cveService } from '../services/cveService';
-import logger from '../../utils/logger';
+import cveService from '../services/cveService';
+import logger from '../../utils/logging';
 import { QUERY_KEYS } from '../queryKeys';
 import { useSocketIO } from '../../contexts/SocketIOContext';
 import { SOCKET_EVENTS } from '../../services/socketio/constants';
@@ -10,6 +10,7 @@ import { SOCKET_EVENTS } from '../../services/socketio/constants';
 const SUBSCRIPTION_EVENTS = {
   SUBSCRIPTION_ERROR: 'subscription:error',
   UNSUBSCRIPTION_ERROR: 'unsubscription:error'
+  // SUBSCRIBE_CVES와 UNSUBSCRIBE_CVES는 SOCKET_EVENTS로 이동
 };
 
 /**
@@ -26,14 +27,40 @@ export const useCVEList = (filters = {}, options = {}, customService = cveServic
     queryKey: QUERY_KEYS.CVE.list(filters),
     queryFn: async () => {
       try {
-        return await customService.getCVEs(filters);
+        logger.info('useCVEList', '목록 조회 요청', { filters });
+        
+        // 모든 경우에 getCVEs 메서드 사용 (search 파라미터도 함께 전달)
+        const result = await customService.getCVEs(filters);
+        
+        // 결과 형식 일관성 유지
+        if (!result.total && result.totalItems) {
+          result.total = result.totalItems;
+        }
+        
+        if (!result.items && result.results) {
+          result.items = result.results;
+        }
+        
+        logger.info('useCVEList', '목록 조회 결과', { 
+          totalItems: result.total || result.totalItems || 0,
+          itemsCount: result.items?.length || result.results?.length || 0,
+          page: filters.page || 1
+        });
+        
+        return result;
       } catch (error) {
-        logger.error('useCVEList', '목록 조회 중 오류 발생', { error: error.message, filters });
+        logger.error('useCVEList', '목록 조회 중 오류 발생', { 
+          error: error.message, 
+          filters,
+          stack: error.stack 
+        });
         throw error;
       }
     },
     keepPreviousData: true, // 페이지네이션시 이전 데이터 유지
-    staleTime: 30000, // 30초 동안 데이터를 fresh하게 유지
+    staleTime: 10000, // 10초 동안 데이터를 fresh하게 유지 (30초에서 10초로 단축)
+    cacheTime: 60000, // 1분 동안 캐시 유지
+    refetchOnWindowFocus: true, // 창이 포커스될 때 자동으로 새로고침
     onError: (error) => {
       logger.error('useCVEList', '쿼리 에러 처리', { error: error.message });
     },
@@ -78,24 +105,41 @@ export const useCVEListQuery = (params = {}) => {
 export const useCVEDetail = (cveId, options = {}, customService = cveService) => {
   const queryClient = useQueryClient();
   
+  // 기본 옵션 설정
+  const defaultOptions = {
+    enabled: !!cveId,
+    retry: 1, // 재시도 횟수 제한
+    retryDelay: 500, // 재시도 간격 (1000ms에서 500ms로 단축)
+    staleTime: 10000, // 10초 동안 데이터를 fresh하게 유지 (60초에서 10초로 단축)
+    cacheTime: 60000, // 1분 동안 캐시 유지 (1시간에서 1분으로 단축)
+    refetchOnWindowFocus: true, // 창이 포커스될 때 자동으로 새로고침
+    refetchOnMount: true, // 컴포넌트가 마운트될 때 자동으로 새로고침
+  };
+  
+  // 사용자 옵션과 기본 옵션 병합
+  const mergedOptions = { ...defaultOptions, ...options };
+  
+  // useQuery 호출
   return useQuery({
     queryKey: QUERY_KEYS.CVE.detail(cveId),
     queryFn: async () => {
       try {
-        return await customService.getCVEById(cveId);
+        logger.info('useCVEDetail', 'CVE 상세 조회 요청', { cveId });
+        const startTime = Date.now();
+        const result = await customService.getCVEById(cveId);
+        const endTime = Date.now();
+        logger.info('useCVEDetail', 'CVE 상세 조회 완료', { 
+          cveId, 
+          elapsedTime: `${endTime - startTime}ms`,
+          dataSize: JSON.stringify(result).length
+        });
+        return result;
       } catch (error) {
         logger.error('useCVEDetail', '상세 정보 조회 중 오류 발생', { cveId, error: error.message });
         throw error;
       }
     },
-    enabled: !!cveId, // cveId가 있을 때만 쿼리 활성화
-    staleTime: 60000, // 1분 동안 데이터를 fresh하게 유지
-    retry: 2, // 최대 2번까지만 재시도
-    retryDelay: 1000, // 재시도 간격 1초
-    onError: (error) => {
-      logger.error('useCVEDetail', '쿼리 에러 처리', { cveId, error: error.message });
-    },
-    ...options,
+    ...mergedOptions
   });
 };
 
@@ -109,23 +153,28 @@ export const useCVEDetail = (cveId, options = {}, customService = cveService) =>
 export const useCVERefresh = (cveId, options = {}, customService = cveService) => {
   const queryClient = useQueryClient();
   
-  return {
-    refresh: async () => {
-      try {
-        logger.info('useCVERefresh', '강제 새로고침 요청', { cveId });
-        const data = await customService.getCVEByIdNoCache(cveId);
-        
-        // 캐시 업데이트
-        queryClient.setQueryData(QUERY_KEYS.CVE.detail(cveId), data);
-        // 목록 쿼리 무효화 (선택 사항)
-        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
-        
-        return data;
-      } catch (error) {
-        logger.error('useCVERefresh', '강제 새로고침 중 오류 발생', { cveId, error: error.message });
-        throw error;
-      }
+  const refreshFn = async () => {
+    try {
+      logger.info('useCVERefresh', '강제 새로고침 요청', { cveId });
+      const data = await customService.getCVEByIdNoCache(cveId);
+      
+      // 캐시 업데이트
+      queryClient.setQueryData(QUERY_KEYS.CVE.detail(cveId), data);
+      // 목록 쿼리 무효화 (선택 사항)
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
+      
+      return data;
+    } catch (error) {
+      logger.error('useCVERefresh', '강제 새로고침 중 오류 발생', { cveId, error: error.message });
+      throw error;
     }
+  };
+
+  // React Query의 useMutation 패턴과 유사한 인터페이스 제공
+  return {
+    mutate: refreshFn,
+    isLoading: false, // 단순화된 구현
+    refresh: refreshFn // 기존 호환성 유지
   };
 };
 
@@ -267,8 +316,12 @@ export const useCVEListUpdates = () => {
     socket.on('cve:deleted', handleCVEDeleted);
 
     // 구독 요청
-    socket.emit('subscribe:cves');
-    logger.info('useCVEListUpdates', 'CVE 업데이트 구독 요청 전송');
+    socket.emit(SOCKET_EVENTS.SUBSCRIBE_CVES);
+    logger.info('useCVEListUpdates', 'CVE 업데이트 구독 요청 전송', {
+      eventName: SOCKET_EVENTS.SUBSCRIBE_CVES,
+      socketId: socket.id,
+      connected
+    });
 
     // 클린업 함수
     return () => {
@@ -279,8 +332,12 @@ export const useCVEListUpdates = () => {
       socket.off('cve:deleted', handleCVEDeleted);
       
       // 구독 해제
-      socket.emit('unsubscribe:cves');
-      logger.info('useCVEListUpdates', 'CVE 업데이트 구독 해제 요청 전송');
+      socket.emit(SOCKET_EVENTS.UNSUBSCRIBE_CVES);
+      logger.info('useCVEListUpdates', 'CVE 업데이트 구독 해제 요청 전송', {
+        eventName: SOCKET_EVENTS.UNSUBSCRIBE_CVES,
+        socketId: socket.id,
+        connected
+      });
     };
   }, [socket, connected, handleCVECreated, handleCVEUpdated, handleCVEDeleted]);
 
@@ -375,7 +432,22 @@ export const useCVESubscription = (cveId) => {
         timestamp: new Date().toISOString()
       });
       
-      // 구독 요청 전송
+      // 구독 요청 전송 - 이벤트 이름 명시적 지정
+      if (!SOCKET_EVENTS.SUBSCRIBE_CVE) {
+        logger.error('[useCVESubscription] SUBSCRIBE_CVE 이벤트 상수가 정의되지 않았습니다.');
+        setError('내부 오류가 발생했습니다. 관리자에게 문의하세요.');
+        setIsLoading(false);
+        return false;
+      }
+      
+      // 이벤트 이름과 데이터를 명확하게 로깅
+      logger.debug('[useCVESubscription] 소켓 이벤트 발생', {
+        eventName: SOCKET_EVENTS.SUBSCRIBE_CVE,
+        data: { cveId },
+        socketId: currentSocket.id
+      });
+      
+      // 이벤트 이름을 명시적으로 지정하여 emit 호출
       currentSocket.emit(SOCKET_EVENTS.SUBSCRIBE_CVE, { cveId });
       
       // 이전 타임아웃이 있으면 제거
@@ -438,7 +510,14 @@ export const useCVESubscription = (cveId) => {
         timestamp: new Date().toISOString()
       });
       
-      // 구독 해제 요청 전송
+      // 이벤트 이름과 데이터를 명확하게 로깅
+      logger.debug('[useCVESubscription] 소켓 이벤트 발생', {
+        eventName: SOCKET_EVENTS.UNSUBSCRIBE_CVE,
+        data: { cveId },
+        socketId: currentSocket.id
+      });
+      
+      // 구독 해제 요청 전송 - 이벤트 이름 명시적 지정
       currentSocket.emit(SOCKET_EVENTS.UNSUBSCRIBE_CVE, { cveId });
       
       // 이전 타임아웃이 있으면 제거
@@ -553,6 +632,12 @@ export const useCVESubscription = (cveId) => {
     socket.on(SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED, handleSubscribersUpdated);
     
     // 초기 구독 상태 확인 요청
+    logger.debug('[useCVESubscription] 소켓 이벤트 발생', {
+      eventName: SOCKET_EVENTS.GET_CVE_SUBSCRIBERS,
+      data: { cveId },
+      socketId: socket.id
+    });
+    
     socket.emit(SOCKET_EVENTS.GET_CVE_SUBSCRIBERS, { cveId });
     
     logger.info('[useCVESubscription] 소켓 이벤트 리스너 등록 완료', {

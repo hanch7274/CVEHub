@@ -10,24 +10,28 @@ class PoC(BaseModel):
     source: Literal["Etc", "Metasploit", "Nuclei-Templates"]
     url: str
     description: Optional[str] = None
-    date_added: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
-    added_by: str = "anonymous"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    added_by: str = Field(..., description="추가한 사용자")
+    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
+    last_modified_by: str = Field(..., description="마지막 수정자")
 
 class SnortRule(BaseModel):
     rule: str = Field(..., description="Snort Rule 내용")
     type: str = Field(..., description="Rule 타입")
     description: Optional[str] = Field(None, description="Rule 설명")
-    date_added: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
-    added_by: Optional[str] = None
-    last_modified_at: Optional[datetime] = None
-    last_modified_by: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    added_by: str = Field(..., description="추가한 사용자")
+    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
+    last_modified_by: str = Field(..., description="마지막 수정자")
 
 class Reference(BaseModel):
     url: str = Field(..., description="참조 URL")
     type: str = Field(default="OTHER", description="참조 타입")
     description: Optional[str] = Field(None, description="참조 설명")
-    date_added: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
-    added_by: str = Field(default="anonymous", description="추가한 사용자")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    added_by: str = Field(..., description="추가한 사용자")
+    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
+    last_modified_by: str = Field(..., description="마지막 수정자")
 
 class Comment(BaseModel):
     id: str = Field(default_factory=lambda: str(ObjectId()))  # ObjectId 사용
@@ -36,8 +40,9 @@ class Comment(BaseModel):
     parent_id: Optional[str] = None  # 부모 댓글 ID
     depth: int = 0  # 댓글 깊이 (0: 최상위, 1: 대댓글, 2: 대대댓글, ...)
     is_deleted: bool = False  # 삭제 여부
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
-    updated_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
+    last_modified_by: str = Field(..., description="마지막 수정자")
 
     @property
     def mentions(self) -> List[str]:
@@ -54,6 +59,7 @@ class CommentCreate(BaseModel):
     content: str
     parent_id: Optional[str] = None
     depth: int = 0
+    last_modified_by: str = Field(..., description="마지막 수정자")
 
     @property
     def extract_mentions(self) -> List[str]:
@@ -117,7 +123,7 @@ class ChangeItem(BaseModel):
 
 class ModificationHistory(BaseModel):
     username: str  # 수정한 사용자 이름
-    modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
+    modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
     changes: List[ChangeItem] = Field(
         description="변경사항 목록",
         example=[
@@ -148,9 +154,11 @@ class CVEModel(Document):
     description: Optional[str] = None
     status: str = "신규등록"  # 신규등록, 분석중, 릴리즈 완료, 분석불가
     assigned_to: Optional[str] = None
-    last_modified_date: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
-    created_by: str = "anonymous"
+    severity: Optional[str] = None  # 심각도 필드 추가
+    last_modified_date: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    created_by: str = Field(..., description="추가한 사용자")
+    last_modified_by: str = Field(..., description="마지막 수정자")
     modification_history: List[ModificationHistory] = []
     pocs: List[PoC] = []
     snort_rules: List[SnortRule] = Field(default_factory=list, description="Snort Rules")
@@ -191,7 +199,7 @@ class CVEModel(Document):
 
     class Config:
         json_encoders = {
-            datetime: lambda v: v.replace(tzinfo=ZoneInfo("Asia/Seoul")).isoformat() if v else None,
+            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat() if v else None,
             ObjectId: str
         }
         json_schema_extra = {
@@ -200,8 +208,8 @@ class CVEModel(Document):
                 "title": "Buffer overflow vulnerability in Example Software",
                 "description": "Buffer overflow vulnerability in Example Software",
                 "status": "신규등록",
-                "last_modified_date": datetime.now(ZoneInfo("Asia/Seoul")),
-                "created_at": datetime.now(ZoneInfo("Asia/Seoul")),
+                "last_modified_date": datetime.now(ZoneInfo("UTC")),
+                "created_at": datetime.now(ZoneInfo("UTC")),
                 "created_by": "anonymous",
                 "modification_history": [],
                 "pocs": [],
@@ -223,7 +231,7 @@ class CreateCVERequest(BaseModel):
 
     class Config:
         json_encoders = {
-            datetime: lambda v: v.replace(tzinfo=ZoneInfo("Asia/Seoul")).isoformat() if v else None
+            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat() if v else None
         }
 
 class PatchCVERequest(BaseModel):

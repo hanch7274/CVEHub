@@ -112,7 +112,8 @@ class CrawlerService:
                 logger.error(f"Invalid crawler type: {crawler_type}")
                 return {
                     "success": False,
-                    "message": f"유효하지 않은 크롤러 유형입니다. 사용 가능한 유형: {', '.join(available_crawlers)}"
+                    "message": f"유효하지 않은 크롤러 유형입니다. 사용 가능한 유형: {', '.join(available_crawlers)}",
+                    "stage": "error"
                 }
             
             # 이미 실행 중인지 확인
@@ -122,7 +123,7 @@ class CrawlerService:
                 return {
                     "success": False,
                     "message": f"이미 {current_status.get('crawler_type')} 크롤러가 실행 중입니다 ({current_status.get('progress')}%)",
-                    "status": "already_running",
+                    "stage": "already_running",
                     "crawler_type": current_status.get('crawler_type'),
                     "progress": current_status.get('progress')
                 }
@@ -151,14 +152,16 @@ class CrawlerService:
             return {
                 "success": True,
                 "message": f"{crawler_type} 크롤러가 백그라운드에서 실행 중입니다",
-                "status": "running",
+                "stage": "running",
                 "crawler_type": crawler_type
             }
         except Exception as e:
             logger.error(f"Run crawler error: {str(e)}")
             return {
                 "success": False,
-                "message": f"크롤러 실행 중 오류가 발생했습니다: {str(e)}"
+                "message": f"크롤러 실행 중 오류가 발생했습니다: {str(e)}",
+                "stage": "error",
+                "crawler_type": crawler_type if 'crawler_type' in locals() else "unknown"
             }
 
     async def get_crawler_status(self) -> Dict[str, Any]:

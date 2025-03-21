@@ -1,5 +1,13 @@
 import PropTypes from 'prop-types';
-import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
+import React, { 
+  useState, 
+  useEffect, 
+  useRef, 
+  useCallback, 
+  useMemo,
+  memo,
+  useLayoutEffect 
+} from 'react';
 import { useSocketIO } from '../../contexts/SocketIOContext';
 import { useSnackbar } from 'notistack';
 import {
@@ -7,6 +15,7 @@ import {
   DialogContent,
   DialogTitle,
   DialogActions,
+  DialogContentText,
   Card,
   CardContent,
   Grid,
@@ -46,7 +55,7 @@ import {
 import CommentsTab from './components/CommentsTab';
 import HistoryTab from './components/HistoryTab';
 import InlineEditText from './components/InlineEditText';
-import logger from '../../utils/logger';
+import logger from '../../utils/logging';
 import {
   useCVEDetail,
   useCVERefresh,
@@ -54,6 +63,9 @@ import {
 } from '../../api/hooks/useCVEQuery';
 import { useUpdateCVEField } from '../../api/hooks/useCVEMutation';
 import { useAuth } from '../../contexts/AuthContext';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { QUERY_KEYS } from '../../api/queryKeys';
+import { formatForDisplay } from '../../utils/dateUtils';
 
 // 활성 댓글 개수 계산
 const countActiveComments = (comments) => {
@@ -80,6 +92,23 @@ const getStatusColor = (status) => {
     case '릴리즈 완료': return '#4caf50';
     case '분석불가':    return '#f44336';
     default:           return '#757575';
+  }
+};
+
+// 상태 카드 스타일
+const statusCardStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  justifyContent: 'center',
+  padding: '8px 12px',
+  minHeight: '60px',
+  border: '1px solid',
+  borderRadius: 1,
+  cursor: 'pointer',
+  transition: 'all 0.2s',
+  '&:hover': {
+    backgroundColor: 'rgba(0, 0, 0, 0.04)',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
   }
 };
 
@@ -120,24 +149,6 @@ const tabConfig = [
     description: '수정 이력'
   }
 ];
-
-const statusCardStyle = {
-  p: 1.5,
-  border: 1,
-  borderColor: 'divider',
-  borderRadius: 2,
-  cursor: 'pointer',
-  transition: 'all 0.2s',
-  display: 'flex',
-  alignItems: 'center',
-  gap: 1,
-  minHeight: '60px',
-  flex: 1,
-  '&:hover': {
-    bgcolor: 'action.hover',
-    transform: 'translateY(-1px)'
-  }
-};
 
 const SubscriberCount = memo(({ subscribers = [] }) => {
   const hasSubscribers = Array.isArray(subscribers) && subscribers.length > 0;
@@ -218,14 +229,15 @@ SubscriberCount.propTypes = {
 
 const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
-  const { socket, connected: isConnected } = useSocketIO();
+  const { socket, connected } = useSocketIO();
   const { user: currentUser } = useAuth();
+  const queryClient = useQueryClient();
 
   // 로컬 상태
   const [activeTab, setActiveTab] = useState(0);
-  const [detailExpanded, setDetailExpanded] = useState(true);
-  const [loading, setLoading] = useState(false); // 초기값을 false로 변경
-  const [errorMessage, setErrorMessage] = useState(null);
+  const [detailExpanded, setDetailExpanded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const [isCached, setIsCached] = useState(false);
   const [localSubscribers, setLocalSubscribers] = useState([]);
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
@@ -247,10 +259,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     comments: 0
   });
 
-  // 폴백 타이머 및 이전 상태 참조
-  const fallbackTimers = useRef({});
-  // 미사용 변수이지만 향후 사용 가능성이 있으므로 주석 처리
-  // const previousSubscribersRef = useRef([]);
+  // 불필요한 타이머 관련 ref 제거
   const snackbarShown = useRef(false);
   const refreshTriggersRef = useRef(refreshTriggers);
   const lastProcessedUpdateIdRef = useRef({});
@@ -267,25 +276,47 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     unsubscribe, 
     isSubscribed,
     subscribers = [],
-    // 미사용 변수들이지만 향후 사용 가능성이 있으므로 주석 처리
-    // isLoading: isSubscriptionLoading,
-    // error: subscriptionError
   } = useCVESubscription(propsCveId);
+
+  // 사용자가 로그인 후 처음 데이터를 로드하는지 확인하는 ref
+  const isFirstLoadRef = useRef(true);
+
+  useLayoutEffect(() => {
+    // detailExpanded 상태가 바뀌면 지연 시간을 둔 후 높이 조정 (리사이징 무한 루프 방지)
+    let resizeTimer;
+    if (detailExpanded) {
+      resizeTimer = setTimeout(() => {
+        const descriptionContainer = document.querySelector('.description-container');
+        if (descriptionContainer) {
+          // expanded 상태에서는 내용에 맞게 높이 조정
+          descriptionContainer.style.height = 'auto';
+          descriptionContainer.style.maxHeight = '400px';
+        }
+      }, 50);
+    } else {
+      resizeTimer = setTimeout(() => {
+        const descriptionContainer = document.querySelector('.description-container');
+        if (descriptionContainer) {
+          // 축소 상태에서는 고정 높이
+          descriptionContainer.style.height = '60px';
+          descriptionContainer.style.maxHeight = '60px';
+        }
+      }, 50);
+    }
+    
+    return () => clearTimeout(resizeTimer);
+  }, [detailExpanded]);
 
   // React Query를 사용한 CVE 상세 정보 조회
   const {
     data: cveData,
     isLoading: isQueryLoading,
-    // 미사용 변수들이지만 향후 사용 가능성이 있으므로 주석 처리
-    // isError: isQueryError,
-    // error: queryError,
+    isFetching,
+    dataUpdatedAt,
     refetch: refetchCveDetail,
-    // isFetching
   } = useCVEDetail(propsCveId, {
+    // enabled 옵션 단순화: 모달이 열려있고 propsCveId가 있을 때만 자동으로 쿼리 실행
     enabled: !!propsCveId && open,
-    retry: 1, // 재시도 횟수 제한
-    retryDelay: 1000, // 재시도 간격
-    staleTime: 60000, // 1분 동안 데이터를 fresh하게 유지
     onSuccess: (data) => {
       logger.info('CVEDetail', '데이터 로딩 성공', { dataReceived: !!data });
       
@@ -302,7 +333,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       // 탭 카운트 업데이트
       updateTabCounts(data);
       setIsCached(false);
-      setLoading(false); // 로딩 상태 명시적 해제
+      setLoading(false); // 로딩 상태 해제
     },
     onError: (err) => {
       logger.error('CVEDetail', '데이터 로딩 실패', { error: err.message });
@@ -315,11 +346,26 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
         });
         snackbarShown.current = false;
       }
-      setErrorMessage(err.message || '데이터 로딩 실패');
-      setLoading(false); // 로딩 상태 명시적 해제
-      setErrorDialogOpen(true); // 에러 발생 시 에러 다이얼로그 표시
+      setError(err.message || '데이터 로딩 실패');
+      setLoading(false); // 로딩 상태 해제
+      setErrorDialogOpen(true);
     }
   });
+  
+  // 데이터가 캐시에서 왔는지 확인하는 메모이즈된 값
+  const isDataFromCache = useMemo(() => {
+    if (cveData && dataUpdatedAt) {
+      const cacheThreshold = 30 * 1000;
+      const now = new Date().getTime();
+      return (now - dataUpdatedAt) > cacheThreshold;
+    }
+    return false;
+  }, [cveData, dataUpdatedAt]);
+
+  // 캐시 상태 업데이트
+  useEffect(() => {
+    setIsCached(isDataFromCache);
+  }, [isDataFromCache]);
   
   // 탭 카운트 업데이트 함수
   const updateTabCounts = useCallback((data) => {
@@ -340,22 +386,13 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
   
   // 필드 업데이트 뮤테이션
   const { mutate: updateCVEField } = useUpdateCVEField();
-  // 미사용 변수이지만 향후 사용 가능성이 있으므로 주석 처리
-  // const { mutate: updateCVEField, isLoading: isUpdating } = useUpdateCVEField();
 
-  // 웹소켓 메시지 핸들러
+  // 웹소켓 메시지 핸들러 - React Query 캐시 무효화 활용
   const handleWebSocketUpdate = useCallback((data) => {
     logger.info('CVEDetail', '웹소켓 업데이트 수신', data);
     if (!data) return;
     
     const fieldKey = data.field || 'general';
-    
-    // 폴백 타이머가 있으면 취소
-    if (fallbackTimers.current[fieldKey]) {
-      logger.info('CVEDetail', `폴백 타이머 취소: ${fieldKey}`);
-      clearTimeout(fallbackTimers.current[fieldKey]);
-      fallbackTimers.current[fieldKey] = null;
-    }
     
     // 이미 처리된 업데이트인지 확인 (중복 방지)
     const currentTrigger = refreshTriggersRef.current[fieldKey] || 0;
@@ -378,36 +415,53 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       return newTriggers;
     });
     
-    // 데이터 새로고침
-    if (fieldKey !== 'comments') {
-      // 코멘트가 아닌 다른 필드가 업데이트되면 데이터 전체 새로고침
-      refetchCveDetail();
+    // React Query 캐시 무효화를 통한 데이터 갱신 - 로딩 중이 아닐 때만 실행
+    if (fieldKey !== 'comments' && !loading && !isQueryLoading) {
+      logger.info('CVEDetail', `${fieldKey} 필드 업데이트로 인한 캐시 무효화`);
+      // 캐시 무효화만 수행하고 React Query가 자동으로 refetch하도록 함
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(propsCveId) });
     }
     
     // 리프레시 알림
     if (!snackbarShown.current) {
       snackbarShown.current = true;
-      const fieldName = fieldKey === 'all' ? '전체' : 
-        fieldKey === 'poc' ? 'PoC' :
-        fieldKey === 'snortRules' ? 'Snort Rules' :
-        fieldKey === 'references' ? '참고자료' :
-        fieldKey === 'comments' ? '댓글' : fieldKey;
       
-      enqueueSnackbar(`${fieldName} 데이터가 업데이트되었습니다`, {
-        variant: 'info',
+      // 필드 이름을 사용자 친화적으로 변환
+      let fieldName;
+      switch(fieldKey) {
+        case 'all': fieldName = '전체'; break;
+        case 'poc': fieldName = 'PoC'; break;
+        case 'snortRules': fieldName = 'Snort Rules'; break;
+        case 'references': fieldName = '참고자료'; break;
+        case 'comments': fieldName = '댓글'; break;
+        case 'status': fieldName = '상태'; break;
+        case 'title': fieldName = '제목'; break;
+        case 'description': fieldName = '설명'; break;
+        default: fieldName = fieldKey;
+      }
+      
+      // 스낵바 메시지 표시
+      enqueueSnackbar(`${fieldName} 필드가 성공적으로 업데이트되었습니다`, {
+        variant: 'success',
         autoHideDuration: 2000,
         onClose: () => { snackbarShown.current = false; }
       });
     }
     
     setLoading(false);
-  }, [enqueueSnackbar, refetchCveDetail]);
+  }, [enqueueSnackbar, propsCveId, queryClient, loading, isQueryLoading]);
 
-  // Socket.IO 업데이트 리스너
+  // Socket.IO 업데이트 리스너 - 간소화
   useEffect(() => {
-    if (!propsCveId || !isConnected || !socket) return;
+    if (!propsCveId || !open) return;
     
     logger.info('CVEDetail', `${propsCveId} 업데이트 이벤트 리스닝 시작`);
+    
+    // 소켓 객체가 없거나 연결되지 않은 경우 조기 반환
+    if (!socket) {
+      logger.warn('CVEDetail', '소켓 객체가 초기화되지 않았습니다. 실시간 업데이트가 제한됩니다.');
+      return;
+    }
     
     const handleCVEUpdated = (data) => {
       if (data && (data.cveId === propsCveId || data.id === propsCveId)) {
@@ -416,23 +470,105 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       }
     };
     
-    // Socket.IO 이벤트 등록
-    socket.on('cve_updated', handleCVEUpdated);
-    
-    return () => {
-      socket.off('cve_updated', handleCVEUpdated);
-    };
-  }, [propsCveId, isConnected, socket, handleWebSocketUpdate]);
+    try {
+      // Socket.IO 이벤트 등록
+      socket.on('cve_updated', handleCVEUpdated);
+      
+      return () => {
+        // 이벤트 리스너 제거 시도 (소켓이 여전히 존재하는 경우만)
+        if (socket) {
+          socket.off('cve_updated', handleCVEUpdated);
+        }
+      };
+    } catch (error) {
+      logger.error('CVEDetail', '소켓 이벤트 리스너 설정 중 오류 발생', {
+        error: error.message,
+        stack: error.stack
+      });
+      return () => {}; // 오류 발생 시 빈 클린업 함수 반환
+    }
+  }, [propsCveId, open, socket, handleWebSocketUpdate]);
+
+  // 필드 업데이트 처리 - React Query 활용
+  const handleFieldUpdate = useCallback((field, value) => {
+    if (!propsCveId || !field) return;
+    setLoading(true);
+    updateCVEField(
+      { cveId: propsCveId, fieldName: field, fieldValue: value },
+      {
+        onSuccess: () => {
+          logger.info('CVEDetail', `필드 업데이트 성공: ${field}`);
+          queryClient.invalidateQueries({
+            predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === QUERY_KEYS.CVE.list
+          });
+          setLoading(false);
+        },
+        onError: (err) => {
+          enqueueSnackbar(`업데이트 실패: ${err.message || '알 수 없는 오류'}`, {
+            variant: 'error',
+            anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+          });
+          setLoading(false);
+        }
+      }
+    );
+  }, [propsCveId, updateCVEField, enqueueSnackbar, queryClient]);
+
+  // 모달을 열 때 데이터 새로고침 - 수정
+  useEffect(() => {
+    // open 상태가 변경될 때만 실행
+    if (open && propsCveId) {
+      // 로딩 상태 설정
+      setLoading(true);
+      
+      // 데이터 새로고침
+      refetchCveDetail()
+        .then(() => {
+          // 성공적으로 데이터를 가져온 경우 로딩 상태 해제
+          setLoading(false);
+        })
+        .catch(err => {
+          logger.error('CVEDetail', '데이터 로딩 실패', { error: err.message });
+          setLoading(false);
+        });
+    } else if (!open) {
+      // 모달이 닫힐 때 로딩 상태 초기화
+      setLoading(false);
+    }
+  }, [open, propsCveId, refetchCveDetail]);
+
+  // WebSocket 연결 상태가 변경될 때 캐시 무효화 - 간소화
+  useEffect(() => {
+    // Socket.IO가 연결되었을 때만 실행
+    if (connected && propsCveId && !loading && !isQueryLoading) {
+      logger.info('CVEDetail', 'Socket 연결됨, 데이터 갱신 검토');
+      
+      // 마지막 데이터 업데이트 시간 확인
+      const now = new Date().getTime();
+      
+      // 마지막 업데이트로부터 1분 이상 지났다면 캐시 무효화
+      if (dataUpdatedAt && (now - dataUpdatedAt) > 60000) {
+        logger.info('CVEDetail', '소켓 연결 후 오래된 데이터 감지됨, 캐시 무효화');
+        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(propsCveId) });
+      }
+    }
+  }, [connected, propsCveId, dataUpdatedAt, queryClient, loading, isQueryLoading]);
 
   // CVE 구독 처리
   useEffect(() => {
-    if (!propsCveId || !open || !isConnected) return;
+    if (!propsCveId || !open) return;
+
+    // 소켓 연결이 없는 경우 구독 시도하지 않음
+    if (!connected || !socket) {
+      logger.warn('CVEDetail', '소켓 연결이 없어 구독을 시도하지 않습니다.');
+      return;
+    }
 
     logger.info('CVEDetail', `CVE ${propsCveId} 업데이트 이벤트 리스닝 시작`);
     logger.info('CVEDetail', `CVE 구독 시도: ${propsCveId}`);
     
     // 구독 요청 전송
-    const subscriptionResult = subscribe();
+    const subscriptionResult = subscribe ? subscribe() : false;
     
     if (!subscriptionResult) {
       logger.warn('CVEDetail', `CVE ${propsCveId} 구독 요청 실패`);
@@ -441,7 +577,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     // 브라우저 종료/새로고침 시 구독 해제 처리
     const handleBeforeUnload = () => {
       logger.info('CVEDetail', `브라우저 종료/새로고침 - CVE 구독 해제: ${propsCveId}`);
-      unsubscribe();
+      if (unsubscribe) unsubscribe();
     };
     
     // 브라우저 종료/새로고침 이벤트 리스너 등록
@@ -449,8 +585,8 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     
     // 클린업 함수
     return () => {
-      // 컴포넌트가 언마운트되거나 propsCveId, open, isConnected가 변경될 때만 실행
-      if (propsCveId && isConnected) {
+      // 컴포넌트가 언마운트되거나 propsCveId, open, connected가 변경될 때만 실행
+      if (propsCveId && connected && socket && unsubscribe) {
         logger.info('CVEDetail', `CVE 구독 해제: ${propsCveId}`);
         unsubscribe();
       }
@@ -458,7 +594,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       // 브라우저 이벤트 리스너 제거
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [propsCveId, open, isConnected]); // subscribe와 unsubscribe 의존성 제거
+  }, [propsCveId, open, connected, socket, subscribe, unsubscribe]);
 
   // 구독자 정보 업데이트
   useEffect(() => {
@@ -478,61 +614,95 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     }
   }, [subscribers, currentUser, localSubscribers.length]);
 
+  // 연결 상태 변경 시 알림
+  useEffect(() => {
+    if (open) {
+      if (!connected) {
+        logger.warn('CVEDetail', 'WebSocket 연결이 없습니다. 실시간 업데이트가 제한됩니다.');
+        enqueueSnackbar('서버 연결 상태를 확인해주세요. 실시간 업데이트가 제한됩니다.', { 
+          variant: 'warning',
+          anchorOrigin: { vertical: 'bottom', horizontal: 'center' },
+          autoHideDuration: 3000
+        });
+      }
+    }
+  }, [open, connected, enqueueSnackbar]);
+
+  // 로딩 상태 계산 - 수정
+  const isLoading = useMemo(() => {
+    // 명시적으로 로딩 상태를 계산하고 로그 출력
+    const loadingState = isQueryLoading || loading || isRefreshing || isFetching;
+    
+    if (loadingState) {
+      logger.debug('CVEDetail', '로딩 상태 확인', { 
+        isQueryLoading, 
+        loading, 
+        isRefreshing, 
+        isFetching,
+        cveId: propsCveId
+      });
+    }
+    
+    return loadingState;
+  }, [isQueryLoading, loading, isRefreshing, isFetching, propsCveId]);
+
+  // 로딩 상태가 변경될 때마다 로그 출력
+  useEffect(() => {
+    logger.info('CVEDetail', `로딩 상태 변경: ${isLoading ? '로딩 중' : '로딩 완료'}`, {
+      isQueryLoading,
+      loading,
+      isRefreshing,
+      isFetching,
+      cveId: propsCveId,
+      dataReceived: !!cveData
+    });
+  }, [isLoading, isQueryLoading, loading, isRefreshing, isFetching, propsCveId, cveData]);
+
+  // 에러 다이얼로그 닫기 핸들러
+  const handleErrorDialogClose = useCallback(() => {
+    setErrorDialogOpen(false);
+    if (onClose) {
+      onClose();
+    }
+  }, [onClose]);
+
+  // 컴포넌트 마운트 시 로그인 후 첫 로드인 경우 데이터 갱신
+  useEffect(() => {
+    // 컴포넌트가 마운트되고 CVE ID가 유효하고 isFirstLoadRef가 true인 경우만 실행
+    if (propsCveId && open && isFirstLoadRef.current) {
+      // 첫 로드 표시 해제
+      isFirstLoadRef.current = false;
+      
+      // 로그인 후 첫 로드 시 데이터 갱신
+      const lastVisitTime = localStorage.getItem('lastVisitTime');
+      const currentTime = new Date().getTime();
+      
+      // 마지막 방문 시간이 없거나 24시간 이상 지난 경우 갱신
+      if (!lastVisitTime || (currentTime - parseInt(lastVisitTime, 10)) > 24 * 60 * 60 * 1000) {
+        logger.info('CVEDetail', '장시간 접속하지 않아 데이터 갱신');
+        
+        // 백그라운드에서 최신 데이터 가져오기
+        setTimeout(() => {
+          refetchCveDetail({ staleTime: 0 })
+            .then(() => {
+              logger.info('CVEDetail', '오랜만의 접속으로 데이터 갱신 완료');
+            })
+            .catch((error) => {
+              logger.error('CVEDetail', '데이터 갱신 실패', error);
+            });
+        }, 1000); // 초기 UI 로딩 후 1초 후에 갱신
+      }
+      
+      // 현재 시간을 마지막 방문 시간으로 저장
+      localStorage.setItem('lastVisitTime', currentTime.toString());
+    }
+  }, [propsCveId, open, refetchCveDetail]);
+
   // 편집 권한 확인
   const canEdit = useCallback(() => {
     // 여기에 필요한 권한 체크 로직 추가
     return true; // 현재는 항상 true 반환, 필요시 권한 로직 구현
   }, []);
-
-  // 필드 업데이트 처리
-  const handleFieldUpdate = useCallback((field, value) => {
-    if (!propsCveId || !field) return;
-    
-    // 업데이트 중 상태 표시
-    setLoading(true);
-    
-    // 폴백 타이머 설정 (웹소켓 이벤트가 오지 않을 경우를 대비)
-    const fallbackTimerID = setTimeout(() => {
-      logger.info('CVEDetail', `웹소켓 이벤트 타임아웃 - 수동 업데이트 실행: ${field}`);
-      refetchCveDetail();
-      setLoading(false);
-    }, 5000);
-    
-    // 폴백 타이머 저장
-    fallbackTimers.current[field] = fallbackTimerID;
-    
-    // 필드 업데이트 실행
-    updateCVEField(
-      { cveId: propsCveId, field, value },
-      {
-        onSuccess: () => {
-          enqueueSnackbar('필드가 성공적으로 업데이트되었습니다', {
-            variant: 'success',
-            anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-          });
-          
-          // 웹소켓 이벤트를 기다리지 않고 즉시 UI 업데이트
-          if (!isConnected) {
-            refetchCveDetail();
-            setLoading(false);
-          }
-        },
-        onError: (err) => {
-          enqueueSnackbar(`업데이트 실패: ${err.message || '알 수 없는 오류'}`, {
-            variant: 'error',
-            anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-          });
-          setLoading(false);
-          
-          // 폴백 타이머 취소
-          if (fallbackTimers.current[field]) {
-            clearTimeout(fallbackTimers.current[field]);
-            fallbackTimers.current[field] = null;
-          }
-        }
-      }
-    );
-  }, [propsCveId, updateCVEField, enqueueSnackbar, isConnected, refetchCveDetail]);
 
   // 타이틀 업데이트 핸들러
   const handleTitleUpdate = useCallback(async (newTitle) => {
@@ -546,6 +716,26 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     handleFieldUpdate('description', newDescription);
   }, [cveData, propsCveId, handleFieldUpdate]);
 
+  // Severity 옵션 정의
+  const SEVERITY_OPTIONS = [
+    { value: 'Critical', label: 'Critical', color: '#d32f2f' },
+    { value: 'High', label: 'High', color: '#f44336' },
+    { value: 'Medium', label: 'Medium', color: '#ff9800' },
+    { value: 'Low', label: 'Low', color: '#4caf50' }
+  ];
+
+  // Severity 색상 가져오기
+  const getSeverityColor = (severity) => {
+    const option = SEVERITY_OPTIONS.find(opt => opt.value === severity);
+    return option ? option.color : '#757575';
+  };
+
+  // 심각도 업데이트 핸들러
+  const handleSeverityUpdate = useCallback(async (newSeverity) => {
+    if (!cveData || !propsCveId || newSeverity === cveData.severity) return;
+    handleFieldUpdate('severity', newSeverity);
+  }, [cveData, propsCveId, handleFieldUpdate]);
+
   // 상태 업데이트 핸들러
   const handleStatusUpdate = useCallback(async (newStatus) => {
     if (!cveData || !propsCveId || newStatus === cveData.status) return;
@@ -554,7 +744,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
 
   // 새로고침 핸들러
   const handleRefresh = useCallback(() => {
-    if (!propsCveId) return;
+    if (!propsCveId || loading || isQueryLoading) return;
     
     if (snackbarShown.current) {
       closeSnackbar();
@@ -567,43 +757,33 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     snackbarShown.current = true;
     setLoading(true);
     
-    refreshCVE(null, {
-      onSuccess: () => {
-        if (snackbarShown.current) {
-          closeSnackbar();
-          enqueueSnackbar('데이터가 성공적으로 새로고침 되었습니다', { 
-            variant: 'success',
-            anchorOrigin: { vertical: 'bottom', horizontal: 'center' },
-            autoHideDuration: 2000
-          });
-          snackbarShown.current = false;
-        }
-        
-        // 모든 탭의 트리거 업데이트
-        setRefreshTriggers(prev => ({
-          general: prev.general + 1,
-          poc: prev.poc + 1,
-          snortRules: prev.snortRules + 1,
-          references: prev.references + 1,
-          comments: prev.comments + 1,
-          history: prev.history + 1
-        }));
-        
+    // 캐시를 완전히 무효화하고 새로운 데이터 가져오기
+    queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(propsCveId) });
+    
+    // staleTime을 0으로 설정하여 항상 새로운 데이터를 가져오도록 함
+    refetchCveDetail({ staleTime: 0 })
+      .then((data) => {
+        setIsCached(false); // 새로고침된 데이터는 항상 최신 데이터
         setLoading(false);
-      },
-      onError: (err) => {
-        if (snackbarShown.current) {
-          closeSnackbar();
-          enqueueSnackbar(`새로고침 실패: ${err.message || '알 수 없는 오류'}`, { 
-            variant: 'error',
-            anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-          });
-          snackbarShown.current = false;
-        }
+        updateTabCounts(data);
+        closeSnackbar();
+        enqueueSnackbar('최신 데이터를 성공적으로 불러왔습니다', { 
+          variant: 'success',
+          anchorOrigin: { vertical: 'bottom', horizontal: 'center' },
+          autoHideDuration: 2000
+        });
+        snackbarShown.current = false;
+      })
+      .catch((error) => {
         setLoading(false);
-      }
-    });
-  }, [propsCveId, refreshCVE, enqueueSnackbar, closeSnackbar]);
+        closeSnackbar();
+        enqueueSnackbar(`새로고침 실패: ${error.message || '알 수 없는 오류'}`, { 
+          variant: 'error',
+          anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+        });
+        snackbarShown.current = false;
+      });
+  }, [propsCveId, refetchCveDetail, enqueueSnackbar, closeSnackbar, updateTabCounts, queryClient, loading, isQueryLoading]);
 
   // 탭 변경 핸들러
   const handleTabChange = useCallback((event, newValue) => {
@@ -621,21 +801,62 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
   
   // 자식 컴포넌트에 전달할 메시지 전송 함수
   const sendMessage = useCallback(async (type, data) => {
-    if (!socket || !isConnected) {
-      logger.warn('CVEDetail', '소켓 연결이 없어 메시지를 보낼 수 없습니다');
+    // 소켓이 초기화되지 않았거나 연결되어 있지 않은 경우
+    if (!socket || !connected) {
+      logger.warn('CVEDetail', '소켓 연결이 없어 메시지를 보낼 수 없습니다', {
+        socketExists: !!socket,
+        connected,
+        messageType: type
+      });
+      
+      // 연결이 없는 경우 스낵바 표시
+      enqueueSnackbar('서버와의 연결이 없어 변경사항이 실시간으로 공유되지 않습니다. 잠시 후 다시 시도하세요.', { 
+        variant: 'warning',
+        autoHideDuration: 4000
+      });
+      
+      // 캐시 무효화를 통한 데이터 갱신 시도
+      if (!loading && !isQueryLoading) {
+        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(propsCveId) });
+      }
+      
       return null;
     }
     
     try {
-      logger.info('CVEDetail', `메시지 전송: ${type}`, data);
+      // 이벤트 타입 검증
+      if (!type) {
+        logger.error('CVEDetail', '이벤트 타입이 지정되지 않았습니다', { data });
+        return null;
+      }
       
-      // 실제 메시지 전송 (Socket.IO emit)
-      socket.emit(type, {
-        cve_id: propsCveId,
-        ...data
+      logger.info('CVEDetail', `메시지 전송: ${type}`, {
+        eventName: type,
+        cveId: propsCveId,
+        data
       });
       
-      // 업데이트가 필요한 필드에 따라 폴백 타이머 설정
+      try {
+        // 실제 메시지 전송 (Socket.IO emit)
+        socket.emit(type, {
+          cve_id: propsCveId,
+          ...data
+        });
+      } catch (socketError) {
+        logger.error('CVEDetail', `소켓 이벤트 전송 오류: ${type}`, {
+          error: socketError.message,
+          data
+        });
+        
+        // 소켓 오류 발생 시 스낵바 표시
+        enqueueSnackbar('메시지 전송 중 오류가 발생했습니다. 페이지를 새로고침하세요.', { 
+          variant: 'error'
+        });
+        
+        return null;
+      }
+      
+      // 업데이트가 필요한 필드에 따라 필드 타입 결정
       let fieldToUpdate = 'general';
       
       if (type.includes('comment')) {
@@ -648,132 +869,105 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
         fieldToUpdate = 'references';
       }
       
-      // 폴백 타이머 설정
-      const fallbackTimerID = setTimeout(() => {
-        logger.info('CVEDetail', `웹소켓 이벤트 타임아웃 - 수동 업데이트 실행: ${fieldToUpdate}`);
-        refetchCveDetail();
-        handleWebSocketUpdate({ field: fieldToUpdate });
+      // 일정 시간 후에도 웹소켓 이벤트가 오지 않으면 캐시 무효화 (로딩 중이 아닐 때만)
+      setTimeout(() => {
+        if (!loading && !isQueryLoading) {
+          logger.info('CVEDetail', `메시지 전송 후 캐시 무효화 검토: ${fieldToUpdate}`);
+          queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(propsCveId) });
+        }
       }, 3000);
-      
-      fallbackTimers.current[fieldToUpdate] = fallbackTimerID;
       
       return true;
     } catch (error) {
-      logger.error('CVEDetail', `메시지 전송 오류: ${type}`, error);
+      logger.error('CVEDetail', `메시지 전송 오류: ${type}`, {
+        error: error.message,
+        stack: error.stack
+      });
       enqueueSnackbar('메시지 전송 실패', { variant: 'error' });
       throw error;
     }
-  }, [socket, isConnected, propsCveId, enqueueSnackbar, refetchCveDetail, handleWebSocketUpdate]);
+  }, [socket, connected, propsCveId, enqueueSnackbar, queryClient, loading, isQueryLoading]);
 
-  // 로딩 상태 계산 - isFetching 조건 제거
-  const isLoading = isQueryLoading || loading || isRefreshing;
-
-  // 에러 다이얼로그 닫기 핸들러
-  const handleErrorDialogClose = useCallback(() => {
-    setErrorDialogOpen(false);
-    if (onClose) {
-      onClose();
-    }
-  }, [onClose]);
-
-  // 모달을 열 때마다 데이터 새로고침
+  // 날짜 필드 검증을 위한 useEffect
   useEffect(() => {
-    if (open && propsCveId) {
-      logger.info('CVEDetail', `모달 열림, CVE ID: ${propsCveId}`);
-      setLoading(true); // 로딩 시작
-      refetchCveDetail().then(() => {
-        // 데이터 로딩 완료 후 로딩 상태 해제
-        logger.info('CVEDetail', '데이터 로딩 완료');
-        setLoading(false);
-      }).catch(err => {
-        logger.error('CVEDetail', '데이터 로딩 실패', { error: err.message });
-        setLoading(false);
+    if (cveData) {
+      // 날짜 필드 로깅 및 검증
+      const dateFields = ['createdAt', 'lastModifiedDate', 'publishedDate', 'assigner'];
+      dateFields.forEach(field => {
+        if (field in cveData) {
+          console.log(`CVEDetail: ${field} 필드 값:`, cveData[field], typeof cveData[field]);
+          
+          // 빈 객체 또는 빈 문자열 검사
+          if (cveData[field] === null || 
+              cveData[field] === undefined || 
+              (typeof cveData[field] === 'object' && Object.keys(cveData[field]).length === 0) ||
+              (typeof cveData[field] === 'string' && !cveData[field].trim())) {
+            console.warn(`CVEDetail: ${field} 필드가 비어있습니다. 이는 데이터 불일치를 나타낼 수 있습니다.`);
+          }
+        } else {
+          console.warn(`CVEDetail: ${field} 필드가 없습니다.`);
+        }
       });
     }
-  }, [open, propsCveId, refetchCveDetail]);
+  }, [cveData]);
 
-  // 연결 상태 변경 시 알림
-  useEffect(() => {
-    if (open) {
-      if (!isConnected) {
-        logger.warn('CVEDetail', 'WebSocket 연결이 없습니다. 실시간 업데이트가 제한됩니다.');
-        enqueueSnackbar('서버 연결 상태를 확인해주세요. 실시간 업데이트가 제한됩니다.', { 
-          variant: 'warning',
-          anchorOrigin: { vertical: 'bottom', horizontal: 'center' },
-          autoHideDuration: 3000
-        });
-      }
-    }
-  }, [open, isConnected, enqueueSnackbar]);
-
-  // 로딩 중 표시
-  if (isLoading) {
+  // 에러 다이얼로그 렌더링
+  const renderErrorDialog = () => {
     return (
-      <Dialog 
-        open={open} 
-        maxWidth="lg" 
-        fullWidth
+      <Dialog
+        open={errorDialogOpen || !!error}
+        onClose={handleErrorDialogClose}
+        aria-labelledby="error-dialog-title"
+        aria-describedby="error-dialog-description"
       >
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '200px' }}>
-          <CircularProgress />
-        </Box>
-      </Dialog>
-    );
-  }
-
-  // 데이터가 없는 경우 처리
-  if (!cveData && !isLoading) {
-    return (
-      <Dialog open={open} onClose={onClose} maxWidth="sm">
-        <DialogTitle>
-          <Box display="flex" justifyContent="space-between" alignItems="center">
-            <Typography variant="h6">데이터 없음</Typography>
-            <IconButton onClick={onClose} size="small">
-              <CloseIcon />
-            </IconButton>
-          </Box>
+        <DialogTitle id="error-dialog-title">
+          데이터 로딩 오류
         </DialogTitle>
         <DialogContent>
-          <Typography>요청한 CVE 데이터를 찾을 수 없습니다.</Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={onClose} color="primary">닫기</Button>
-        </DialogActions>
-      </Dialog>
-    );
-  }
-
-  // 에러 다이얼로그
-  if (errorDialogOpen) {
-    return (
-      <Dialog open={errorDialogOpen} onClose={handleErrorDialogClose} maxWidth="sm">
-        <DialogTitle>
-          <Box display="flex" justifyContent="space-between" alignItems="center">
-            <Typography variant="h6" color="error">오류 발생</Typography>
-            <IconButton onClick={handleErrorDialogClose} size="small">
-              <CloseIcon />
-            </IconButton>
-          </Box>
-        </DialogTitle>
-        <DialogContent>
-          <Typography>{errorMessage || '데이터를 불러오는 중 오류가 발생했습니다.'}</Typography>
-          <Typography variant="body2" color="textSecondary" mt={2}>
+          <DialogContentText id="error-dialog-description">
+            {error || 'CVE 데이터를 불러오는 중 오류가 발생했습니다.'}
+          </DialogContentText>
+          <Typography variant="body2" color="text.secondary" mt={2}>
             다시 시도하거나 관리자에게 문의하세요.
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => {
             setErrorDialogOpen(false);
+            setError(null);
             refetchCveDetail();
           }} color="primary">
             다시 시도
           </Button>
-          <Button onClick={handleErrorDialogClose} color="secondary">
+          <Button onClick={() => {
+            handleErrorDialogClose();
+            setError(null);
+          }} color="secondary">
             닫기
           </Button>
         </DialogActions>
       </Dialog>
     );
+  };
+
+  if (isLoading) {
+    return (
+      <Dialog open={open} fullWidth maxWidth="md">
+        <DialogContent>
+          <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+            <CircularProgress />
+          </Box>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  if (error) {
+    return renderErrorDialog();
+  }
+
+  if (errorDialogOpen) {
+    return renderErrorDialog();
   }
 
   return (
@@ -795,18 +989,84 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <Typography variant="h6">{cveData.cveId} 상세 정보</Typography>
-            {/* 구독자 정보 표시 조건 수정: isSubscribed 체크 제거 */}
             <SubscriberCount subscribers={localSubscribers} />
           </Box>
-          <Box>
-            <Tooltip title="새로고침">
-              <IconButton onClick={handleRefresh} disabled={isLoading}>
-                <RefreshIcon />
-              </IconButton>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Tooltip title="생성 시간">
+              <Chip
+                size="small"
+                icon={<HistoryIcon fontSize="small" />}
+                label={`생성: ${(() => {
+                  console.log('CVEDetail 값:', cveData);
+                  // 빈 객체인 경우 처리
+                  if (!cveData.createdAt || 
+                      cveData.createdAt === null || 
+                      (typeof cveData.createdAt === 'object' && Object.keys(cveData.createdAt).length === 0) ||
+                      cveData.createdAt === '') {
+                    console.log('CVEDetail - createdAt이 비어있거나 null입니다.');
+                    return '-';
+                  }
+                  try {
+                    return formatForDisplay(cveData.createdAt);
+                  } catch (error) {
+                    console.error('CVEDetail - createdAt 포맷팅 오류:', error);
+                    return '-';
+                  }
+                })()}`}
+                variant="outlined"
+                sx={{ fontSize: '0.7rem', height: 24 }}
+              />
             </Tooltip>
-            <IconButton onClick={onClose} disabled={isLoading}>
-              <CloseIcon />
-            </IconButton>
+            <Tooltip title="마지막 업데이트 시간">
+              <Chip
+                size="small"
+                icon={<HistoryIcon fontSize="small" />}
+                label={`수정: ${(() => {
+                  // 빈 객체인 경우 처리
+                  if (!cveData.lastModifiedDate || 
+                      cveData.lastModifiedDate === null || 
+                      (typeof cveData.lastModifiedDate === 'object' && Object.keys(cveData.lastModifiedDate).length === 0) ||
+                      cveData.lastModifiedDate === '') {
+                    console.log('CVEDetail - lastModifiedDate가 비어있거나 null입니다.',cveData);
+                    return '-';
+                  }
+                  try {
+                    return formatForDisplay(cveData.lastModifiedDate);
+                  } catch (error) {
+                    console.error('CVEDetail - lastModifiedDate 포맷팅 오류:', error);
+                    return '-';
+                  }
+                })()}`}
+                variant="outlined"
+                sx={{ fontSize: '0.7rem', height: 24 }}
+              />
+            </Tooltip>
+            
+            {isCached && (
+              <Tooltip title="캐시된 데이터입니다. 새로고침을 클릭하여 최신 데이터를 불러올 수 있습니다.">
+                <Chip
+                  size="small"
+                  label="캐시됨"
+                  color="warning"
+                  variant="outlined"
+                  sx={{ fontSize: '0.7rem', height: 24 }}
+                />
+              </Tooltip>
+            )}
+            <Tooltip title="새로고침">
+              <span>
+                <IconButton onClick={handleRefresh} disabled={isLoading}>
+                  <RefreshIcon />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="닫기">
+              <span>
+                <IconButton onClick={onClose} disabled={isLoading}>
+                  <CloseIcon />
+                </IconButton>
+              </span>
+            </Tooltip>
           </Box>
         </Box>
       </DialogTitle>
@@ -836,6 +1096,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
                     </Typography>
                     <Box sx={{ position: 'relative' }}>
                       <Paper
+                        className="description-container"
                         variant="outlined"
                         sx={{
                           p: 1,
@@ -843,8 +1104,11 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
                           border: '1px solid',
                           borderColor: 'divider',
                           overflow: 'hidden',
-                          transition: 'height 0.3s',
-                          height: detailExpanded ? '150px' : '60px'
+                          transition: 'max-height 0.3s ease-in-out',
+                          height: 'auto',
+                          maxHeight: detailExpanded ? '400px' : '60px',
+                          display: 'flex',
+                          flexDirection: 'column'
                         }}
                       >
                         <InlineEditText
@@ -856,7 +1120,10 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
                           fontSize="0.9rem"
                           externalEdit={detailExpanded}
                           onEditingStart={() => setDetailExpanded(true)}
-                          onEditingEnd={() => setDetailExpanded(false)}
+                          onEditingEnd={() => {
+                            // 편집 종료 후 바로 축소하면 레이아웃 문제가 발생할 수 있어 약간의 지연 추가
+                            setTimeout(() => setDetailExpanded(false), 100);
+                          }}
                         />
                       </Paper>
                       <Box sx={{ position: 'absolute', bottom: 4, right: 4 }}>
@@ -903,6 +1170,52 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
                         </Box>
                       </Paper>
                     ))}
+                  </Box>
+                  <Box sx={{ mt: 2 }}>
+                    <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                      Severity
+                    </Typography>
+                    <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1 }}>
+                      {SEVERITY_OPTIONS.map((option) => (
+                        <Paper
+                          key={option.value}
+                          elevation={0}
+                          sx={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'center',
+                            minHeight: '40px',
+                            border: '1px solid',
+                            borderRadius: 1,
+                            p: 1,
+                            textAlign: 'center',
+                            cursor: canEdit() ? 'pointer' : 'default',
+                            transition: 'all 0.2s',
+                            bgcolor: option.value === cveData.severity ? 'action.selected' : 'background.paper',
+                            borderColor: option.value === cveData.severity ? option.color : 'divider',
+                            '&:hover': canEdit() ? {
+                              backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                              borderColor: option.color,
+                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                            } : {}
+                          }}
+                          onClick={() => canEdit() && handleSeverityUpdate(option.value)}
+                        >
+                          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1 }}>
+                            <CircleIcon sx={{ fontSize: 8, color: option.color, flexShrink: 0 }} />
+                            <Typography 
+                              variant="body2" 
+                              sx={{ 
+                                fontWeight: option.value === cveData.severity ? 600 : 400, 
+                                color: option.value === cveData.severity ? option.color : 'text.primary' 
+                              }}
+                            >
+                              {option.label}
+                            </Typography>
+                          </Box>
+                        </Paper>
+                      ))}
+                    </Box>
                   </Box>
                 </Grid>
               </Grid>
@@ -979,7 +1292,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
                     currentUser={currentUser} 
                     refreshTrigger={refreshTriggers.poc} 
                     tabConfig={pocTabConfig}
-                    sendMessage={sendMessage}
+                    parentSendMessage={sendMessage}
                   />
                 </Box>
                 <Box 
@@ -1010,7 +1323,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
                     refreshTrigger={refreshTriggers.snortRules}
                     tabConfig={snortRulesTabConfig}
                     onCountChange={(count) => setTabCounts(prev => ({ ...prev, snortRules: count }))}
-                    sendMessage={sendMessage}
+                    parentSendMessage={sendMessage}
                   />
                 </Box>
                 <Box 
@@ -1041,7 +1354,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
                     refreshTrigger={refreshTriggers.references}
                     tabConfig={referencesTabConfig}
                     onCountChange={(count) => setTabCounts(prev => ({ ...prev, references: count }))}
-                    sendMessage={sendMessage}
+                    parentSendMessage={sendMessage}
                   />
                 </Box>
                 <Box 
@@ -1071,7 +1384,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
                     currentUser={currentUser}
                     refreshTrigger={refreshTriggers.comments}
                     onCountChange={(count) => setTabCounts(prev => ({ ...prev, comments: count }))}
-                    sendMessage={sendMessage}
+                    parentSendMessage={sendMessage}
                   />
                 </Box>
                 <Box 
@@ -1100,8 +1413,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
                 </Box>
               </Box>
             </Box>
-            {/* 캐시 정보 표시 */}
-            {isCached && (
+            {(isCached || cveData.fromCache) && (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 2, p: 1 }}>
                 <Chip 
                   size="small" 
@@ -1110,9 +1422,9 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
                   variant="outlined"
                   sx={{ fontWeight: 500 }}
                 />
-                {cveData._cachedAt && (
+                {(cveData._cachedAt || cveData.cachedAt) && (
                   <Typography variant="caption" color="text.secondary">
-                    서버와 {timeAgo(cveData._cachedAt)} 전에 동기화됨
+                    서버와 {timeAgo(cveData._cachedAt || cveData.cachedAt)} 전에 동기화됨
                   </Typography>
                 )}
               </Box>

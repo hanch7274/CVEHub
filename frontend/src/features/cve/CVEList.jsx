@@ -12,6 +12,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   Chip,
   Tooltip,
   IconButton,
@@ -33,8 +34,7 @@ import {
   InputAdornment,
   useTheme,
   useMediaQuery,
-  alpha,
-  Pagination
+  alpha
 } from '@mui/material';
 
 import SearchIcon from '@mui/icons-material/Search';
@@ -43,11 +43,11 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import AddIcon from '@mui/icons-material/Add';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import EditIcon from '@mui/icons-material/Edit';
-import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
-import NavigateNextIcon from '@mui/icons-material/NavigateNext';
+import SearchOffIcon from '@mui/icons-material/SearchOff';
 import { useAuth } from '../../contexts/AuthContext';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSocketIO } from '../../contexts/SocketIOContext';
+import { QUERY_KEYS } from '../../api/queryKeys';
 
 // 기존 import 대신 새로운 통합 서비스 사용
 import { 
@@ -60,6 +60,7 @@ import {
   useDeleteCVE,
   useCreateCVE
 } from '../../api/hooks/useCVEMutation';
+import { formatForDisplay, DATE_FORMATS } from '../../utils/dateUtils';
 
 import CVEDetail from './CVEDetail';
 import CrawlerUpdateButton from './components/CrawlerUpdateButton';
@@ -72,16 +73,48 @@ const fontStyles = {
   letterSpacing: '0.5px'
 };
 
+// 공통 스타일 상수 - 카드 기본 스타일
+const cardBaseStyle = {
+  p: 2,
+  borderRadius: '8px',
+  boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
+  textAlign: 'center',
+  transition: 'all 0.3s ease',
+};
+
+// 공통 스타일 상수 - 호버 효과
+const cardHoverStyle = {
+  transform: 'translateY(-5px)',
+  boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+};
+
+// 공통 스타일 상수 - 필터 컴포넌트 기본 스타일
+const filterBaseStyle = {
+  borderRadius: '30px',
+  backgroundColor: 'white',
+  transition: 'all 0.2s ease',
+};
+
+// 공통 스타일 상수 - 테이블 셀 기본 스타일
+const tableCellBaseStyle = {
+  p: '12px 20px',
+  ...fontStyles
+};
+
 // 심각도별 스타일 (HTML 디자인과 유사하게 수정)
 const getSeverityStyles = (severity) => {
+  // 대소문자 구분 없이 비교하기 위해 소문자로 변환하고 매핑
+  const severityLower = severity ? severity.toLowerCase() : '';
+  
   const styles = {
-    'CRITICAL': { bg: 'rgba(255, 7, 58, 0.15)', color: '#ff073a' },
-    'HIGH':     { bg: 'rgba(255, 84, 0, 0.15)', color: '#ff5400' },
-    'MEDIUM':   { bg: 'rgba(255, 190, 11, 0.15)', color: '#e5a800' },
-    'LOW':      { bg: 'rgba(56, 176, 0, 0.15)', color: '#38b000' },
-    'NONE':     { bg: 'rgba(108, 117, 125, 0.15)', color: '#6c757d' }
+    'critical': { bg: 'rgba(255, 7, 58, 0.15)', color: '#ff073a' },
+    'high':     { bg: 'rgba(255, 84, 0, 0.15)', color: '#ff5400' },
+    'medium':   { bg: 'rgba(255, 190, 11, 0.15)', color: '#e5a800' },
+    'low':      { bg: 'rgba(56, 176, 0, 0.15)', color: '#38b000' },
+    'none':     { bg: 'rgba(108, 117, 125, 0.15)', color: '#6c757d' }
   };
-  return styles[severity] || styles['NONE'];
+  
+  return styles[severityLower] || styles['none'];
 };
 
 // 상태별 스타일 (HTML 디자인에 맞춤)
@@ -89,10 +122,51 @@ const getStatusStyles = (status) => {
   const styles = {
     '신규등록':  { bg: 'rgba(58, 134, 255, 0.15)', color: '#3a86ff' },
     '분석중':   { bg: 'rgba(131, 56, 236, 0.15)', color: '#8338ec' },
-    '분석완료': { bg: 'rgba(56, 176, 0, 0.15)', color: '#38b000' },
-    '대응완료': { bg: 'rgba(56, 176, 0, 0.15)', color: '#38b000' }
+    '릴리즈 완료': { bg: 'rgba(56, 176, 0, 0.15)', color: '#38b000' },
+    '분석불가': { bg: 'rgba(244, 67, 54, 0.15)', color: '#f44336' }
   };
   return styles[status] || { bg: 'rgba(108, 117, 125, 0.15)', color: '#6c757d' };
+};
+
+// 심각도별 색상 설정 함수
+const getSeverityColor = (severity, theme) => {
+  // 대소문자 구분 없이 비교하기 위해 소문자로 변환
+  const severityLower = severity ? severity.toLowerCase() : '';
+  
+  switch (severityLower) {
+    case 'critical':
+      return theme.palette.error.main;
+    case 'high':
+      return theme.palette.secondary.main;
+    case 'medium':
+      return theme.palette.warning.main;
+    case 'low':
+      return theme.palette.info.main;
+    default:
+      return theme.palette.text.secondary;
+  }
+};
+
+// 상태별 색상 설정 함수
+const getStatusColor = (status, theme) => {
+  switch (status) {
+    case '신규등록':
+      return theme.palette.info.main;
+    case '분석중':
+      return theme.palette.warning.main;
+    case '릴리즈 완료':
+      return theme.palette.success.main;
+    case '분석불가':
+      return theme.palette.error.main;
+    default:
+      return theme.palette.text.secondary;
+  }
+};
+
+// 날짜 포맷팅 함수
+const formatDate = (dateString) => {
+  if (!dateString) return '-';
+  return formatForDisplay(dateString, DATE_FORMATS.DISPLAY.DEFAULT);
 };
 
 const CVECardSkeleton = () => (
@@ -144,6 +218,579 @@ const CVEDetailWrapper = ({ cveId, open, onClose }) => {
   return <CVEDetail cveId={cveId} open={open} onClose={onClose} />;
 };
 
+const StatisticsSection = React.memo(({ statsData, totalCVECount, theme }) => {
+  return (
+    <Grid container spacing={2} sx={{ mb: 3 }}>
+      <Grid item xs={12} sm={6} md={3}>
+        <Card
+          elevation={0}
+          sx={{
+            ...cardBaseStyle,
+            '&:hover': cardHoverStyle,
+            background: `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.05)} 0%, ${alpha(theme.palette.primary.main, 0.1)} 100%)`
+          }}
+        >
+          <Typography variant="caption" sx={{ textTransform: 'uppercase', color: theme.palette.text.secondary }}>
+            전체 CVE
+          </Typography>
+          <Typography variant="h4" sx={{ fontWeight: 'bold', color: theme.palette.primary.main, my: 1 }}>
+            {totalCVECount}
+          </Typography>
+          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>등록된 취약점</Typography>
+        </Card>
+      </Grid>
+      <Grid item xs={12} sm={6} md={3}>
+        <Card
+          elevation={0}
+          sx={{
+            ...cardBaseStyle,
+            '&:hover': cardHoverStyle,
+            background: `linear-gradient(135deg, ${alpha(theme.palette.secondary.main, 0.05)} 0%, ${alpha(theme.palette.secondary.main, 0.1)} 100%)`
+          }}
+        >
+          <Typography variant="caption" sx={{ textTransform: 'uppercase', color: theme.palette.text.secondary }}>
+            위험도 높음
+          </Typography>
+          <Typography variant="h4" sx={{ fontWeight: 'bold', color: theme.palette.secondary.main, my: 1 }}>
+            {statsData.newLastWeekCount}
+          </Typography>
+          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>심각한 취약점</Typography>
+        </Card>
+      </Grid>
+      <Grid item xs={12} sm={6} md={3}>
+        <Card
+          elevation={0}
+          sx={{
+            ...cardBaseStyle,
+            '&:hover': cardHoverStyle,
+            background: `linear-gradient(135deg, ${alpha(theme.palette.info.main, 0.05)} 0%, ${alpha(theme.palette.info.main, 0.1)} 100%)`
+          }}
+        >
+          <Typography variant="caption" sx={{ textTransform: 'uppercase', color: theme.palette.text.secondary }}>
+            최근 7일
+          </Typography>
+          <Typography variant="h4" sx={{ fontWeight: 'bold', color: theme.palette.info.main, my: 1 }}>
+            {statsData.inProgressCount}
+          </Typography>
+          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>신규 등록</Typography>
+        </Card>
+      </Grid>
+      <Grid item xs={12} sm={6} md={3}>
+        <Card
+          elevation={0}
+          sx={{
+            ...cardBaseStyle,
+            '&:hover': cardHoverStyle,
+            background: `linear-gradient(135deg, ${alpha(theme.palette.success.main, 0.05)} 0%, ${alpha(theme.palette.success.main, 0.1)} 100%)`
+          }}
+        >
+          <Typography variant="caption" sx={{ textTransform: 'uppercase', color: theme.palette.text.secondary }}>
+            완료됨
+          </Typography>
+          <Typography variant="h4" sx={{ fontWeight: 'bold', color: theme.palette.success.main, my: 1 }}>
+            {statsData.completedCount}
+          </Typography>
+          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>분석 완료</Typography>
+        </Card>
+      </Grid>
+    </Grid>
+  );
+});
+
+const FilterBar = React.memo(({ 
+  searchInput, 
+  statusFilter, 
+  severityFilter, 
+  sortOption, 
+  handleSearchChange, 
+  handleStatusFilterChange, 
+  handleSeverityFilterChange, 
+  handleSortOptionChange, 
+  handleRefresh,
+  theme
+}) => {
+  return (
+    <Box
+      sx={{
+        backgroundColor: theme.palette.background.paper,
+        p: 2.5,
+        borderRadius: '8px',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
+        mb: 3,
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 2,
+        alignItems: 'center',
+        transition: 'all 0.3s ease',
+        '&:hover': {
+          boxShadow: '0 6px 20px rgba(0,0,0,0.15)'
+        }
+      }}
+    >
+      <Box sx={{ flex: 1, position: 'relative', minWidth: 300 }}>
+        <SearchIcon
+          sx={{
+            position: 'absolute',
+            left: 15,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            color: theme.palette.text.secondary
+          }}
+        />
+        <TextField
+          placeholder="CVE ID, 키워드 또는 제목으로 검색"
+          size="small"
+          value={searchInput}
+          onChange={handleSearchChange}
+          fullWidth
+          sx={{
+            '& .MuiOutlinedInput-root': {
+              borderRadius: '30px',
+              pl: '45px',
+              backgroundColor: 'white',
+              transition: 'all 0.2s ease',
+              '& fieldset': { borderColor: '#e0e0e0' },
+              '&:hover fieldset': { borderColor: theme.palette.primary.main },
+              '&.Mui-focused': {
+                boxShadow: `0 0 0 2px ${alpha(theme.palette.primary.main, 0.2)}`
+              }
+            }
+          }}
+        />
+      </Box>
+      <FormControl size="small" sx={{ minWidth: 150 }}>
+        <InputLabel sx={fontStyles}>상태별 필터</InputLabel>
+        <Select
+          value={statusFilter}
+          label="상태별 필터"
+          onChange={handleStatusFilterChange}
+          sx={{
+            ...filterBaseStyle,
+            '&:hover': {
+              boxShadow: `0 0 0 2px ${alpha(theme.palette.primary.main, 0.2)}`
+            }
+          }}
+        >
+          <MenuItem value="">전체</MenuItem>
+          <MenuItem value="신규등록">신규등록</MenuItem>
+          <MenuItem value="분석중">분석중</MenuItem>
+          <MenuItem value="릴리즈 완료">릴리즈 완료</MenuItem>
+          <MenuItem value="분석불가">분석불가</MenuItem>
+        </Select>
+      </FormControl>
+      <FormControl size="small" sx={{ minWidth: 150 }}>
+        <InputLabel sx={fontStyles}>심각도별 필터</InputLabel>
+        <Select
+          value={severityFilter}
+          label="심각도별 필터"
+          onChange={handleSeverityFilterChange}
+          sx={{
+            ...filterBaseStyle,
+            '&:hover': {
+              boxShadow: `0 0 0 2px ${alpha(theme.palette.primary.main, 0.2)}`
+            }
+          }}
+        >
+          <MenuItem value="">전체</MenuItem>
+          <MenuItem value="CRITICAL">심각</MenuItem>
+          <MenuItem value="HIGH">높음</MenuItem>
+          <MenuItem value="MEDIUM">중간</MenuItem>
+          <MenuItem value="LOW">낮음</MenuItem>
+        </Select>
+      </FormControl>
+      <FormControl size="small" sx={{ minWidth: 150 }}>
+        <InputLabel sx={fontStyles}>정렬 기준</InputLabel>
+        <Select
+          value={sortOption}
+          label="정렬 기준"
+          onChange={handleSortOptionChange}
+          sx={{
+            ...filterBaseStyle,
+            '&:hover': {
+              boxShadow: `0 0 0 2px ${alpha(theme.palette.primary.main, 0.2)}`
+            }
+          }}
+        >
+          <MenuItem value="newest">최신순</MenuItem>
+          <MenuItem value="severity">심각도순</MenuItem>
+          <MenuItem value="status">상태순</MenuItem>
+        </Select>
+      </FormControl>
+      <Tooltip title="새로고침">
+        <IconButton 
+          onClick={handleRefresh}
+          sx={{
+            transition: 'all 0.2s ease',
+            '&:hover': {
+              backgroundColor: alpha(theme.palette.primary.main, 0.1),
+              transform: 'rotate(180deg)'
+            }
+          }}
+        >
+          <RefreshIcon />
+        </IconButton>
+      </Tooltip>
+    </Box>
+  );
+});
+
+const TableSkeletonRow = ({ isMobile, colSpan }) => (
+  <TableRow>
+    <TableCell><Skeleton variant="text" /></TableCell>
+    {!isMobile && <TableCell><Skeleton variant="text" /></TableCell>}
+    <TableCell><Skeleton variant="text" /></TableCell>
+    <TableCell><Skeleton variant="text" /></TableCell>
+    {!isMobile && <TableCell><Skeleton variant="text" /></TableCell>}
+    <TableCell><Skeleton variant="text" /></TableCell>
+    <TableCell><Skeleton variant="text" /></TableCell>
+  </TableRow>
+);
+
+const NoDataRow = ({ colSpan, searchQuery, onResetSearch, theme }) => (
+  <TableRow>
+    <TableCell
+      colSpan={colSpan}
+      sx={{ ...tableCellBaseStyle, textAlign: 'center', py: 4 }}
+    >
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 2 }}>
+        <SearchOffIcon sx={{ fontSize: 48, color: theme.palette.text.secondary, mb: 1 }} />
+        <Typography variant="body1" sx={{ color: theme.palette.text.secondary }}>
+          검색 결과가 없습니다
+        </Typography>
+        {searchQuery && (
+          <>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              검색어: "{searchQuery}"
+            </Typography>
+            <Button
+              onClick={onResetSearch}
+              variant="outlined"
+              size="small"
+              sx={{ mt: 2 }}
+            >
+              검색 초기화
+            </Button>
+          </>
+        )}
+      </Box>
+    </TableCell>
+  </TableRow>
+);
+
+const CVETable = React.memo(({ 
+  cves, 
+  isLoading, 
+  page, 
+  totalCVECount, 
+  rowsPerPage, 
+  onPageChange, 
+  onRowsPerPageChange, 
+  onCVEClick,
+  theme,
+  isMobile,
+  sortOption,
+  searchQuery,
+  onResetSearch,
+  onDeleteClick
+}) => {
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        width: '100%',
+        borderRadius: '8px',
+        overflow: 'hidden',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
+        mb: 4,
+        transition: 'box-shadow 0.3s ease',
+        '&:hover': {
+          boxShadow: '0 6px 20px rgba(0,0,0,0.15)'
+        }
+      }}
+    >
+      <TableContainer sx={{ maxHeight: '60vh' }}>
+        <Table stickyHeader sx={{ minWidth: isMobile ? 650 : 900 }}>
+          <TableHead>
+            <TableRow>
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>CVE ID</TableCell>
+              {!isMobile && (
+                <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>제목</TableCell>
+              )}
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>심각도</TableCell>
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>상태</TableCell>
+              {!isMobile && (
+                <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>등록일</TableCell>
+              )}
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>최종 수정일</TableCell>
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>액션</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {isLoading ? (
+              // 로딩 중일 때 스켈레톤 UI 표시
+              Array.from(new Array(5)).map((_, index) => (
+                <TableSkeletonRow key={`skeleton-${index}`} isMobile={isMobile} />
+              ))
+            ) : cves && cves.length > 0 ? (
+              cves.map((cve) => (
+                <TableRow
+                  key={cve.id}
+                  onClick={() => onCVEClick(cve)}
+                  sx={{
+                    cursor: 'pointer',
+                    transition: 'background-color 0.2s',
+                    '&:hover': {
+                      backgroundColor: alpha(theme.palette.primary.main, 0.04)
+                    }
+                  }}
+                >
+                  <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'medium', color: theme.palette.primary.main }}>
+                    {cve.cveId}
+                  </TableCell>
+                  {!isMobile && (
+                    <TableCell sx={tableCellBaseStyle}>
+                      <Tooltip title={cve.title || ''} placement="top">
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            maxWidth: 400,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}
+                        >
+                          {cve.title || '-'}
+                        </Typography>
+                      </Tooltip>
+                    </TableCell>
+                  )}
+                  <TableCell sx={tableCellBaseStyle}>
+                    <Chip
+                      label={cve.severity ? cve.severity.toUpperCase() : '미정'}
+                      size="small"
+                      sx={{
+                        backgroundColor: alpha(getSeverityColor(cve.severity, theme), 0.1),
+                        color: getSeverityColor(cve.severity, theme),
+                        fontWeight: 'medium',
+                        borderRadius: '4px'
+                      }}
+                    />
+                  </TableCell>
+                  <TableCell sx={tableCellBaseStyle}>
+                    <Chip
+                      label={cve.status}
+                      size="small"
+                      sx={{
+                        backgroundColor: alpha(getStatusColor(cve.status, theme), 0.1),
+                        color: getStatusColor(cve.status, theme),
+                        fontWeight: 'medium',
+                        borderRadius: '4px'
+                      }}
+                    />
+                  </TableCell>
+                  {!isMobile && (
+                    <TableCell sx={tableCellBaseStyle}>{formatDate(cve.createdAt)}</TableCell>
+                  )}
+                  <TableCell sx={tableCellBaseStyle}>{formatDate(cve.lastModifiedDate)}</TableCell>
+                  <TableCell sx={tableCellBaseStyle}>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <Tooltip title="삭제">
+                        <IconButton
+                          size="small"
+                          color="error"
+                          onClick={(e) => onDeleteClick(e, cve)}
+                          sx={{
+                            '&:hover': {
+                              backgroundColor: alpha(theme.palette.error.main, 0.1),
+                            }
+                          }}
+                        >
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <NoDataRow 
+                colSpan={isMobile ? 5 : 7} 
+                searchQuery={searchQuery} 
+                onResetSearch={onResetSearch}
+                theme={theme}
+              />
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+      <TablePagination
+        rowsPerPageOptions={[5, 10, 25]}
+        component="div"
+        count={totalCVECount} 
+        rowsPerPage={rowsPerPage}
+        page={page - 1}
+        onPageChange={onPageChange}
+        onRowsPerPageChange={onRowsPerPageChange}
+        labelRowsPerPage="페이지당 행 수"
+        labelDisplayedRows={({ from, to, count }) => {
+          // 검색 결과가 없는 경우
+          if (count === 0) return '검색 결과 없음';
+          // 일반적인 경우
+          return `${from}-${to} / 총 ${count !== -1 ? count : '?'}개${searchQuery ? ' (검색 결과)' : ''}`;
+        }}
+        sx={{
+          borderTop: `1px solid ${theme.palette.divider}`,
+          '& .MuiToolbar-root': {
+            ...fontStyles,
+            height: 56
+          }
+        }}
+      />
+    </Paper>
+  );
+});
+
+// 테이블 로딩 상태를 위한 스켈레톤 UI
+const CVETableSkeleton = () => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        width: '100%',
+        borderRadius: '8px',
+        overflow: 'hidden',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
+        mb: 4
+      }}
+    >
+      <TableContainer>
+        <Table sx={{ minWidth: isMobile ? 650 : 900 }}>
+          <TableHead>
+            <TableRow>
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>CVE ID</TableCell>
+              {!isMobile && (
+                <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>제목</TableCell>
+              )}
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>심각도</TableCell>
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>상태</TableCell>
+              {!isMobile && (
+                <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>등록일</TableCell>
+              )}
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>최종 수정일</TableCell>
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>액션</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {Array.from(new Array(5)).map((_, index) => (
+              <TableRow key={`skeleton-${index}`}>
+                <TableCell><Skeleton animation="wave" height={30} /></TableCell>
+                {!isMobile && <TableCell><Skeleton animation="wave" height={30} /></TableCell>}
+                <TableCell><Skeleton animation="wave" height={30} /></TableCell>
+                <TableCell><Skeleton animation="wave" height={30} /></TableCell>
+                {!isMobile && <TableCell><Skeleton animation="wave" height={30} /></TableCell>}
+                <TableCell><Skeleton animation="wave" height={30} /></TableCell>
+                <TableCell><Skeleton animation="wave" height={30} /></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Paper>
+  );
+};
+
+// 에러 표시 컴포넌트
+const ErrorDisplay = ({ error, onRetry }) => {
+  const theme = useTheme();
+  
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        p: 3,
+        borderRadius: '8px',
+        textAlign: 'center',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
+        mb: 4
+      }}
+    >
+      <Typography variant="h6" color="error" sx={{ mb: 2 }}>
+        데이터를 불러오는 중 오류가 발생했습니다
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+        {error?.message || '알 수 없는 오류가 발생했습니다. 다시 시도해주세요.'}
+      </Typography>
+      <Button
+        variant="contained"
+        color="primary"
+        onClick={onRetry}
+        startIcon={<RefreshIcon />}
+        sx={{
+          borderRadius: '20px',
+          boxShadow: 'none',
+          '&:hover': { boxShadow: 'none' }
+        }}
+      >
+        다시 시도
+      </Button>
+    </Paper>
+  );
+};
+
+// 빈 상태 표시 컴포넌트
+const EmptyStateDisplay = ({ searchQuery, onResetSearch, isFiltered }) => {
+  const theme = useTheme();
+  
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        p: 4,
+        borderRadius: '8px',
+        textAlign: 'center',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
+        mb: 4,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}
+    >
+      <SearchOffIcon sx={{ fontSize: 64, color: theme.palette.text.secondary, mb: 2 }} />
+      
+      <Typography variant="h6" sx={{ mb: 1 }}>
+        {searchQuery ? '검색 결과가 없습니다' : '등록된 CVE가 없습니다'}
+      </Typography>
+      
+      {isFiltered ? (
+        <>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {searchQuery ? `"${searchQuery}"에 대한 검색 결과가 없습니다.` : '현재 필터 조건에 맞는 CVE가 없습니다.'}
+          </Typography>
+          <Button
+            variant="outlined"
+            color="primary"
+            onClick={onResetSearch}
+            sx={{
+              borderRadius: '20px',
+              mt: 1
+            }}
+          >
+            필터 초기화
+          </Button>
+        </>
+      ) : (
+        <Typography variant="body2" color="text.secondary">
+          새로운 CVE를 등록해 보세요.
+        </Typography>
+      )}
+    </Paper>
+  );
+};
+
 const CVEList = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -160,7 +807,7 @@ const CVEList = () => {
   const { data: totalCVECount = 0, isLoading: isTotalCountLoading } = useTotalCVECount();
   
   // 필터 상태 (상태, 심각도, 정렬 옵션)
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -186,7 +833,7 @@ const CVEList = () => {
           variant="contained"
           color="primary"
           startIcon={<AddIcon />}
-          onClick={handleCreateCVE}
+          onClick={() => setCreateDialogOpen(true)}
           sx={{
             ...fontStyles,
             borderRadius: '20px',
@@ -214,7 +861,7 @@ const CVEList = () => {
     error: queryError, 
     refetch: refetchCVEList 
   } = useCVEList({ 
-    page, 
+    page: page,
     rowsPerPage, 
     filters: { 
       status: statusFilter,
@@ -225,8 +872,30 @@ const CVEList = () => {
     sortOrder: sortOption === 'newest' ? 'desc' : (sortOption === 'severity' ? 'desc' : 'asc')
   });
   
+  // 쿼리 실행 후 로깅 추가
+  useEffect(() => {
+    console.log('쿼리 매개변수:', {
+      page,
+      rowsPerPage,
+      필터: { 상태: statusFilter, 심각도: severityFilter, 검색어: searchQuery },
+      정렬: sortOption
+    });
+    console.log('쿼리 결과:', queryData?.items?.length, '아이템 중', queryData?.total || queryData?.totalItems, '총 아이템');
+    
+    // 백엔드 검색 API에 전달되는 실제 파라미터 구조 출력 (백엔드 /cves/list 엔드포인트에 맞춤)
+    console.log('백엔드로 전송되는 검색 파라미터:', { 
+      search: searchQuery,
+      page: page,
+      limit: rowsPerPage,
+      status: statusFilter,
+      severity: severityFilter,
+      sort_by: sortOption === 'newest' ? 'createdAt' : sortOption === 'severity' ? 'severity' : 'status',
+      sort_order: sortOption === 'newest' ? 'desc' : (sortOption === 'severity' ? 'desc' : 'asc')
+    });
+  }, [queryData, page, rowsPerPage, statusFilter, severityFilter, searchQuery, sortOption]);
+  
   const cves = useMemo(() => queryData?.items || [], [queryData]);
-  const totalCount = useMemo(() => queryData?.totalItems || 0, [queryData]);
+  const totalCount = useMemo(() => queryData?.total || queryData?.totalItems || 0, [queryData]);
   
   // 통계 데이터 (예시)
   const statsData = useMemo(() => {
@@ -236,42 +905,85 @@ const CVEList = () => {
       totalCount,
       newLastWeekCount: cves.filter(cve => new Date(cve.createdAt) >= oneWeekAgo).length,
       inProgressCount: cves.filter(cve => cve.status === '분석중').length,
-      completedCount: cves.filter(cve => cve.status === '분석완료').length
+      completedCount: cves.filter(cve => cve.status === '릴리즈 완료').length
     };
   }, [cves, totalCount]);
 
-  // 필터 핸들러들
+  // 개선된 검색 핸들러 - 디바운스 및 유효성 검사 강화
   const handleSearchChange = useCallback((e) => {
-    setSearchInput(e.target.value);
+    // 현재 입력값 설정
+    const inputValue = e.target.value;
+    setSearchInput(inputValue);
+    
+    // 이전 타이머 클리어
     clearTimeout(searchTimeoutRef.current);
+    
+    // 검색어가 너무 짧으면 검색하지 않음 (공백만 있는 경우 제외)
+    const trimmedValue = inputValue.trim();
+    
+    // 검색 입력값 디버깅
+    console.log('검색 입력 값:', inputValue, '정제된 값:', trimmedValue, '길이:', trimmedValue.length);
+    
+    // 디바운스 처리 - 입력 후 300ms 후에 검색 실행
     searchTimeoutRef.current = setTimeout(() => {
-      setSearchQuery(e.target.value.trim());
-      setPage(0);
+      // 검색어가 비어있거나 공백만 있는 경우
+      if (trimmedValue === '' && searchQuery !== '') {
+        console.log('검색어 초기화');
+        setSearchQuery('');
+        setPage(1);
+      } 
+      // 검색어가 1글자 이상인 경우
+      else if (trimmedValue.length >= 1 && trimmedValue !== searchQuery) {
+        console.log('검색 쿼리 설정:', trimmedValue);
+        // 쿼리 캐시 무효화 후 새 검색 실행
+        queryClient.invalidateQueries({ 
+          predicate: (query) => Array.isArray(query.queryKey) && 
+                               query.queryKey[0] === QUERY_KEYS.CVE.list
+        });
+        setSearchQuery(trimmedValue);
+        setPage(1); // 페이지 초기화
+      }
     }, 300);
-  }, []);
+  }, [searchQuery, queryClient]);
 
+  // 검색 리셋 핸들러 개선
+  const handleResetSearch = useCallback(() => {
+    console.log('검색 초기화');
+    setSearchInput('');
+    setSearchQuery('');
+    
+    // 검색 초기화 시 캐시 무효화
+    queryClient.invalidateQueries({ 
+      predicate: (query) => Array.isArray(query.queryKey) && 
+                            query.queryKey[0] === QUERY_KEYS.CVE.list
+    });
+    
+    setPage(1);
+  }, [queryClient]);
+
+  // 필터 핸들러들
   const handleStatusFilterChange = useCallback((e) => {
     setStatusFilter(e.target.value);
-    setPage(0);
+    setPage(1);
   }, []);
 
   const handleSeverityFilterChange = useCallback((e) => {
     setSeverityFilter(e.target.value);
-    setPage(0);
+    setPage(1);
   }, []);
 
   const handleSortOptionChange = useCallback((e) => {
     setSortOption(e.target.value);
-    setPage(0);
+    setPage(1);
   }, []);
 
   const handlePageChange = useCallback((event, newPage) => {
-    setPage(newPage - 1); // Pagination 컴포넌트는 1부터 시작하므로 -1 해줍니다
+    setPage(newPage + 1);
   }, []);
 
   const handleRowsPerPageChange = useCallback((event) => {
     setRowsPerPage(parseInt(event.target.value, 10));
-    setPage(0);
+    setPage(1);
   }, []);
 
   const handleRefresh = useCallback(() => {
@@ -338,7 +1050,7 @@ const CVEList = () => {
   const handleDeleteConfirm = useCallback(async () => {
     if (!cveToDelete) return;
     try {
-      const cveId = cveToDelete.id || cveToDelete.cveId;
+      const cveId = cveToDelete.cveId;
       await deleteMutation.mutateAsync(cveId);
       setDeleteDialogOpen(false);
       setCveToDelete(null);
@@ -351,543 +1063,68 @@ const CVEList = () => {
 
   const handleCVECreated = useCallback((newCVEData) => {
     handleCreateDialogClose();
-    // refetchCVEList()는 더 이상 필요하지 않음 (자동으로 무효화됨)
-  }, [handleCreateDialogClose]);
-
-  // 상단 통계 영역 렌더링
-  const renderStatistics = () => (
-    <Grid container spacing={2} sx={{ mb: 3 }}>
-      <Grid item xs={12} sm={6} md={3}>
-        <Card
-          elevation={0}
-          sx={{
-            p: 2,
-            borderRadius: '8px',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
-            textAlign: 'center',
-            transition: 'all 0.3s ease',
-            '&:hover': {
-              transform: 'translateY(-5px)',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
-              background: `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.05)} 0%, ${alpha(theme.palette.primary.main, 0.1)} 100%)`
-            }
-          }}
-        >
-          <Typography variant="caption" sx={{ textTransform: 'uppercase', color: theme.palette.text.secondary }}>
-            전체 CVE
-          </Typography>
-          <Typography variant="h4" sx={{ fontWeight: 'bold', color: theme.palette.primary.main, my: 1 }}>
-            {totalCVECount}
-          </Typography>
-          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>등록된 취약점</Typography>
-        </Card>
-      </Grid>
-      <Grid item xs={12} sm={6} md={3}>
-        <Card
-          elevation={0}
-          sx={{
-            p: 2,
-            borderRadius: '8px',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
-            textAlign: 'center',
-            transition: 'all 0.3s ease',
-            '&:hover': {
-              transform: 'translateY(-5px)',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
-              background: `linear-gradient(135deg, ${alpha(theme.palette.secondary.main, 0.05)} 0%, ${alpha(theme.palette.secondary.main, 0.1)} 100%)`
-            }
-          }}
-        >
-          <Typography variant="caption" sx={{ textTransform: 'uppercase', color: theme.palette.text.secondary }}>
-            위험도 높음
-          </Typography>
-          <Typography variant="h4" sx={{ fontWeight: 'bold', color: theme.palette.secondary.main, my: 1 }}>
-            {statsData.newLastWeekCount}
-          </Typography>
-          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>심각한 취약점</Typography>
-        </Card>
-      </Grid>
-      <Grid item xs={12} sm={6} md={3}>
-        <Card
-          elevation={0}
-          sx={{
-            p: 2,
-            borderRadius: '8px',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
-            textAlign: 'center',
-            transition: 'all 0.3s ease',
-            '&:hover': {
-              transform: 'translateY(-5px)',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
-              background: `linear-gradient(135deg, ${alpha(theme.palette.info.main, 0.05)} 0%, ${alpha(theme.palette.info.main, 0.1)} 100%)`
-            }
-          }}
-        >
-          <Typography variant="caption" sx={{ textTransform: 'uppercase', color: theme.palette.text.secondary }}>
-            최근 7일
-          </Typography>
-          <Typography variant="h4" sx={{ fontWeight: 'bold', color: theme.palette.info.main, my: 1 }}>
-            {statsData.inProgressCount}
-          </Typography>
-          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>신규 등록</Typography>
-        </Card>
-      </Grid>
-      <Grid item xs={12} sm={6} md={3}>
-        <Card
-          elevation={0}
-          sx={{
-            p: 2,
-            borderRadius: '8px',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
-            textAlign: 'center',
-            transition: 'all 0.3s ease',
-            '&:hover': {
-              transform: 'translateY(-5px)',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
-              background: `linear-gradient(135deg, ${alpha(theme.palette.success.main, 0.05)} 0%, ${alpha(theme.palette.success.main, 0.1)} 100%)`
-            }
-          }}
-        >
-          <Typography variant="caption" sx={{ textTransform: 'uppercase', color: theme.palette.text.secondary }}>
-            완료됨
-          </Typography>
-          <Typography variant="h4" sx={{ fontWeight: 'bold', color: theme.palette.success.main, my: 1 }}>
-            {statsData.completedCount}
-          </Typography>
-          <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>분석 완료</Typography>
-        </Card>
-      </Grid>
-    </Grid>
-  );
-
-  // 필터바 렌더링
-  const renderFilterBar = () => (
-    <Box
-      sx={{
-        backgroundColor: theme.palette.background.paper,
-        p: 2.5,
-        borderRadius: '8px',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
-        mb: 3,
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: 2,
-        alignItems: 'center',
-        transition: 'all 0.3s ease',
-        '&:hover': {
-          boxShadow: '0 6px 20px rgba(0,0,0,0.15)'
-        }
-      }}
-    >
-      <Box sx={{ flex: 1, position: 'relative', minWidth: 300 }}>
-        <SearchIcon
-          sx={{
-            position: 'absolute',
-            left: 15,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            color: theme.palette.text.secondary
-          }}
-        />
-        <TextField
-          placeholder="CVE ID, 키워드 또는 제목으로 검색"
-          size="small"
-          value={searchInput}
-          onChange={handleSearchChange}
-          fullWidth
-          sx={{
-            '& .MuiOutlinedInput-root': {
-              borderRadius: '30px',
-              pl: '45px',
-              backgroundColor: 'white',
-              transition: 'all 0.2s ease',
-              '& fieldset': { borderColor: '#e0e0e0' },
-              '&:hover fieldset': { borderColor: theme.palette.primary.main },
-              '&.Mui-focused': {
-                boxShadow: `0 0 0 2px ${alpha(theme.palette.primary.main, 0.2)}`
-              }
-            }
-          }}
-        />
-      </Box>
-      <FormControl size="small" sx={{ minWidth: 150 }}>
-        <InputLabel sx={fontStyles}>상태별 필터</InputLabel>
-        <Select
-          value={statusFilter}
-          label="상태별 필터"
-          onChange={handleStatusFilterChange}
-          sx={{
-            borderRadius: '30px',
-            backgroundColor: 'white',
-            transition: 'all 0.2s ease',
-            '&:hover': {
-              boxShadow: `0 0 0 2px ${alpha(theme.palette.primary.main, 0.2)}`
-            }
-          }}
-        >
-          <MenuItem value="">전체</MenuItem>
-          <MenuItem value="신규등록">신규등록</MenuItem>
-          <MenuItem value="분석중">분석중</MenuItem>
-          <MenuItem value="분석완료">분석완료</MenuItem>
-          <MenuItem value="대응완료">대응완료</MenuItem>
-        </Select>
-      </FormControl>
-      <FormControl size="small" sx={{ minWidth: 150 }}>
-        <InputLabel sx={fontStyles}>심각도별 필터</InputLabel>
-        <Select
-          value={severityFilter}
-          label="심각도별 필터"
-          onChange={handleSeverityFilterChange}
-          sx={{
-            borderRadius: '30px',
-            backgroundColor: 'white',
-            transition: 'all 0.2s ease',
-            '&:hover': {
-              boxShadow: `0 0 0 2px ${alpha(theme.palette.primary.main, 0.2)}`
-            }
-          }}
-        >
-          <MenuItem value="">전체</MenuItem>
-          <MenuItem value="CRITICAL">심각</MenuItem>
-          <MenuItem value="HIGH">높음</MenuItem>
-          <MenuItem value="MEDIUM">중간</MenuItem>
-          <MenuItem value="LOW">낮음</MenuItem>
-        </Select>
-      </FormControl>
-      <FormControl size="small" sx={{ minWidth: 150 }}>
-        <InputLabel sx={fontStyles}>정렬 기준</InputLabel>
-        <Select
-          value={sortOption}
-          label="정렬 기준"
-          onChange={handleSortOptionChange}
-          sx={{
-            borderRadius: '30px',
-            backgroundColor: 'white',
-            transition: 'all 0.2s ease',
-            '&:hover': {
-              boxShadow: `0 0 0 2px ${alpha(theme.palette.primary.main, 0.2)}`
-            }
-          }}
-        >
-          <MenuItem value="newest">최신순</MenuItem>
-          <MenuItem value="severity">심각도순</MenuItem>
-          <MenuItem value="status">상태순</MenuItem>
-        </Select>
-      </FormControl>
-      <Tooltip title="새로고침">
-        <IconButton 
-          onClick={handleRefresh}
-          sx={{
-            transition: 'all 0.2s ease',
-            '&:hover': {
-              backgroundColor: alpha(theme.palette.primary.main, 0.1),
-              transform: 'rotate(180deg)'
-            }
-          }}
-        >
-          <RefreshIcon />
-        </IconButton>
-      </Tooltip>
-    </Box>
-  );
+    refetchCVEList();
+  }, [handleCreateDialogClose, refetchCVEList]);
 
   return (
     <Box sx={{ width: '100%', px: { xs: 1, sm: 2, md: 3 } }}>
       {/* 상단 액션 버튼 추가 */}
       {renderActionButtons()}
       
-      {renderStatistics()}
-      {renderFilterBar()}
+      <StatisticsSection 
+        statsData={statsData} 
+        totalCVECount={totalCVECount} 
+        theme={theme} 
+      />
 
-      <Paper
-        elevation={0}
-        sx={{
-          borderRadius: '8px',
-          overflow: 'hidden',
-          mb: 3,
-          boxShadow: '0 4px 16px rgba(0,0,0,0.1)'
-        }}
-      >
-        <TableContainer>
-          <Table stickyHeader size="medium" sx={{ minWidth: 800, borderCollapse: 'collapse' }}>
-            <TableHead>
-              <TableRow>
-                {['CVE ID', '제목', '심각도', '상태', '등록일', '최종 수정일', '액션'].map((header) => (
-                  <TableCell
-                    key={header}
-                    sx={{
-                      backgroundColor: theme.palette.mode === 'dark' ? '#2d3748' : '#f2f5f9',
-                      p: '15px 20px',
-                      fontWeight: 600,
-                      borderBottom: `2px solid ${theme.palette.mode === 'dark' ? '#4a5568' : '#e9ecef'}`,
-                      ...fontStyles
-                    }}
-                  >
-                    {header}
-                  </TableCell>
-                ))}
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {isLoading
-                ? Array(rowsPerPage).fill(0).map((_, index) => (
-                    <TableRow key={`skeleton-${index}`}>
-                      {Array(7)
-                        .fill(0)
-                        .map((_, i) => (
-                          <TableCell key={i}><Skeleton animation="wave" /></TableCell>
-                        ))}
-                    </TableRow>
-                  ))
-                : cves.length > 0
-                  ? cves.map((cve, index) => {
-                      const uniqueKey = cve.id || cve.cveId || `cve-item-${index}`;
-                      const severityStyle = getSeverityStyles(cve.severity);
-                      const statusStyle = getStatusStyles(cve.status);
-                      return (
-                        <TableRow
-                          key={uniqueKey}
-                          hover
-                          onClick={() => handleCVEClick(cve)}
-                          sx={{
-                            cursor: 'pointer',
-                            '&:hover': { 
-                              backgroundColor: theme.palette.mode === 'dark' ? '#3a4a61' : '#e9effd',
-                              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                              transform: 'scale(1.005)',
-                              '& .MuiTableCell-root': {
-                                color: theme.palette.mode === 'dark' ? '#ffffff' : theme.palette.primary.main,
-                              },
-                              '& .action-icon': {
-                                opacity: 1,
-                                transform: 'translateY(0)',
-                              }
-                            },
-                            height: '60px',
-                            borderBottom: `1px solid ${theme.palette.mode === 'dark' ? '#4a5568' : '#e9ecef'}`,
-                            transition: 'all 0.2s ease'
-                          }}
-                        >
-                          {/* CVE ID 컬럼: 모던한 스타일 적용 */}
-                          <TableCell sx={{ p: '12px 20px', ...fontStyles, fontWeight: 'bold', fontSize: '1rem', color: severityStyle.color }}>
-                            {cve.cveId || '알 수 없음'}
-                          </TableCell>
-                          <TableCell sx={{
-                            p: '12px 20px',
-                            maxWidth: { xs: '150px', sm: '300px', md: '400px' },
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            fontSize: '0.9rem',
-                            fontWeight: 500,
-                            ...fontStyles
-                          }}>
-                            {cve.title || '제목 없음'}
-                          </TableCell>
-                          <TableCell sx={{ p: '12px 20px' }}>
-                            <Chip
-                              label={cve.severity || '미정'}
-                              size="small"
-                              sx={{
-                                minWidth: 70,
-                                backgroundColor: severityStyle.bg,
-                                color: severityStyle.color,
-                                fontWeight: 'bold',
-                                fontSize: '0.75rem',
-                                border: `1px solid ${alpha(severityStyle.color, 0.2)}`,
-                                '& .MuiChip-label': { px: 1.5 }
-                              }}
-                            />
-                          </TableCell>
-                          <TableCell sx={{ p: '12px 20px' }}>
-                            <Chip
-                              label={cve.status || '상태 없음'}
-                              size="small"
-                              sx={{
-                                minWidth: 65,
-                                backgroundColor: statusStyle.bg,
-                                color: statusStyle.color,
-                                fontWeight: 500,
-                                fontSize: '0.75rem',
-                                border: `1px solid ${alpha(statusStyle.color, 0.2)}`,
-                                '& .MuiChip-label': { px: 1.5 }
-                              }}
-                            />
-                          </TableCell>
-                          <TableCell sx={{ p: '12px 20px', fontSize: '0.85rem', color: theme.palette.text.secondary }}>
-                            {cve.createdAt
-                              ? new Date(cve.createdAt).toLocaleDateString('ko-KR', {
-                                  year: 'numeric',
-                                  month: 'short',
-                                  day: 'numeric'
-                                })
-                              : '-'
-                            }
-                          </TableCell>
-                          <TableCell sx={{ p: '12px 20px', fontSize: '0.85rem', color: theme.palette.text.secondary }}>
-                            {cve.updatedAt
-                              ? new Date(cve.updatedAt).toLocaleDateString('ko-KR', {
-                                  year: 'numeric',
-                                  month: 'short',
-                                  day: 'numeric'
-                                })
-                              : '-'
-                            }
-                          </TableCell>
-                          <TableCell align="center" sx={{ p: '12px 20px' }} onClick={(e) => e.stopPropagation()}>
-                            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 1 }}>
-                              <Tooltip title="상세 보기">
-                                <IconButton 
-                                  size="small" 
-                                  onClick={() => handleCVEClick(cve)}
-                                  className="action-icon"
-                                  sx={{
-                                    opacity: 0.7,
-                                    transform: 'translateY(2px)',
-                                    transition: 'all 0.2s ease',
-                                    '&:hover': {
-                                      backgroundColor: alpha(theme.palette.primary.main, 0.1),
-                                      color: theme.palette.primary.main
-                                    }
-                                  }}
-                                >
-                                  <VisibilityIcon fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                              <Tooltip title="수정">
-                                <IconButton 
-                                  size="small" 
-                                  onClick={() => {/* 수정 로직 추가 */}}
-                                  className="action-icon"
-                                  sx={{
-                                    opacity: 0.7,
-                                    transform: 'translateY(2px)',
-                                    transition: 'all 0.2s ease',
-                                    '&:hover': {
-                                      backgroundColor: alpha(theme.palette.info.main, 0.1),
-                                      color: theme.palette.info.main
-                                    }
-                                  }}
-                                >
-                                  <EditIcon fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                              <Tooltip title="삭제">
-                                <IconButton
-                                  size="small"
-                                  onClick={(e) => handleDeleteClick(e, cve)}
-                                  color="error"
-                                  className="action-icon"
-                                  sx={{
-                                    opacity: 0.7,
-                                    transform: 'translateY(2px)',
-                                    transition: 'all 0.2s ease',
-                                    '&:hover': { 
-                                      backgroundColor: alpha(theme.palette.error.main, 0.1),
-                                      color: theme.palette.error.main
-                                    }
-                                  }}
-                                >
-                                  {deleteMutation.isPending && deleteMutation.variables === cve.id ? (
-                                    <CircularProgress size={20} color="inherit" />
-                                  ) : (
-                                    <DeleteIcon fontSize="small" />
-                                  )}
-                                </IconButton>
-                              </Tooltip>
-                            </Box>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })
-                  : (
-                    <TableRow key="no-data">
-                      <TableCell colSpan={7}>
-                        <Box
-                          sx={{
-                            p: 4,
-                            textAlign: 'center',
-                            backgroundColor: theme.palette.background.paper,
-                            borderRadius: '8px',
-                            border: 1,
-                            borderColor: 'divider'
-                          }}
-                        >
-                          <Typography color="text.secondary" sx={fontStyles}>검색 결과가 없습니다</Typography>
-                          {searchQuery && (
-                            <>
-                              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                                검색어: "{searchQuery}"
-                              </Typography>
-                              <Button
-                                onClick={() => { setSearchInput(''); setSearchQuery(''); }}
-                                variant="outlined"
-                                size="small"
-                                sx={{ mt: 2 }}
-                              >
-                                검색 초기화
-                              </Button>
-                            </>
-                          )}
-                        </Box>
-                      </TableCell>
-                    </TableRow>
-                  )
-              }
-            </TableBody>
-          </Table>
-        </TableContainer>
-        <Box
-          sx={{
-            p: '15px 20px',
-            backgroundColor: theme.palette.mode === 'dark' ? '#2d3748' : '#f8f9fa',
-            borderTop: `1px solid ${theme.palette.mode === 'dark' ? '#4a5568' : '#e9ecef'}`,
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center'
-          }}
-        >
-          <Typography sx={{ fontSize: '14px', color: theme.palette.text.secondary }}>
-            전체 {totalCVECount}개 중 {totalCVECount > 0 ? page * rowsPerPage + 1 : 0}-{Math.min((page + 1) * rowsPerPage, totalCVECount)} 표시
-          </Typography>
-          <Pagination 
-            count={Math.ceil(totalCVECount / rowsPerPage)}
-            page={page + 1} // Pagination 컴포넌트는 1부터 시작하므로 +1 해줍니다
-            onChange={handlePageChange}
-            color="primary"
-            size="medium"
-            showFirstButton
-            showLastButton
-            siblingCount={1}
-            boundaryCount={1}
-            sx={{
-              '& .MuiPaginationItem-root': {
-                fontWeight: 500,
-                borderRadius: '6px',
-                '&.Mui-selected': {
-                  backgroundColor: theme.palette.primary.main,
-                  color: 'white',
-                  '&:hover': {
-                    backgroundColor: theme.palette.primary.dark,
-                  }
-                },
-                '&:hover': {
-                  backgroundColor: alpha(theme.palette.primary.main, 0.1),
-                }
-              }
-            }}
-          />
-        </Box>
-      </Paper>
+      {/* 필터 섹션 */}
+      <FilterBar 
+        searchInput={searchInput}
+        statusFilter={statusFilter}
+        severityFilter={severityFilter}
+        sortOption={sortOption}
+        handleSearchChange={handleSearchChange}
+        handleStatusFilterChange={handleStatusFilterChange}
+        handleSeverityFilterChange={handleSeverityFilterChange}
+        handleSortOptionChange={handleSortOptionChange}
+        handleRefresh={handleRefresh}
+        theme={theme}
+      />
 
-      {selectedCVE && (
-        <CVEDetailWrapper
-          cveId={selectedCVE.cveId}
-          open={detailOpen}
-          onClose={handleDetailClose}
-        />
+      {isLoading ? (
+        <CVETableSkeleton />
+      ) : isError ? (
+        <ErrorDisplay error={queryError} onRetry={handleRefresh} />
+      ) : (
+        <>
+          {cves.length === 0 ? (
+            <EmptyStateDisplay 
+              searchQuery={searchQuery} 
+              onResetSearch={handleResetSearch}
+              isFiltered={!!statusFilter || !!severityFilter || !!searchQuery}
+            />
+          ) : (
+            <CVETable 
+              cves={cves} 
+              isLoading={isLoading} 
+              page={page} 
+              totalCVECount={totalCount}
+              rowsPerPage={rowsPerPage}
+              onPageChange={handlePageChange}
+              onRowsPerPageChange={handleRowsPerPageChange}
+              onCVEClick={handleCVEClick}
+              theme={theme}
+              isMobile={isMobile}
+              sortOption={sortOption}
+              searchQuery={searchQuery}
+              onResetSearch={handleResetSearch}
+              onDeleteClick={handleDeleteClick}
+            />
+          )}
+        </>
       )}
 
+      {/* 다이얼로그 컴포넌트들 */}
       <Dialog
         open={createDialogOpen}
         onClose={handleCreateDialogClose}
@@ -909,6 +1146,15 @@ const CVEList = () => {
           <CreateCVE open={createDialogOpen} onSuccess={handleCVECreated} onClose={handleCreateDialogClose} />
         </DialogContent>
       </Dialog>
+
+      {/* 상세보기 모달 */}
+      {selectedCVE && (
+        <CVEDetailWrapper
+          cveId={selectedCVE.cveId}
+          open={detailOpen}
+          onClose={handleDetailClose}
+        />
+      )}
 
       <Dialog open={deleteDialogOpen} onClose={handleDeleteCancel}>
         <DialogTitle sx={{ p: 2 }}>CVE 삭제 확인</DialogTitle>

@@ -8,6 +8,7 @@ from app.api.routers.comment_router import router as comment_router
 from app.api.routers.notification_router import router as notification_router
 from app.api.routers.crawler_router import router as crawler_router
 from app.api.routers.update_history_router import router as update_history_router
+from app.api.routers.cache_router import router as cache_router
 
 api_router = APIRouter()
 
@@ -31,3 +32,6 @@ api_router.include_router(crawler_router, prefix="/crawler", tags=["crawler"])
 
 # 업데이트 이력 관련 라우터
 api_router.include_router(update_history_router, prefix="/updates", tags=["updates"])
+
+# 캐시 관련 라우터
+api_router.include_router(cache_router, prefix="/cache", tags=["cache"])

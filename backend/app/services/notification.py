@@ -26,7 +26,7 @@ class NotificationService:
                 cve_id=cve_id,
                 content=content,
                 metadata=metadata or {},
-                created_at=datetime.now(ZoneInfo("Asia/Seoul"))
+                created_at=datetime.now(ZoneInfo("UTC"))
             )
 
             # 데이터베이스에 저장
@@ -100,7 +100,7 @@ class NotificationService:
                 return False
 
             notification.status = NotificationStatus.READ
-            notification.read_at = datetime.now(ZoneInfo("Asia/Seoul"))
+            notification.read_at = datetime.now(ZoneInfo("UTC"))
             await notification.save()
             return True
         except Exception as e:
@@ -128,7 +128,7 @@ class NotificationService:
 
             for notification in notifications:
                 notification.status = NotificationStatus.READ
-                notification.read_at = datetime.now(ZoneInfo("Asia/Seoul"))
+                notification.read_at = datetime.now(ZoneInfo("UTC"))
                 await notification.save()
 
             return True

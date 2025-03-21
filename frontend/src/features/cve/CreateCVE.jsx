@@ -1,29 +1,36 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
+  Box,
+  Button,
+  TextField,
+  Typography,
+  Paper,
+  Grid,
+  Divider,
+  Chip,
+  IconButton,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Autocomplete,
+  CircularProgress,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
-  Button,
-  TextField,
-  Box,
-  Typography,
-  IconButton,
   Alert,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  Paper
 } from '@mui/material';
 import {
   Add as AddIcon,
   Delete as DeleteIcon,
 } from '@mui/icons-material';
-import api from '../../api/config/axios';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useCreateCVE } from '../../api/hooks/useCVEMutation';
 import { useSnackbar } from 'notistack';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { QUERY_KEYS } from '../../api/queryKeys';
+import { getUTCTimestamp } from '../../utils/dateUtils';
 
 const POC_SOURCES = {
   Etc: "Etc",
@@ -79,29 +86,22 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
   const { enqueueSnackbar } = useSnackbar();
   const queryClient = useQueryClient();
   
-  // React Query 뮤테이션 설정
-  const createCVEMutation = useMutation({
-    mutationFn: async (cveData) => {
-      const requestData = {
-        cve_id: cveData.cveId,
-        title: cveData.title,
-        description: cveData.description,
-        status: cveData.status,
-        references: cveData.references.map(ref => ({ url: ref.url })),
-        pocs: cveData.pocs,
-        snort_rules: cveData.snortRules,
-        tags: cveData.tags
-      };
-      
-      const response = await api.post('/cves', requestData);
-      return response.data;
-    },
+  const { mutate, isLoading, error: mutationError } = useCreateCVE({
     onSuccess: (data) => {
       // CVE 목록 데이터 무효화
-      queryClient.invalidateQueries({ queryKey: ['cves'] });
+      queryClient.invalidateQueries({ 
+        queryKey: QUERY_KEYS.CVE.lists(),
+        refetchActive: true
+      });
       
       // 성공 메시지 표시
-      enqueueSnackbar('CVE가 성공적으로 생성되었습니다', { variant: 'success' });
+      enqueueSnackbar('CVE가 성공적으로 생성되었습니다', { 
+        variant: 'success',
+        anchorOrigin: {
+          vertical: 'bottom',
+          horizontal: 'center',
+        }
+      });
       
       // 콜백 실행
       if (onSuccess) {
@@ -109,22 +109,28 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
       }
       
       // 다이얼로그 닫기
-      if (onClose) {
-        onClose();
-      }
-      
-      // 새로 생성된 CVE로 이동
-      if (data && data.cveId) {
-        navigate(`/cves/${data.cveId}`);
-      }
-      
-      setLoading(false);
+      onClose();
     },
     onError: (error) => {
-      setError(error.response?.data?.message || '에러가 발생했습니다');
-      setLoading(false);
+      handleError(error);
     }
   });
+
+  // 에러 처리 함수
+  const handleError = (error) => {
+    // 이미 cveService에서 처리된 에러 메시지 사용
+    enqueueSnackbar(`CVE 생성 실패: ${error.message}`, { 
+      variant: 'error',
+      autoHideDuration: 5000,
+      anchorOrigin: {
+        vertical: 'bottom',
+        horizontal: 'center',
+      }
+    });
+    
+    // 로딩 상태 초기화
+    setLoading(false);
+  };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -174,7 +180,7 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
     if (newReference.trim()) {
       setFormData(prev => ({
         ...prev,
-        references: [...prev.references, { url: newReference.trim(), dateAdded: new Date().toISOString() }]
+        references: [...prev.references, { url: newReference.trim(), dateAdded: getUTCTimestamp() }]
       }));
       setNewReference('');
     }
@@ -193,6 +199,9 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
     setLoading(true);
     setError(null);
     
+    // 현재 UTC 시간 가져오기
+    const currentTime = getUTCTimestamp();
+    
     // 제출할 데이터 준비
     const cveData = {
       cveId: formData.cveId,
@@ -207,8 +216,33 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
       tags: formData.tags.split(',').map(tag => tag.trim()).filter(tag => tag)
     };
     
-    // React Query 뮤테이션 실행
-    createCVEMutation.mutate(cveData);
+    // 필수 날짜 필드 설정
+    const cveWithDates = {
+      ...cveData,
+      createdAt: currentTime,
+      lastModifiedDate: currentTime,
+      publishedDate: currentTime
+    };
+    
+    // 날짜 필드 검증
+    const dateFields = ['createdAt', 'lastModifiedDate', 'publishedDate'];
+    let hasEmptyDateField = false;
+    
+    dateFields.forEach(field => {
+      if (!cveWithDates[field]) {
+        console.error(`CreateCVE: ${field} 필드가 비어있습니다.`);
+        hasEmptyDateField = true;
+      }
+    });
+    
+    if (hasEmptyDateField) {
+      setError('CVE 생성 중 오류가 발생했습니다: 날짜 필드가 비어있습니다.');
+      setLoading(false);
+      return;
+    }
+    
+    // useCreateCVE 훅을 사용하여 CVE 생성 요청
+    mutate(cveWithDates);
   };
 
   return (
@@ -496,7 +530,7 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
         <Button
           variant="contained"
           onClick={handleSubmit}
-          disabled={!formData.cveId.trim() || loading}
+          disabled={!formData.cveId.trim() || isLoading}
           sx={{ 
             borderRadius: 1,
             bgcolor: 'success.main',

@@ -49,7 +49,14 @@ const Header = ({ onOpenCVEDetail }) => {
   
   // WebSocket 상태 변경 즉시 감지 및 로컬 상태 동기화
   useEffect(() => {
-    console.log(`[Header] WebSocket 상태 변경: isConnected=${isConnected}, isReady=${isReady}, state=${connectionState}`);
+    // 중요한 상태 변경만 로깅 (연결 상태가 변경될 때만)
+    if (connectionStatus !== (isConnected ? 'connected' : 'disconnected')) {
+      console.log('%c 🔌 WebSocket 상태 변경', 'background: #2196f3; color: white; padding: 2px 4px; border-radius: 2px;', {
+        isConnected,
+        isReady,
+        state: connectionState
+      });
+    }
     
     // WebSocketContext에서 제공하는 값은 이미 통합된 상태
     // isConnected가 true이면 isReady도 true (통합 상태)
@@ -59,7 +66,14 @@ const Header = ({ onOpenCVEDetail }) => {
     // 연결 상태 설정 (통합된 상태 기반)
     const status = isConnected ? 'connected' : 'disconnected';
     
-    console.log(`[Header] 연결 상태 업데이트: ${status} (isConnected=${isConnected})`);
+    // 상태가 변경될 때만 로깅
+    if (connectionStatus !== status) {
+      console.log('%c 🔌 WebSocket 연결 상태 업데이트', 'background: #2196f3; color: white; padding: 2px 4px; border-radius: 2px;', {
+        status,
+        isConnected
+      });
+    }
+    
     setConnectionStatus(status);
     
     // 재연결 시도 중 상태 관리
@@ -76,23 +90,17 @@ const Header = ({ onOpenCVEDetail }) => {
     if (isConnected) {
       setTimeout(() => {
         // 상태가 UI에 반영되었는지 확인
-        console.log(`[Header] 연결 상태 UI 확인: connectionStatus=${connectionStatus}, isConnected=${isConnected}`);
-        
         // 필요한 경우 상태 갱신을 강제
         if (connectionStatus !== 'connected') {
-          console.log('[Header] 상태 불일치 감지, 강제 업데이트');
           setConnectionStatus('connected');
         }
       }, 50);
     }
   }, [isConnected, isReady, connectionState, isReconnecting, enqueueSnackbar, connectionStatus]);
   
-  // 상태가 업데이트될 때마다 아이콘 설명 업데이트
+  // 상태가 업데이트될 때마다 아이콘 설명 업데이트 - 불필요한 로그 제거
   useEffect(() => {
-    if (connectionStatus === 'connected') {
-      // 연결됨 상태일 때 로그
-      console.log('[Header] 웹소켓 연결 상태: 연결됨 (connectionStatus=connected)');
-    }
+    // 로그 제거 - 불필요한 로그
   }, [connectionStatus]);
 
   const handleMenu = (event) => {
@@ -206,10 +214,7 @@ const Header = ({ onOpenCVEDetail }) => {
       error: theme.palette.error.main,
       warning: theme.palette.warning.main
     };
-    
-    // 연결 상태 디버깅 로그
-    console.log(`[Header] 연결 상태 아이콘 렌더링: 상태=${connectionStatus}, 색상=${color}, 액션=${!!action}`);
-    
+
     return (
       <Tooltip title={tooltip}>
         <span>

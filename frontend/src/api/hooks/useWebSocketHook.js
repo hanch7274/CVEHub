@@ -1,69 +1,112 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { useSocketIO } from '../../contexts/SocketIOContext';
+import socketIOService from '../../services/socketio/socketio';
+import logger from '../../utils/logging';
+import { useQueryClient } from '@tanstack/react-query';
 
 /**
- * Socket.IO 이벤트를 처리하기 위한 훅
+ * 웹소켓 이벤트를 처리하는 훅
  * @param {string} event - 구독할 이벤트 이름
- * @param {Function} callback - 이벤트 발생 시 실행할 콜백 함수
- * @returns {Object} - 이벤트 제어 함수들
+ * @param {Function} callback - 이벤트 발생 시 호출될 콜백 함수
+ * @param {Object} options - 추가 옵션
+ * @param {boolean} options.optimisticUpdate - 낙관적 업데이트 사용 여부
+ * @param {Array} options.queryKey - 무효화할 쿼리 키
+ * @returns {Function} - 메시지 전송 함수
  */
-const useWebSocketHook = (event, callback) => {
-  const { socket, connected } = useSocketIO();
-  const savedCallback = useRef(callback);
-  const isSubscribed = useRef(false);
-
-  // 콜백 함수가 변경될 때마다 참조 업데이트
+const useWebSocketHook = (event, callback, options = {}) => {
+  // 최신 콜백 함수를 참조하기 위한 ref
+  const callbackRef = useRef(callback);
+  const optionsRef = useRef(options);
+  const queryClient = useQueryClient();
+  
+  // 콜백 함수가 변경될 때마다 ref 업데이트
   useEffect(() => {
-    savedCallback.current = callback;
+    callbackRef.current = callback;
   }, [callback]);
-
-  // 이벤트 구독 설정
+  
+  // 옵션이 변경될 때마다 ref 업데이트
   useEffect(() => {
-    if (!socket || !event || !connected) return;
-
+    optionsRef.current = options;
+  }, [options]);
+  
+  // 이벤트 리스너 등록 및 해제
+  useEffect(() => {
+    if (!event) {
+      logger.warn('useWebSocketHook', '이벤트 이름이 제공되지 않았습니다.');
+      return;
+    }
+    
+    // 이벤트 핸들러 함수
     const handleEvent = (data) => {
-      if (savedCallback.current) {
-        savedCallback.current(data);
+      try {
+        logger.debug(
+          'useWebSocketHook', 
+          `이벤트 수신: ${event}, 데이터: ${JSON.stringify(data, null, 2)}`
+        );
+        
+        // 낙관적 업데이트 처리
+        if (optionsRef.current.optimisticUpdate && optionsRef.current.queryKey) {
+          logger.debug(
+            'useWebSocketHook',
+            `낙관적 업데이트 적용: ${JSON.stringify(optionsRef.current.queryKey)}`
+          );
+          
+          // 쿼리 무효화 및 즉시 리패치
+          queryClient.invalidateQueries(optionsRef.current.queryKey, {
+            refetchActive: true,
+            refetchInactive: false
+          });
+        }
+        
+        // 최신 콜백 함수 호출
+        if (callbackRef.current) {
+          callbackRef.current(data);
+        }
+      } catch (error) {
+        logger.error(
+          'useWebSocketHook', 
+          `이벤트 처리 중 오류 발생: ${event}`, 
+          error
+        );
       }
     };
-
+    
     // 이벤트 리스너 등록
-    socket.on(event, handleEvent);
-    isSubscribed.current = true;
-
-    console.log(`[Socket.IO] '${event}' 이벤트 구독 시작`);
-
-    // 클린업 함수
+    logger.info('useWebSocketHook', `이벤트 리스너 등록: ${event}`);
+    socketIOService.on(event, handleEvent);
+    
+    // 컴포넌트 언마운트 시 이벤트 리스너 해제
     return () => {
-      if (socket) {
-        socket.off(event, handleEvent);
-        isSubscribed.current = false;
-        console.log(`[Socket.IO] '${event}' 이벤트 구독 해제`);
-      }
+      logger.info('useWebSocketHook', `이벤트 리스너 해제: ${event}`);
+      socketIOService.off(event, handleEvent);
     };
-  }, [socket, event, connected]);
-
-  // 수동 메시지 전송 함수
-  const sendMessage = useCallback((eventName, data = {}) => {
-    if (!socket || !connected) {
-      console.warn('[Socket.IO] 소켓이 연결되지 않은 상태에서 메시지 전송 시도');
-      return false;
-    }
-
+  }, [event, queryClient]);
+  
+  // 메시지 전송 함수 - 낙관적 업데이트 지원
+  const sendMessage = useCallback((messageEvent, data, localUpdateCallback) => {
     try {
-      socket.emit(eventName, data);
-      return true;
+      logger.debug(
+        'useWebSocketHook', 
+        `메시지 전송: ${messageEvent}, 데이터: ${JSON.stringify(data, null, 2)}`
+      );
+      
+      // 로컬 업데이트 콜백이 제공된 경우 즉시 실행
+      if (localUpdateCallback && typeof localUpdateCallback === 'function') {
+        logger.debug('useWebSocketHook', '로컬 업데이트 실행');
+        localUpdateCallback(data);
+      }
+      
+      // socketIOService를 통해 메시지 전송
+      socketIOService.emit(messageEvent, data);
     } catch (error) {
-      console.error('[Socket.IO] 메시지 전송 오류:', error);
-      return false;
+      logger.error(
+        'useWebSocketHook', 
+        `메시지 전송 중 오류 발생: ${messageEvent}`, 
+        error
+      );
     }
-  }, [socket, connected]);
-
-  return {
-    isSubscribed: isSubscribed.current,
-    sendMessage,
-    socket
-  };
+  }, []);
+  
+  return sendMessage;
 };
 
-export default useWebSocketHook; 
+export default useWebSocketHook;

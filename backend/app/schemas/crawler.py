@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class CrawlerResponse(BaseModel):
     """크롤러 응답 스키마"""
     message: str = Field(..., description="응답 메시지")
-    status: str = Field(..., description="상태 (예: completed, running, failed)")
+    stage: str = Field(..., description="상태 (예: completed, running, failed)")
     crawler_type: str = Field(..., description="크롤러 유형 (예: nuclei, metasploit)")
 
 

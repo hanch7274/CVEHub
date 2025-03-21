@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useSnackbar } from 'notistack';
 import { useSocketIO } from './SocketIOContext';
 import { QUERY_KEYS } from '../api/queryKeys';
 import logger from '../utils/logging';
@@ -9,12 +10,16 @@ import socketIOService from '../services/socketio/socketio';
 /**
  * Socket.IO와 React Query를 연결하는 브릿지 컴포넌트
  * 소켓 이벤트를 수신하여 적절한 쿼리 캐시를 무효화합니다.
+ * 
+ * 이 컴포넌트는 전체 앱에서 단 하나만 존재해야 하며, App의 최상위 레벨에 배치해야 합니다.
+ * 중앙집중형 웹소켓 관리의 핵심 부분으로, 모든 웹소켓 이벤트를 캐치하고 적절한 쿼리를 무효화합니다.
  */
 const WebSocketQueryBridge = () => {
   const socketIO = useSocketIO();
   const queryClient = useQueryClient();
   const initAttemptRef = useRef(0);
   const maxInitAttempts = 5;
+  const { enqueueSnackbar } = useSnackbar();
 
   useEffect(() => {
     // 컨텍스트에서 소켓 정보 가져오기

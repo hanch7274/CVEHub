@@ -1,8 +1,8 @@
 """
 CVE 관련 API 라우터 - 모든 CVE 관련 엔드포인트 통합
 """
-from fastapi import APIRouter, HTTPException, Query, Path, status, Depends, Response
-from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, HTTPException, Query, Path, status, Depends, Response, BackgroundTasks
+from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pymongo import DESCENDING
@@ -22,14 +22,39 @@ from app.core.cache import (
     get_cache, set_cache, cache_cve_detail, cache_cve_list, 
     invalidate_cve_caches, CACHE_KEY_PREFIXES
 )
-from app.schemas.cve import (
-    CreateCVERequest, PatchCVERequest, BulkUpsertCVERequest,
+from app.schemas.cve_request_schemas import (
+    CreateCVERequest, PatchCVERequest, BulkUpsertCVERequest
+)
+from app.schemas.cve_response_schemas import (
     CVEListResponse, CVEDetailResponse, CVEOperationResponse,
     BulkOperationResponse, CVESearchResponse
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# ----- 전체 CVE 개수 조회 엔드포인트 -----
+
+@router.get("/total-count", response_model=dict)
+async def get_total_cve_count(
+    current_user: User = Depends(get_current_user),
+    cve_service: CVEService = Depends(get_cve_service)
+):
+    """
+    데이터베이스에 존재하는 전체 CVE 개수를 반환합니다.
+    필터링 없이 순수하게 DB에 저장된 모든 CVE의 개수를 반환합니다.
+    """
+    try:
+        logger.info(f"사용자 '{current_user.username}'이(가) 전체 CVE 개수 요청")
+        count = await cve_service.get_total_cve_count()
+        logger.info(f"전체 CVE 개수 조회 완료: {count}")
+        return {"count": count}
+    except Exception as e:
+        logger.error(f"전체 CVE 개수 조회 중 오류 발생: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="전체 CVE 개수 조회 중 오류가 발생했습니다."
+        )
 
 # ----- CVE 목록 조회 API 엔드포인트 -----
 
@@ -223,7 +248,7 @@ async def head_cve(
     클라이언트 캐싱을 위해 Last-Modified 헤더 제공
     """
     try:
-        cve = await cve_service.get_cve_by_id(cve_id)
+        cve = await cve_service.get_cve(cve_id)
         if not cve:
             raise HTTPException(status_code=404, detail=f"CVE ID {cve_id} not found")
         
@@ -257,7 +282,7 @@ async def create_cve(
     """새로운 CVE를 생성합니다."""
     try:
         # 이미 존재하는 CVE인지 확인
-        existing_cve = await cve_service.get_cve_by_id(cve_data.cve_id)
+        existing_cve = await cve_service.get_cve(cve_data.cve_id)
         if existing_cve:
             raise HTTPException(
                 status_code=409,
@@ -304,26 +329,61 @@ async def update_cve(
 ):
     """기존 CVE를 수정합니다."""
     try:
+        logger.info(f"CVE 업데이트 요청: cve_id={cve_id}, 사용자={current_user.username}")
+        logger.debug(f"업데이트 요청 데이터: {update_data.dict(exclude_unset=True)}")
+        
+        # cve_id 형식 확인 로깅
+        is_object_id = len(cve_id) == 24 and all(c in '0123456789abcdef' for c in cve_id)
+        is_cve_format = cve_id.startswith("CVE-") and len(cve_id) > 4
+        logger.debug(f"cve_id 형식: {cve_id}, ObjectId 형식: {is_object_id}, CVE 형식: {is_cve_format}")
+        
         # CVE 존재 확인
-        existing_cve = await cve_service.get_cve_by_id(cve_id)
+        existing_cve = await cve_service.get_cve(cve_id)
         if not existing_cve:
-            raise HTTPException(
-                status_code=404,
-                detail=f"CVE ID {cve_id}를 찾을 수 없습니다."
-            )
+            logger.warning(f"업데이트할 CVE를 찾을 수 없음: {cve_id}")
+            
+            # 다른 방식으로 조회 시도
+            if is_cve_format:
+                logger.debug(f"대소문자 구분 없이 조회 시도")
+                try:
+                    # 대소문자 구분 없이 조회 시도
+                    alt_cve = await cve_service.get_cve(cve_id)
+                    if alt_cve:
+                        logger.info(f"대소문자 구분 없이 CVE 찾음: {alt_cve.cve_id}")
+                        existing_cve = alt_cve
+                except Exception as e:
+                    logger.error(f"대소문자 구분 없이 조회 중 오류: {str(e)}")
+            
+            if not existing_cve:
+                error_msg = f"CVE ID {cve_id}를 찾을 수 없습니다."
+                logger.error(error_msg)
+                raise HTTPException(
+                    status_code=404,
+                    detail=error_msg
+                )
+        
+        logger.debug(f"기존 CVE 정보: id={existing_cve.id}, cve_id={existing_cve.cve_id}")
+        
+        # 업데이트 데이터 준비
+        update_dict = update_data.dict(exclude_unset=True)
+        logger.debug(f"업데이트 데이터 (필터링 후): {update_dict}")
         
         # 업데이트 처리
         updated_cve = await cve_service.update_cve(
             cve_id=cve_id,
-            update_data=update_data.dict(exclude_unset=True),
+            update_data=update_dict,
             updated_by=current_user.username
         )
         
         if not updated_cve:
+            error_msg = f"CVE ID {cve_id} 업데이트 실패"
+            logger.error(error_msg)
             raise HTTPException(
                 status_code=500,
-                detail=f"CVE ID {cve_id} 업데이트 실패"
+                detail=error_msg
             )
+        
+        logger.info(f"CVE 업데이트 성공: {cve_id}")
         
         # 소켓 알림 전송
         await send_cve_notification("update", updated_cve)
@@ -543,15 +603,29 @@ async def bulk_upsert_cves(
 
 # ----- WebSocket 알림 전송 유틸리티 함수 -----
 
-async def send_cve_notification(type: str, cve: Optional[CVEModel] = None, cve_id: Optional[str] = None, message: Optional[str] = None):
+async def send_cve_notification(type: str, cve: Optional[Union[CVEModel, Dict[str, Any]]] = None, cve_id: Optional[str] = None, message: Optional[str] = None):
     """WebSocket을 통해 CVE 관련 알림을 전송합니다."""
     try:
         if type == "add" or type == "update":
             if cve:
+                # cve_id 추출 (객체 또는 딕셔너리에서)
+                if hasattr(cve, "cve_id"):
+                    # CVEModel 객체인 경우
+                    notification_cve_id = cve.cve_id
+                    cve_data = json.loads(json.dumps(cve.dict(), cls=DateTimeEncoder))
+                elif isinstance(cve, dict) and "cve_id" in cve:
+                    # 딕셔너리인 경우
+                    notification_cve_id = cve["cve_id"]
+                    cve_data = json.loads(json.dumps(cve, cls=DateTimeEncoder))
+                else:
+                    # cve_id를 직접 사용
+                    notification_cve_id = cve_id
+                    cve_data = cve
+                
                 data = {
                     "event": f"cve_{type}d",  # "cve_added" 또는 "cve_updated"
-                    "cve_id": cve.cve_id if hasattr(cve, "cve_id") else cve_id,
-                    "data": json.loads(json.dumps(cve.dict(), cls=DateTimeEncoder)),
+                    "cve_id": notification_cve_id,
+                    "data": cve_data,
                     "timestamp": datetime.now().isoformat()
                 }
                 
@@ -585,3 +659,80 @@ async def send_cve_notification(type: str, cve: Optional[CVEModel] = None, cve_i
     except Exception as e:
         logger.error(f"Error sending WebSocket notification: {str(e)}")
         logger.error(traceback.format_exc())
+
+# ----- 관리자 전용 API 엔드포인트 -----
+
+@router.post("/admin/check-empty-date-fields", response_model=dict)
+async def check_empty_date_fields_async(
+    background_tasks: BackgroundTasks,
+    cve_service: CVEService = Depends(get_cve_service),
+    current_user: User = Depends(get_current_admin_user)
+):
+    """
+    데이터베이스에 있는 모든 CVE의 빈 날짜 필드를 백그라운드에서 검사합니다.
+    관리자 권한이 필요합니다.
+    """
+    try:
+        # 관리자 권한 확인
+        if not current_user.is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="이 작업은 관리자만 수행할 수 있습니다."
+            )
+        
+        # 백그라운드 작업으로 실행 (시간이 오래 걸릴 수 있음)
+        background_tasks.add_task(cve_service.update_empty_date_fields)
+        
+        return {
+            "status": "success",
+            "message": "빈 날짜 필드 검사 작업이 백그라운드에서 실행 중입니다."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"빈 날짜 필드 검사 작업 시작 중 오류 발생: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"빈 날짜 필드 검사 작업 시작 중 오류가 발생했습니다: {str(e)}"
+        )
+
+@router.get("/admin/check-empty-date-fields", response_model=dict)
+async def check_empty_date_fields_sync(
+    cve_service: CVEService = Depends(get_cve_service),
+    current_user: User = Depends(get_current_admin_user)
+):
+    """
+    데이터베이스에 있는 모든 CVE의 빈 날짜 필드를 동기적으로 검사합니다.
+    관리자 권한이 필요합니다.
+    """
+    try:
+        # 관리자 권한 확인
+        if not current_user.is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="이 작업은 관리자만 수행할 수 있습니다."
+            )
+        
+        # 동기적으로 실행 (응답이 지연될 수 있음)
+        start_time = datetime.now()
+        result = await cve_service.update_empty_date_fields()
+        elapsed_time = (datetime.now() - start_time).total_seconds()
+        
+        return {
+            "status": "success",
+            "message": "빈 날짜 필드 검사 작업이 완료되었습니다.",
+            "elapsed_time_seconds": elapsed_time,
+            "result": result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"빈 날짜 필드 검사 작업 중 오류 발생: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"빈 날짜 필드 검사 작업 중 오류가 발생했습니다: {str(e)}"
+        )

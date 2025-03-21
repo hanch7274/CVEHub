@@ -17,6 +17,7 @@ import {
 } from './CommonStyles';
 import { Comment as CommentIcon } from '@mui/icons-material';
 import { SOCKET_EVENTS } from '../../../services/socketio/constants';
+import logger from '../../../utils/logging';
 
 // 멘션된 사용자를 추출하는 유틸리티 함수
 const extractMentions = (content) =>
@@ -42,14 +43,15 @@ const CommentsTab = React.memo(({
   currentUser,
   refreshTrigger,
   open,
-  sendMessage
+  parentSendMessage
 }) => {
   const { enqueueSnackbar } = useSnackbar();
   const queryClient = useQueryClient();
   
   // 웹소켓 메시지를 통해 새로운 댓글 알림을 처리하는 콜백 함수
   const handleCommentNotification = useCallback((message) => {
-    if (message.type === 'comment_added' && message.data?.author !== currentUser?.username) {
+    if (message.type === SOCKET_EVENTS.COMMENT_ADDED && message.data?.author !== currentUser?.username) {
+      logger.info('CommentsTab', '새로운 댓글 알림 수신', { author: message.data?.author });
       enqueueSnackbar('새로운 댓글이 작성되었습니다.', { 
         variant: 'info',
         autoHideDuration: 3000
@@ -146,7 +148,7 @@ const CommentsTab = React.memo(({
       });
 
       if (response) {
-        await sendMessage(
+        await parentSendMessage(
           SOCKET_EVENTS.COMMENT_DELETED,
           {
             cveId: cve.cveId,
@@ -170,7 +172,7 @@ const CommentsTab = React.memo(({
     } finally {
       setLoading(false);
     }
-  }, [cve.cveId, sendMessage, enqueueSnackbar]);
+  }, [cve.cveId, parentSendMessage, enqueueSnackbar]);
 
   // 댓글 수정 함수
   const handleEdit = useCallback(async (commentId, content) => {
@@ -184,7 +186,7 @@ const CommentsTab = React.memo(({
 
       if (response) {
         if (mentions.length > 0) {
-          await sendMessage(
+          await parentSendMessage(
             SOCKET_EVENTS.MENTION_ADDED,
             {
               type: 'mention',
@@ -200,7 +202,7 @@ const CommentsTab = React.memo(({
         }
         
         // WebSocket 메시지 전송 - 필드 정보 추가
-        await sendMessage(
+        await parentSendMessage(
           SOCKET_EVENTS.COMMENT_UPDATED,
           {
             cveId: cve.cveId,
@@ -222,7 +224,7 @@ const CommentsTab = React.memo(({
     } finally {
       setLoading(false);
     }
-  }, [cve.cveId, currentUser, sendMessage, enqueueSnackbar, handleFinishEdit]);
+  }, [cve.cveId, currentUser, parentSendMessage, enqueueSnackbar, handleFinishEdit]);
 
   // 답글 작성 함수
   const handleReplySubmit = useCallback(async (parentId, content) => {
@@ -237,7 +239,7 @@ const CommentsTab = React.memo(({
 
       if (response) {
         if (mentions.length > 0) {
-          await sendMessage(
+          await parentSendMessage(
             SOCKET_EVENTS.MENTION_ADDED,
             {
               type: 'mention',
@@ -266,7 +268,7 @@ const CommentsTab = React.memo(({
     } finally {
       setLoading(false);
     }
-  }, [cve.cveId, currentUser, sendMessage, enqueueSnackbar]);
+  }, [cve.cveId, currentUser, parentSendMessage, enqueueSnackbar]);
 
   // 개별 댓글 아이템 (메모이제이션)
   const CommentItem = useCallback(({ comment }) => {
@@ -362,7 +364,7 @@ const CommentsTab = React.memo(({
       if (response) {
         // 멘션이 있을 경우 알림 전송
         if (mentions.length > 0) {
-          await sendMessage(
+          await parentSendMessage(
             SOCKET_EVENTS.MENTION_ADDED,
             {
               type: 'mention',
@@ -378,10 +380,10 @@ const CommentsTab = React.memo(({
         }
 
         // WebSocket 메시지 전송 - 필드 정보 추가
-        await sendMessage(
+        await parentSendMessage(
           SOCKET_EVENTS.COMMENT_ADDED,
           {
-            type: 'comment_added',
+            type: SOCKET_EVENTS.COMMENT_ADDED,
             cveId: cve.cveId,
             field: 'comments',
             content: '새로운 댓글이 작성되었습니다.',
@@ -405,7 +407,7 @@ const CommentsTab = React.memo(({
     } finally {
       setLoading(false);
     }
-  }, [cve.cveId, newComment, currentUser, sendMessage, enqueueSnackbar]);
+  }, [cve.cveId, newComment, currentUser, parentSendMessage, enqueueSnackbar]);
 
   // 초기 로딩
   useEffect(() => {

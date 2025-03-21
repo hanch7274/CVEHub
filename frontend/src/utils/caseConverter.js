@@ -1,4 +1,4 @@
-import { CASE_CONVERSION } from '../config';
+import { CASE_CONVERSION_CONFIG } from '../config';
 
 /**
  * 스네이크 케이스에서 카멜 케이스로 변환
@@ -11,7 +11,7 @@ import { CASE_CONVERSION } from '../config';
 export const snakeToCamel = (data, options = {}) => {
   const { 
     isTopLevel = true, 
-    excludeFields = CASE_CONVERSION.EXCLUDED_FIELDS || []
+    excludeFields = CASE_CONVERSION_CONFIG.EXCLUDED_FIELDS || []
   } = typeof options === 'boolean' ? { isTopLevel: options } : options;
   
   // 로깅 함수 - 디버깅 목적
@@ -20,13 +20,6 @@ export const snakeToCamel = (data, options = {}) => {
       console.log(`[CaseConverter] ${message}`, data);
     }
   };
-  
-  logDebug('변환 시작 (snake_case -> camelCase)', {
-    dataType: data === null ? 'null' : typeof data,
-    isArray: Array.isArray(data),
-    hasData: data !== null && data !== undefined,
-    excludeFields
-  });
   
   // null이나 undefined인 경우 그대로 반환
   if (data === null || data === undefined) {
@@ -56,20 +49,13 @@ export const snakeToCamel = (data, options = {}) => {
     
     // 키 변환 (snake_case -> camelCase)
     const convertedKey = shouldConvert ? key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase()) : key;
-    
+        
     // 값이 객체나 배열인 경우 재귀적으로 변환
     result[convertedKey] = typeof value === 'object' && value !== null
       ? snakeToCamel(value, { isTopLevel: false, excludeFields })
       : value;
   });
   
-  if (isTopLevel) {
-    logDebug('변환 완료', {
-      originalKeys: Object.keys(data),
-      convertedKeys: Object.keys(result),
-      sample: result
-    });
-  }
   
   return result;
 };
@@ -83,7 +69,10 @@ export const snakeToCamel = (data, options = {}) => {
  * @returns {*} 변환된 데이터
  */
 export const camelToSnake = (data, options = {}) => {
-  const { isTopLevel = true, excludeFields = [] } = options;
+  const { 
+    isTopLevel = true, 
+    excludeFields = CASE_CONVERSION_CONFIG.EXCLUDED_FIELDS || [] 
+  } = typeof options === 'boolean' ? { isTopLevel: options } : options;
   
   // 로깅 함수 - 디버깅 목적
   const logDebug = (message, data) => {
@@ -136,13 +125,6 @@ export const camelToSnake = (data, options = {}) => {
       : value;
   });
   
-  if (isTopLevel) {
-    logDebug('변환 완료', {
-      originalKeys: Object.keys(data),
-      convertedKeys: Object.keys(result),
-      sample: result
-    });
-  }
   
   return result;
 };

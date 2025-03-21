@@ -26,7 +26,7 @@ class Notification(Document):
     content: str                 # 알림 내용
     metadata: Dict[str, Any] = Field(default_factory=dict)  # 멘션된 댓글 내용 등
     status: NotificationStatus = NotificationStatus.UNREAD
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("Asia/Seoul")))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
     read_at: Optional[datetime] = None
     delivered: bool = False
     

@@ -1,5 +1,5 @@
 // InlineEditText.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { TextField, Typography, Box } from '@mui/material';
 import { Edit as EditIcon } from '@mui/icons-material';
 
@@ -17,6 +17,7 @@ const InlineEditText = ({
 }) => {
   const [isEditing, setIsEditing] = useState(externalEdit);
   const [editedValue, setEditedValue] = useState(value || '');
+  const textFieldRef = useRef(null);
 
   // 외부 prop이 변경되면 내부 상태를 업데이트
   useEffect(() => {
@@ -26,6 +27,25 @@ const InlineEditText = ({
   useEffect(() => {
     setEditedValue(value || '');
   }, [value]);
+
+  // 텍스트 필드의 높이를 조정하는 함수
+  const adjustTextFieldHeight = () => {
+    if (multiline && textFieldRef.current) {
+      const inputElement = textFieldRef.current.querySelector('textarea');
+      if (inputElement) {
+        // 자동 높이 조정 로직
+        inputElement.style.height = 'auto';
+        inputElement.style.height = `${inputElement.scrollHeight}px`;
+      }
+    }
+  };
+
+  // 편집 모드 변경 시 높이 조정
+  useEffect(() => {
+    if (isEditing) {
+      adjustTextFieldHeight();
+    }
+  }, [isEditing, editedValue]);
 
   const handleClick = (e) => {
     if (!disabled && !isEditing) {
@@ -52,6 +72,14 @@ const InlineEditText = ({
     }
   };
 
+  const handleChange = (e) => {
+    setEditedValue(e.target.value);
+    // 값이 변경될 때마다 높이 조정 (멀티라인인 경우)
+    if (multiline) {
+      setTimeout(adjustTextFieldHeight, 0);
+    }
+  };
+
   return (
     <Box
       onClick={handleClick}
@@ -65,10 +93,11 @@ const InlineEditText = ({
     >
       {isEditing ? (
         <TextField
+          ref={textFieldRef}
           fullWidth
           multiline={multiline}
           value={editedValue}
-          onChange={(e) => setEditedValue(e.target.value)}
+          onChange={handleChange}
           onBlur={handleBlur}
           onKeyPress={handleKeyPress}
           autoFocus
@@ -85,8 +114,7 @@ const InlineEditText = ({
               bgcolor: 'background.paper',
               borderRadius: 1,
               width: '100%',
-              height: '100%',
-              overflow: 'auto',
+              overflow: multiline ? 'hidden' : 'auto',
             },
           }}
         />

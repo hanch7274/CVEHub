@@ -9,6 +9,7 @@ import {
   getCacheValues,
   clearCache
 } from '../services/cacheService';
+import { formatToKST } from '../../utils/dateUtils';
 
 /**
  * Redis 캐시 서버 정보 조회 훅
@@ -107,7 +108,7 @@ export const useReactQueryCache = () => {
       isStale: query.isStale(),
       isActive: query.isActive(),
       dataUpdatedAt: query.state.dataUpdatedAt,
-      lastUpdated: query.state.dataUpdatedAt ? new Date(query.state.dataUpdatedAt).toLocaleString() : 'N/A',
+      lastUpdated: query.state.dataUpdatedAt ? formatToKST(new Date(query.state.dataUpdatedAt)) : 'N/A',
     }));
   };
   

@@ -18,11 +18,11 @@ import CssBaseline from '@mui/material/CssBaseline';
 import theme from './theme';
 import { injectErrorHandler, injectQueryClient } from './utils/auth';
 import { ErrorProvider, useError } from './contexts/ErrorContext';
-import { ToastContainer } from 'react-toastify';
-import 'react-toastify/dist/ReactToastify.css';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import WebSocketQueryBridge from './contexts/WebSocketQueryBridge';
+import { getAccessToken } from './utils/storage/tokenStorage';
+import socketIOService from './services/socketio/socketio';  // Socket.IO 서비스 임포트
 
 // CVEDetail 컴포넌트를 lazy 로딩으로 가져옵니다
 const CVEDetail = lazy(() => import('./features/cve/CVEDetail'));
@@ -207,7 +207,9 @@ const MainRoutes = ({ setSelectedCVE, selectedCVE }) => {
       {/* Default Route */}
       <Route
         path="/"
-        element={<Navigate to="/cves" replace />}
+        element={
+          getAccessToken() ? <Navigate to="/cves" replace /> : <Navigate to="/login" replace />
+        }
       />
 
       {/* Catch-all Route */}
@@ -236,22 +238,19 @@ const MainRoutes = ({ setSelectedCVE, selectedCVE }) => {
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      refetchOnWindowFocus: true, // 창 포커스시 자동 리페치 활성화
-      refetchOnReconnect: true, // 네트워크 재연결시 자동 리페치 활성화
-      refetchOnMount: true, // 컴포넌트 마운트시 자동 리페치 활성화
-      staleTime: 1 * 60 * 1000, // 1분 동안 데이터 신선하게 유지 (기존 5분에서 단축)
-      retry: 2, // 실패시 2번 재시도 (기존 1번에서 증가)
-      retryDelay: attemptIndex => Math.min(1000 * 2 ** attemptIndex, 30000), // 지수 백오프 적용
-      cacheTime: 10 * 60 * 1000, // 10분 동안 캐시 유지 (유지)
-      onError: (error) => {
-        console.error('Global query error:', error);
-      },
+      refetchOnWindowFocus: false, // 창 포커스시 자동 리페치 비활성화
+      staleTime: 5 * 60 * 1000, // 5분 동안 데이터 신선하게 유지
+      retry: 1, // 실패시 1번 재시도
+      cacheTime: 10 * 60 * 1000, // 10분 동안 캐시 유지
     },
   },
 });
 
 // auth.js에 queryClient 주입
 injectQueryClient(queryClient);
+
+// Socket.IO 디버깅을 위한 전역 객체 노출
+window._socketDebug = socketIOService;
 
 const App = () => {
   const [selectedCVE, setSelectedCVE] = useState(null);
@@ -261,7 +260,7 @@ const App = () => {
       <ThemeProvider theme={theme}>
         <SnackbarProvider
           maxSnack={3}
-          anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
           autoHideDuration={3000}
         >
           <AuthProvider>
@@ -278,18 +277,6 @@ const App = () => {
             </Router>
           </AuthProvider>
         </SnackbarProvider>
-        <ToastContainer
-          position="bottom-center"
-          autoClose={3000}
-          hideProgressBar={false}
-          newestOnTop={false}
-          closeOnClick
-          rtl={false}
-          pauseOnFocusLoss
-          draggable
-          pauseOnHover
-          theme="colored"
-        />
       </ThemeProvider>
       {process.env.NODE_ENV === 'development' && <ReactQueryDevtools />}
     </QueryClientProvider>

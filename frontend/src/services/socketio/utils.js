@@ -1,7 +1,7 @@
 /**
  * Socket.IO 유틸리티 함수
  */
-
+import { WS_BASE_URL } from '../../config';
 import logger from '../../utils/logging';
 
 /**
@@ -38,7 +38,8 @@ export function calculateReconnectDelay(attempts, baseDelay = 1000, maxDelay = 3
  */
 export function debugLog(...args) {
   if (process.env.NODE_ENV === 'development') {
-    console.log('[SocketIO]', ...args);
+    const [message, ...data] = args;
+    logger.debug('SocketIO', message, data.length > 0 ? data : undefined);
   }
 }
 
@@ -46,13 +47,14 @@ export function debugLog(...args) {
  * 일정 시간 간격으로만 로그 출력 (스로틀링)
  * @param {number} lastTime - 마지막 로그 시간
  * @param {number} interval - 간격 (ms)
- * @param  {...any} args - 로그 인자
+ * @param {string} message - 로그 메시지
+ * @param {Object} [data] - 로그 데이터
  * @returns {number} 현재 시간 (다음 호출에서 lastTime으로 사용)
  */
-export function throttleLog(lastTime, interval, ...args) {
+export function throttleLog(lastTime, interval, message, data) {
   const now = Date.now();
   if (now - lastTime > interval) {
-    debugLog(...args);
+    logger.debug('SocketIO', message, data);
     return now;
   }
   return lastTime;
@@ -101,19 +103,50 @@ export function removeFromSessionStorage(key) {
 }
 
 /**
- * Socket.IO 연결 URL을 생성하는 함수
- * @returns {string} Socket.IO 연결 URL
+ * Socket.IO 연결을 위한 WebSocket URL을 생성합니다.
+ * 환경(브라우저 vs Node.js)과 실행 환경(개발 vs 프로덕션)에 따라 적절한 URL을 반환합니다.
+ * 
+ * @returns {string} Socket.IO 서버 URL
  */
 export function getSocketIOURL() {
-  // config.js에서 정의된 API_BASE_URL 상수 사용
-  // Socket.IO는 ws:// URL이 아닌 http:// URL을 사용해야 함
-  const { API_BASE_URL } = require('../../config');
+  // 브라우저 환경 감지
+  const isBrowser = typeof window !== 'undefined';
   
-  logger.info('WebSocketUtils', `Socket.IO URL 생성: ${API_BASE_URL}`);
+  // 환경 변수에서 WebSocket URL 가져오기 (최우선)
+  const envWsUrl = process.env.REACT_APP_WS_URL;
+  if (envWsUrl) {
+    // 프로토콜 제거 (Socket.IO 클라이언트가 자동으로 처리)
+    const cleanUrl = envWsUrl.replace(/^(https?:\/\/|wss?:\/\/)/i, '');
+    console.log(`[환경 변수] Socket.IO URL 사용: ${cleanUrl}`);
+    return cleanUrl;
+  }
   
-  // Socket.IO 서버는 백엔드에서 '/socket.io' 경로에 마운트되어 있으므로
-  // 기본 URL만 반환하고 path 옵션은 socketio.js에서 설정함
-  return API_BASE_URL;
+  if (isBrowser) {
+    // 현재 페이지의 호스트 정보 추출
+    const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+    const hostname = window.location.hostname; // 도메인 이름만 (예: localhost 또는 127.0.0.1)
+    
+    // 백엔드 포트 (기본값 8000)
+    const backendPort = '8000';
+    
+    // 백엔드 서버 URL 생성 (현재 접속한 호스트 + 백엔드 포트)
+    const host = `${hostname}:${backendPort}`;
+    console.log(`[현재 호스트 기반] Socket.IO URL 생성: ${host}`);
+    return host;
+  }
+  
+  // Node.js 환경 (SSR 등) 또는 fallback
+  try {
+    // 설정에서 기본 URL 가져오기 (프로토콜 제거)
+    const baseUrl = WS_BASE_URL || 'localhost:8000';
+    const cleanUrl = baseUrl.replace(/^(https?:\/\/|wss?:\/\/)/i, '');
+    console.log(`[기본 설정] Socket.IO URL 사용: ${cleanUrl}`);
+    return cleanUrl;
+  } catch (error) {
+    console.error('WebSocket URL 생성 중 오류 발생:', error);
+    // 기본값으로 localhost 반환 (프로토콜 없이)
+    return 'localhost:8000';
+  }
 }
 
 export default {
@@ -125,4 +158,4 @@ export default {
   getFromSessionStorage,
   removeFromSessionStorage,
   getSocketIOURL
-}; 
+};
