@@ -36,7 +36,7 @@ def format_datetime(dt: datetime, timezone: str = "Asia/Seoul") -> str:
     local_dt = dt.astimezone(ZoneInfo(timezone))
     
     # 포맷팅
-    return local_dt.strftime("%Y-%m-%d %H:%M:%S")
+    return local_dt.isoformat()
 
 def get_current_time() -> str:
     """

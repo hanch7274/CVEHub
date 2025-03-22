@@ -2,7 +2,7 @@ import axios from 'axios';
 import { getAccessToken, clearAuthStorage } from '../../utils/storage/tokenStorage';
 import { camelToSnake, snakeToCamel } from '../../utils/caseConverter';
 import { refreshToken as refreshAuthToken } from '../../services/authService';
-import { formatWithTimeZone, prepareDataForAPI, convertDateStrToKST, TIME_ZONES } from '../../utils/dateUtils';
+import { formatWithTimeZone, prepareDataForAPI, convertDateStrToKST, TIME_ZONES, isValid } from '../../utils/dateUtils';
 import { 
   API_BASE_URL, 
   CASE_CONVERSION_CONFIG, 
@@ -76,6 +76,51 @@ const shouldProcessDates = (url) => {
   // 제외 패턴과 일치하는 경우 날짜 처리하지 않음
   return !URL_NO_DATE_PROCESSING_PATTERNS.some(pattern => url.includes(pattern));
 };
+
+// 날짜 문자열을 Date 객체로 변환하는 함수
+function convertDateStringsToDate(data) {
+  if (!data) return data;
+  
+  if (Array.isArray(data)) {
+    return data.map(item => convertDateStringsToDate(item));
+  }
+  
+  if (typeof data !== 'object' || data === null) {
+    return data;
+  }
+  
+  const result = { ...data };
+  
+  // 날짜 필드 목록
+  const dateFields = [
+    'createdAt', 'lastModifiedAt', 'publishedDate', 'dateAdded', 
+    'updatedAt', 'expireDate', 'releaseDate', 'timestamp', 'date'
+  ];
+  
+  dateFields.forEach(field => {
+    if (field in result && typeof result[field] === 'string') {
+      try {
+        // ISO 문자열을 Date 객체로 변환
+        // 백엔드가 이제 isoformat()으로 반환하므로 시간대 정보가 포함됨
+        result[field] = new Date(result[field]);
+        
+        // 개발 환경에서 변환 과정 로깅
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`${field} 필드 변환:`, {
+            원본: result[field],
+            타입: typeof result[field],
+            instanceof_Date: result[field] instanceof Date,
+            isValid: !isNaN(result[field].getTime())
+          });
+        }
+      } catch (error) {
+        console.error(`날짜 변환 오류 (${field}):`, error);
+      }
+    }
+  });
+  
+  return result;
+}
 
 // Request Interceptor
 api.interceptors.request.use(
@@ -344,7 +389,7 @@ api.interceptors.request.use(
   }
 );
 
-// Response Interceptor
+// Response Interceptor - 수정된 부분
 api.interceptors.response.use(
   (response) => {
     // 로깅 제외 대상 확인
@@ -358,17 +403,51 @@ api.interceptors.response.use(
           // 스네이크 케이스에서 카멜 케이스로 변환
           response.data = response.data.map(item => snakeToCamel(item, EXCLUDED_FIELDS));
           
-          // 날짜 필드 처리
+          // 날짜 필드 처리 - convertDateStrToKST 대신 convertDateStringsToDate 사용
           if (shouldProcessDates(response.config.url)) {
-            response.data = convertDateStrToKST(response.data);
+            // 개발 환경에서 로깅
+            if (process.env.NODE_ENV === 'development') {
+              console.log('변환 전 날짜 필드 (배열):', {
+                샘플: response.data.length > 0 ? response.data[0] : '빈 배열',
+                항목수: response.data.length
+              });
+            }
+            
+            // 날짜 문자열을 Date 객체로 변환
+            response.data = convertDateStringsToDate(response.data);
           }
         } else if (typeof response.data === 'object' && response.data !== null) {
           // 스네이크 케이스에서 카멜 케이스로 변환
           response.data = snakeToCamel(response.data, EXCLUDED_FIELDS);
           
-          // 날짜 필드 처리
+          // 날짜 필드 처리 - convertDateStrToKST 대신 convertDateStringsToDate 사용
           if (shouldProcessDates(response.config.url)) {
-            response.data = convertDateStrToKST(response.data);
+            // 개발 환경에서 로깅
+            if (process.env.NODE_ENV === 'development' && 
+                (response.data.createdAt || response.data.lastModifiedAt)) {
+              console.log('변환 전 날짜 필드:', {
+                createdAt: response.data.createdAt,
+                lastModifiedAt: response.data.lastModifiedAt,
+                createdAt_type: typeof response.data.createdAt,
+                lastModifiedAt_type: typeof response.data.lastModifiedAt
+              });
+            }
+            
+            // 날짜 문자열을 Date 객체로 변환
+            response.data = convertDateStringsToDate(response.data);
+            
+            // 개발 환경에서 로깅
+            if (process.env.NODE_ENV === 'development' && 
+                (response.data.createdAt || response.data.lastModifiedAt)) {
+              console.log('변환 후 날짜 필드:', {
+                createdAt: response.data.createdAt,
+                lastModifiedAt: response.data.lastModifiedAt,
+                createdAt_type: typeof response.data.createdAt,
+                createdAt_instanceof_Date: response.data.createdAt instanceof Date,
+                lastModifiedAt_type: typeof response.data.lastModifiedAt,
+                lastModifiedAt_instanceof_Date: response.data.lastModifiedAt instanceof Date
+              });
+            }
           }
         }
       }
@@ -401,40 +480,20 @@ api.interceptors.response.use(
         response.config?.url.includes('/auth/signup')
       );
 
-      // 응답 데이터가 있는 경우 스네이크 케이스에서 카멜 케이스로 변환
-      if (response.data) {
-        try {
-          // detail 필드가 있는 경우 원본 값 저장
-          const originalDetail = response.data.detail;
-          
-          // 인증 관련 원본 필드 저장 (인증 엔드포인트인 경우)
-          const originalAuthFields = {};
-          if (isAuthEndpoint && typeof response.data === 'object') {
-            // 원본 인증 필드 저장
-            ['access_token', 'refresh_token', 'token_type'].forEach(field => {
-              if (response.data[field] !== undefined) {
-                originalAuthFields[field] = response.data[field];
-              }
-            });
+      // 인증 엔드포인트인 경우 원본 필드도 함께 보존
+      if (isAuthEndpoint && typeof response.data === 'object') {
+        // 원본 인증 필드 저장
+        const originalAuthFields = {};
+        ['access_token', 'refresh_token', 'token_type'].forEach(field => {
+          if (response.data[field] !== undefined) {
+            originalAuthFields[field] = response.data[field];
           }
-          
-          // 데이터 변환 적용 (제외 필드 목록 전달)
-          response.data = snakeToCamel(response.data, { excludeFields: EXCLUDED_FIELDS });
-          
-          // detail 필드 보존 (변환 후에도 원본 값 유지)
-          if (originalDetail) {
-            response.data.detail = originalDetail;
-          }
-          
-          // 인증 엔드포인트인 경우 원본 필드도 함께 보존
-          if (isAuthEndpoint && Object.keys(originalAuthFields).length > 0) {
-            debugLog('Preserving original auth fields alongside camelCase versions');
-            // 카멜케이스 변환 후에도 원본 필드 유지 (둘 다 사용 가능하도록)
-            Object.assign(response.data, originalAuthFields);
-          }
-        } catch (transformError) {
-          console.error('%c 🔴 Transform Error', 'background: #f44336; color: white; padding: 2px 4px; border-radius: 2px;', 'Response transform error:', transformError);
-          // 변환 실패 시 원본 데이터 유지
+        });
+        
+        // 원본 필드 보존 (둘 다 사용 가능하도록)
+        if (Object.keys(originalAuthFields).length > 0) {
+          console.log('Preserving original auth fields alongside camelCase versions');
+          Object.assign(response.data, originalAuthFields);
         }
       }
 
@@ -639,6 +698,6 @@ api.interceptors.response.use(
     
     return Promise.reject(formattedError);
   }
-);
-
-export default api;
+ );
+ 
+ export default api;

@@ -367,6 +367,21 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     setIsCached(isDataFromCache);
   }, [isDataFromCache]);
   
+  // CVEDetail 컴포넌트에 추가
+useEffect(() => {
+  if (cveData) {
+    console.log('CVE 데이터 날짜 필드 확인:', {
+      createdAt: cveData.createdAt,
+      createdAt_type: typeof cveData.createdAt,
+      createdAt_instanceof_Date: cveData.createdAt instanceof Date,
+      lastModifiedAt: cveData.lastModifiedAt,
+      lastModifiedAt_type: typeof cveData.lastModifiedAt,
+      lastModifiedAt_instanceof_Date: cveData.lastModifiedAt instanceof Date,
+      formatDateDisplay_result: formatDateDisplay(cveData.createdAt)
+    });
+  }
+}, [cveData]);
+  
   // 탭 카운트 업데이트 함수
   const updateTabCounts = useCallback((data) => {
     if (!data) return;
@@ -457,7 +472,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     
     logger.info('CVEDetail', `${propsCveId} 업데이트 이벤트 리스닝 시작`);
     
-    // 소켓 객체가 없거나 연결되지 않은 경우 조기 반환
+    // 소켓 객체가 없거나 연결되지 않은 경우
     if (!socket) {
       logger.warn('CVEDetail', '소켓 객체가 초기화되지 않았습니다. 실시간 업데이트가 제한됩니다.');
       return;
@@ -706,16 +721,36 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
 
   // 날짜 포맷팅 함수
   const formatDateDisplay = (dateValue) => {
-    // 디버깅 코드 추가
-    console.log('formatDateDisplay 입력값:', {
+    // 디버깅 로그 추가
+    console.log('CVE 데이터 날짜 필드 확인:', {
       값: dateValue,
       타입: typeof dateValue,
       instanceof_Date: dateValue instanceof Date,
-      toString: dateValue ? dateValue.toString() : null,
-      isValid: dateValue ? isValid(new Date(dateValue)) : false
+      isISOString: typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(dateValue),
+      toString: dateValue ? String(dateValue) : null
     });
     
-    return formatDate(dateValue, DATE_FORMATS.DISPLAY.DEFAULT);
+    // 문자열이고 ISO 형식이면 그대로 사용
+    if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(dateValue)) {
+      return formatDate(dateValue, DATE_FORMATS.DISPLAY.DEFAULT);
+    }
+    
+    // Date 객체면 그대로 사용
+    if (dateValue instanceof Date && !isNaN(dateValue.getTime())) {
+      return formatDate(dateValue, DATE_FORMATS.DISPLAY.DEFAULT);
+    }
+    
+    // 그외 마지막 시도
+    try {
+      const parsedDate = typeof dateValue === 'string' ? new Date(dateValue) : dateValue;
+      if (parsedDate && !isNaN(parsedDate.getTime())) {
+        return formatDate(parsedDate, DATE_FORMATS.DISPLAY.DEFAULT);
+      }
+    } catch (error) {
+      console.error('날짜 파싱 오류:', error);
+    }
+    
+    return '-';
   };
 
   // 타이틀 업데이트 핸들러

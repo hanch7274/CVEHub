@@ -311,13 +311,18 @@ export const parseDate = (dateValue) => {
     if (typeof dateValue === 'string') {
       if (!dateValue.trim()) return null;
       
-      // MongoDB 형식 (2025-03-21T02:27:54.630000) - Z가 없는 ISOString
-      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(dateValue)) {
-        return parseISO(dateValue + 'Z'); // UTC로 간주하고 Z 추가
+      // 이제 백엔드는 항상 타임존이 포함된 ISO 형식을 반환하므로
+      // 별도의 변환 없이 Date 객체로 변환
+      const date = new Date(dateValue);
+      
+      // 유효한 날짜인지 확인
+      if (!isNaN(date.getTime())) {
+        return date;
       }
       
-      // ISO 형식 (이미 Z 또는 +00:00 포함)
-      return parseISO(dateValue);
+      // 유효하지 않은 경우 로깅
+      console.warn(`유효하지 않은 날짜 문자열: ${dateValue}`);
+      return null;
     }
     
     // 숫자(타임스탬프)인 경우
