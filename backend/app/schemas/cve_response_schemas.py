@@ -4,6 +4,7 @@ CVE 관련 응답 스키마 정의
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from .cve_base_schemas import Reference, PoCBase, SnortRuleBase, ModificationHistory
 
@@ -42,6 +43,10 @@ class CVEDetailResponse(BaseModel):
     modification_history: List[ModificationHistory] = []
     created_by: Optional[str] = None
     last_modified_by: Optional[str] = None
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat() if v else None
+        }
     
 class CVEOperationResponse(BaseModel):
     """CVE 작업 결과 응답 모델"""

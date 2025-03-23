@@ -2,24 +2,20 @@
 CVE 관련 API 라우터 - 모든 CVE 관련 엔드포인트 통합
 """
 from fastapi import APIRouter, HTTPException, Query, Path, status, Depends, Response, BackgroundTasks
-from typing import List, Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union
 from datetime import datetime
-from zoneinfo import ZoneInfo
-from pymongo import DESCENDING
 import logging
-import json
-import asyncio
 import traceback
 from pydantic import ValidationError
 
-from app.models.cve_model import CVEModel, PoC, SnortRule, Reference, ModificationHistory
+from app.models.cve_model import CVEModel, Reference, ModificationHistory
 from app.models.user import User
 from app.services.cve_service import CVEService
 from app.core.dependencies import get_cve_service
 from app.core.auth import get_current_user, get_current_admin_user
 from app.core.socketio_manager import socketio_manager, WSMessageType, DateTimeEncoder
 from app.core.cache import (
-    get_cache, set_cache, cache_cve_detail, cache_cve_list, 
+    get_cache, cache_cve_detail, cache_cve_list, 
     invalidate_cve_caches, CACHE_KEY_PREFIXES
 )
 from app.schemas.cve_request_schemas import (
@@ -29,6 +25,7 @@ from app.schemas.cve_response_schemas import (
     CVEListResponse, CVEDetailResponse, CVEOperationResponse,
     BulkOperationResponse, CVESearchResponse
 )
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -54,54 +51,6 @@ async def get_total_cve_count(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="전체 CVE 개수 조회 중 오류가 발생했습니다."
-        )
-
-# ----- CVE 목록 조회 API 엔드포인트 -----
-
-@router.get("/", response_model=CVEListResponse)
-async def get_cves(
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=10, ge=1, le=100),
-    search: str = Query(default=None),
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """CVE 목록을 페이지네이션하여 반환합니다."""
-    try:
-        # 성능 로깅 시작
-        start_time = datetime.now()
-        
-        try:
-            # CVEService의 get_cve_list 메소드 사용
-            # 페이지 번호를 1부터 시작하지만 skip은 0부터 시작하므로 page=skip+1로 변환
-            page = skip // limit + 1 if limit > 0 else 1
-            
-            result = await cve_service.get_cve_list(
-                page=page,
-                limit=limit,
-                search=search
-            )
-            
-            # 성능 측정 및 로깅
-            elapsed_time = (datetime.now() - start_time).total_seconds()
-            logging.info(f"CVE query executed in {elapsed_time:.3f} seconds. "
-                        f"Total: {result['total']}, Fetched: {len(result['items'])}, "
-                        f"Search: {search if search else 'None'}")
-            
-            return result
-            
-        except Exception as db_error:
-            logging.error(f"Database error: {str(db_error)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="데이터베이스 조회 중 오류가 발생했습니다."
-            )
-            
-    except Exception as e:
-        logging.error(f"Error in get_cves: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="CVE 목록 조회 중 오류가 발생했습니다."
         )
 
 @router.get("/list", response_model=CVEListResponse)
@@ -199,7 +148,7 @@ async def get_cve_stats(
 # ----- CVE 상세 조회 API 엔드포인트 -----
 
 @router.get("/{cve_id}", response_model=CVEDetailResponse)
-async def get_cve_by_id(
+async def get_cve_detail(
     cve_id: str,
     bypass_cache: bool = Query(False, description="캐시를 우회하고 항상 데이터베이스에서 조회합니다."),
     current_user: User = Depends(get_current_user),
@@ -230,18 +179,7 @@ async def get_cve_by_id(
                 return cached_data
         
         # 캐시에 없거나 우회 옵션이 설정된 경우 DB에서 조회
-        start_time = datetime.now()
-        result = await cve_service.get_cve(cve_id, include_details=True)
-        elapsed_time = (datetime.now() - start_time).total_seconds()
-        
-        if not result:
-            logger.warning(f"CVE ID {cve_id} 찾을 수 없음")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, 
-                detail=f"CVE ID {cve_id} not found"
-            )
-        
-        logger.info(f"CVE {cve_id} 상세 정보 조회 완료. 소요 시간: {elapsed_time:.3f}초")
+        result = await cve_service.get_cve_detail(cve_id, include_details=True)
         
         # 결과 캐싱
         await cache_cve_detail(cve_id, result)
@@ -441,25 +379,6 @@ async def update_cve(
             detail=f"CVE 업데이트 중 오류가 발생했습니다: {str(e)}"
         )
 
-@router.put("/{cve_id}", response_model=CVEOperationResponse)
-async def update_cve_full(
-    cve_id: str,
-    cve_data: dict,
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """
-    CVE 정보를 업데이트합니다 (캐시 무효화 포함)
-    """
-    updated = await cve_service.update_cve(cve_id, cve_data, current_user)
-    
-    if updated:
-        # 캐시 무효화
-        await invalidate_cve_caches(cve_id)
-        return {"success": True, "message": f"{cve_id} 업데이트 완료"}
-    else:
-        raise HTTPException(status_code=404, detail=f"CVE ID {cve_id} not found")
-
 # ----- CVE 삭제 API 엔드포인트 -----
 
 @router.delete("/{cve_id}", response_model=CVEOperationResponse)
@@ -637,83 +556,6 @@ async def bulk_upsert_cves(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"CVE 대량 업서트 중 오류가 발생했습니다: {str(e)}"
-        )
-
-# ----- 관리자 전용 API 엔드포인트 -----
-
-@router.post("/admin/check-empty-date-fields", response_model=dict)
-async def check_empty_date_fields_async(
-    background_tasks: BackgroundTasks,
-    cve_service: CVEService = Depends(get_cve_service),
-    current_user: User = Depends(get_current_admin_user)
-):
-    """
-    데이터베이스에 있는 모든 CVE의 빈 날짜 필드를 백그라운드에서 검사합니다.
-    관리자 권한이 필요합니다.
-    """
-    try:
-        # 관리자 권한 확인
-        if not current_user.is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="이 작업은 관리자만 수행할 수 있습니다."
-            )
-        
-        # 백그라운드 작업으로 실행 (시간이 오래 걸릴 수 있음)
-        background_tasks.add_task(cve_service.update_empty_date_fields)
-        
-        return {
-            "status": "success",
-            "message": "빈 날짜 필드 검사 작업이 백그라운드에서 실행 중입니다."
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"빈 날짜 필드 검사 작업 시작 중 오류 발생: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"빈 날짜 필드 검사 작업 시작 중 오류가 발생했습니다: {str(e)}"
-        )
-
-@router.get("/admin/check-empty-date-fields", response_model=dict)
-async def check_empty_date_fields_sync(
-    cve_service: CVEService = Depends(get_cve_service),
-    current_user: User = Depends(get_current_admin_user)
-):
-    """
-    데이터베이스에 있는 모든 CVE의 빈 날짜 필드를 동기적으로 검사합니다.
-    관리자 권한이 필요합니다.
-    """
-    try:
-        # 관리자 권한 확인
-        if not current_user.is_admin:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="이 작업은 관리자만 수행할 수 있습니다."
-            )
-        
-        # 동기적으로 실행 (응답이 지연될 수 있음)
-        start_time = datetime.now()
-        result = await cve_service.update_empty_date_fields()
-        elapsed_time = (datetime.now() - start_time).total_seconds()
-        
-        return {
-            "status": "success",
-            "message": "빈 날짜 필드 검사 작업이 완료되었습니다.",
-            "elapsed_time_seconds": elapsed_time,
-            "result": result
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"빈 날짜 필드 검사 작업 중 오류 발생: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"빈 날짜 필드 검사 작업 중 오류가 발생했습니다: {str(e)}"
         )
 
 # ----- WebSocket 알림 전송 유틸리티 함수 -----

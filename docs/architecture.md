@@ -262,13 +262,13 @@ function CVEDetail({ cveId }) {
 
 | 엔드포인트 | 메서드 | 설명 |
 |------------|-------|------|
-| `/api/cves` | GET | CVE 목록 조회 |
-| `/api/cves/{cve_id}` | GET | 특정 CVE 조회 |
-| `/api/cves` | POST | 새 CVE 생성 |
-| `/api/cves/{cve_id}` | PATCH | CVE 업데이트 |
-| `/api/cves/{cve_id}` | DELETE | CVE 삭제 |
-| `/api/users/me` | GET | 현재 사용자 정보 조회 |
-| `/api/auth/token` | POST | 인증 토큰 발급 |
+| `/cves` | GET | CVE 목록 조회 |
+| `/cves/{cve_id}` | GET | 특정 CVE 조회 |
+| `/cves` | POST | 새 CVE 생성 |
+| `/cves/{cve_id}` | PATCH | CVE 업데이트 |
+| `/cves/{cve_id}` | DELETE | CVE 삭제 |
+| `/users/me` | GET | 현재 사용자 정보 조회 |
+| `/auth/token` | POST | 인증 토큰 발급 |
 
 ### 5.2 Socket.IO 이벤트
 

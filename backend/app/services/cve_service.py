@@ -12,7 +12,7 @@ import logging
 import traceback
 from pydantic import ValidationError
 import json
-from ..utils.datetime_utils import get_utc_now, format_datetime
+from ..utils.datetime_utils import get_utc_now, format_datetime, normalize_datetime_fields
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -113,7 +113,7 @@ class CVEService:
             logger.error(traceback.format_exc())
             raise
     
-    async def get_cve(
+    async def get_cve_detail(
         self, 
         cve_id: str, 
         as_model: bool = False,
@@ -149,12 +149,9 @@ class CVEService:
             # 모델을 딕셔너리로 변환
             cve_dict = cve.dict()
             
-            # 날짜 필드 로깅 (디버깅 용도)
-            date_fields = ["created_at", "last_modified_at"]
-            for field in date_fields:
-                if field in cve_dict:
-                    logger.debug(f"CVE {cve_id}의 {field} 필드 값: {cve_dict[field]} (타입: {type(cve_dict[field]).__name__})")
-                    
+            # 날짜 필드 처리
+            cve_dict = normalize_datetime_fields(cve_dict)
+        
             return cve_dict
             
         except Exception as e:
