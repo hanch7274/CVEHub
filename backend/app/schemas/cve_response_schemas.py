@@ -19,6 +19,10 @@ class CVEListItem(BaseModel):
     created_at: datetime
     last_modified_at: Optional[datetime] = None
     severity: Optional[str] = None
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat() if v else None
+        }
 
 class CVEListResponse(BaseModel):
     """CVE 목록 응답 모델"""

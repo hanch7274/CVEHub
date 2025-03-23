@@ -65,9 +65,9 @@ import {
 } from '../../api/hooks/useCVEQuery';
 import { useUpdateCVEField } from '../../api/hooks/useCVEMutation';
 import { useAuth } from '../../contexts/AuthContext';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { QUERY_KEYS } from '../../api/queryKeys';
-import { formatDate, DATE_FORMATS, isValid, formatForDisplay } from '../../utils/dateUtils';
+import { formatDate, timeAgo, TIME_ZONES } from '../../utils/dateUtils';
 
 // 활성 댓글 개수 계산
 const countActiveComments = (comments) => {
@@ -696,36 +696,12 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     }
   }, [propsCveId, open, refetchCveDetail]);
 
-  useEffect(() => {
-    if (cveData) {
-      console.log('CVEDetail에서 받은 cveData:', JSON.stringify(cveData, null, 2));
-      console.log('날짜 필드 체크:', {
-        created_at: cveData.created_at,
-        createdAt: cveData.createdAt,
-        last_modified_at: cveData.last_modified_at,
-        lastModifiedAt: cveData.lastModifiedAt,
-        publishedDate: cveData.publishedDate
-      });
-    }
-  }, [cveData]);
-
   // 편집 권한 확인
   const canEdit = useCallback(() => {
     // 여기에 필요한 권한 체크 로직 추가
     return true; // 현재는 항상 true 반환, 필요시 권한 로직 구현
   }, []);
 
-  // 날짜 포맷팅 함수
-  const formatDateDisplay = (dateValue) => {
-    if (!dateValue) return '-';
-    
-    console.log('formatDateDisplay 호출:', {dateValue, type: typeof dateValue});
-    
-    // 단순화된 구현: formatForDisplay 함수 직접 사용
-    const formatted = formatForDisplay(dateValue);
-    console.log('formatDateDisplay 결과:', formatted);
-    return formatted;
-  };
 
   // Severity 옵션 정의
   const SEVERITY_OPTIONS = [
@@ -799,15 +775,6 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
   // 탭 변경 핸들러
   const handleTabChange = useCallback((event, newValue) => {
     setActiveTab(newValue);
-  }, []);
-  
-  // 시간 경과 표시 유틸리티
-  const timeAgo = useCallback((timestamp) => {
-    const seconds = Math.floor((Date.now() - timestamp) / 1000);
-    if (seconds < 60) return `${seconds}초`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}분`;
-    if (seconds < 86400) return `${Math.floor(seconds / 3600)}시간`;
-    return `${Math.floor(seconds / 86400)}일`;
   }, []);
   
   // 자식 컴포넌트에 전달할 메시지 전송 함수
@@ -1024,7 +991,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
               <Chip
                 size="small"
                 icon={<HistoryIcon fontSize="small" />}
-                label={`생성: ${cveData && cveData.created_at ? formatDateDisplay(cveData.created_at) : (cveData && cveData.createdAt ? formatDateDisplay(cveData.createdAt) : '-')}`}
+                label={`생성: ${formatDate(cveData?.createdAt || cveData?.created_at, undefined, TIME_ZONES.KST)}`}
                 variant="outlined"
                 sx={{ fontSize: '0.7rem', height: 24 }}
               />
@@ -1033,7 +1000,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
               <Chip
                 size="small"
                 icon={<HistoryIcon fontSize="small" />}
-                label={`수정: ${cveData && cveData.last_modified_at ? formatDateDisplay(cveData.last_modified_at) : (cveData && cveData.lastModifiedAt ? formatDateDisplay(cveData.lastModifiedAt) : '-')}`}
+                label={`수정: ${formatDate(cveData?.lastModifiedAt || cveData?.last_modified_at, undefined, TIME_ZONES.KST)}`}
                 variant="outlined"
                 sx={{ fontSize: '0.7rem', height: 24 }}
               />
