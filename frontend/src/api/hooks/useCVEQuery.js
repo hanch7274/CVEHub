@@ -41,6 +41,36 @@ export const useCVEList = (filters = {}, options = {}, customService = cveServic
           result.items = result.results;
         }
         
+        // 디버깅: 날짜 필드 검사
+        if (result && result.items && result.items.length > 0) {
+          const sampleItem = result.items[0];
+          console.log('useCVEList - 첫 번째 아이템의 날짜 정보:', {
+            createdAt: sampleItem.createdAt,
+            createdAt_type: typeof sampleItem.createdAt,
+            lastModifiedAt: sampleItem.lastModifiedAt,
+            lastModifiedAt_type: typeof sampleItem.lastModifiedAt,
+            created_at: sampleItem.created_at,
+            created_at_type: typeof sampleItem.created_at,
+            last_modified_at: sampleItem.last_modified_at,
+            last_modified_at_type: typeof sampleItem.last_modified_at,
+          });
+          
+          // 모든 아이템의 날짜 필드 로깅
+          console.log('모든 CVE 아이템의 날짜 필드:');
+          result.items.forEach((item, index) => {
+            console.log(`CVE #${index + 1}: ${item.cveId}`, {
+              createdAt: item.createdAt,
+              createdAt_type: typeof item.createdAt,
+              lastModifiedAt: item.lastModifiedAt,
+              lastModifiedAt_type: typeof item.lastModifiedAt,
+              created_at: item.created_at,
+              created_at_type: typeof item.created_at,
+              last_modified_at: item.last_modified_at,
+              last_modified_at_type: typeof item.last_modified_at,
+            });
+          });
+        }
+        
         logger.info('useCVEList', '목록 조회 결과', { 
           totalItems: result.total || result.totalItems || 0,
           itemsCount: result.items?.length || result.results?.length || 0,
@@ -128,11 +158,47 @@ export const useCVEDetail = (cveId, options = {}, customService = cveService) =>
         const startTime = Date.now();
         const result = await customService.getCVEById(cveId);
         const endTime = Date.now();
+        
+        // 날짜 필드 디버깅 로그 추가
+        if (result) {
+          console.log('useCVEDetail: API 원본 데이터 날짜 필드', {
+            createdAt: {
+              값: result.createdAt,
+              타입: typeof result.createdAt,
+              소스: 'API 원본'
+            },
+            lastModifiedAt: {
+              값: result.lastModifiedAt,
+              타입: typeof result.lastModifiedAt,
+              소스: 'API 원본'
+            }
+          });
+        }
+        
         logger.info('useCVEDetail', 'CVE 상세 조회 완료', { 
           cveId, 
           elapsedTime: `${endTime - startTime}ms`,
           dataSize: JSON.stringify(result).length
         });
+        
+        // 결과 반환 전 최종 데이터의 날짜 필드 확인
+        if (result) {
+          // 깊은 복사본을 만들어 로깅 (참조 문제 방지)
+          const returnedData = JSON.parse(JSON.stringify(result));
+          console.log('useCVEDetail: 컴포넌트에 반환되는 최종 데이터 날짜 필드', {
+            createdAt: {
+              값: returnedData.createdAt,
+              타입: typeof returnedData.createdAt,
+              소스: '반환 데이터'
+            },
+            lastModifiedAt: {
+              값: returnedData.lastModifiedAt,
+              타입: typeof returnedData.lastModifiedAt,
+              소스: '반환 데이터'
+            }
+          });
+        }
+        
         return result;
       } catch (error) {
         logger.error('useCVEDetail', '상세 정보 조회 중 오류 발생', { cveId, error: error.message });

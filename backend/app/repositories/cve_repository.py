@@ -74,6 +74,19 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
                         doc['_id'] = str(doc['_id'])
                     doc['id'] = doc['_id']  # 'id' 필드 추가 (이게 중요!)
                 
+                # 날짜 필드 디버깅 - 특정 CVE ID에 대해서만 로그 출력
+                cve_id = doc.get('cve_id', '알 수 없음')
+                if cve_id and 'CVE-2023-' in cve_id:
+                    if 'created_at' in doc:
+                        logger.info(f"[Repository] CVE ID: {cve_id}, created_at 필드: {doc['created_at']}, 타입: {type(doc['created_at'])}")
+                    else:
+                        logger.warning(f"[Repository] CVE ID: {cve_id}, created_at 필드 없음")
+                    
+                    if 'last_modified_at' in doc:
+                        logger.info(f"[Repository] CVE ID: {cve_id}, last_modified_at 필드: {doc['last_modified_at']}, 타입: {type(doc['last_modified_at'])}")
+                    else:
+                        logger.warning(f"[Repository] CVE ID: {cve_id}, last_modified_at 필드 없음")
+                
                 # 결과 문서 추가
                 result.append(doc)
                 

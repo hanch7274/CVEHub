@@ -77,55 +77,124 @@ const shouldProcessDates = (url) => {
   return !URL_NO_DATE_PROCESSING_PATTERNS.some(pattern => url.includes(pattern));
 };
 
-// 날짜 문자열을 Date 객체로 변환하는 함수
-function convertDateStringsToDate(data) {
+// 날짜 문자열을 자동으로 감지하고 Date 객체로 변환하는 함수
+function convertDateStringsToDate(data, url = '', path = 'root') {
   if (!data) return data;
   
-  if (Array.isArray(data)) {
-    return data.map(item => convertDateStringsToDate(item));
-  }
+  // /cves/list 엔드포인트에 대한 로그만 출력
+  const isCVEListEndpoint = url && url.includes('/cves/list');
+  const debugLog = isCVEListEndpoint ? console.log : () => {};
   
-  if (typeof data !== 'object' || data === null) {
-    return data;
-  }
+  // 디버깅: 변환 전 데이터 확인
+  debugLog(`[convertDateStringsToDate:${url}][${path}] 변환 전 데이터 타입:`, typeof data);
   
-  const result = { ...data };
+  // 특별히 처리할 날짜 필드 목록
+  const CRITICAL_DATE_FIELDS = ['createdAt', 'lastModifiedAt', 'created_at', 'last_modified_at'];
   
-  // 날짜 필드 목록
-  const dateFields = [
-    'createdAt', 'lastModifiedAt', 'publishedDate', 'dateAdded', 
-    'updatedAt', 'expireDate', 'releaseDate', 'timestamp', 'date'
-  ];
-  
-  dateFields.forEach(field => {
-    if (field in result && typeof result[field] === 'string') {
-      try {
-        // ISO 문자열을 Date 객체로 변환
-        // 백엔드가 이제 isoformat()으로 반환하므로 시간대 정보가 포함됨
-        result[field] = new Date(result[field]);
-        
-        // 개발 환경에서 변환 과정 로깅
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`${field} 필드 변환:`, {
-            원본: result[field],
-            타입: typeof result[field],
-            instanceof_Date: result[field] instanceof Date,
-            isValid: !isNaN(result[field].getTime())
-          });
+  // 객체인 경우 재귀적으로 처리
+  if (typeof data === 'object') {
+    // 배열인 경우
+    if (Array.isArray(data)) {
+      // 디버깅: 배열 처리 시작
+      debugLog(`[convertDateStringsToDate:${url}][${path}] 배열 처리 시작, 길이:`, data.length);
+      return data.map((item, index) => convertDateStringsToDate(item, url, `${path}[${index}]`));
+    }
+    
+    // null인 경우 그대로 반환
+    if (data === null) {
+      // 디버깅: null 데이터 발견
+      debugLog(`[convertDateStringsToDate:${url}][${path}] null 데이터 발견`);
+      return data;
+    }
+    
+    // 객체인 경우 각 필드 처리
+    const result = {};
+    
+    // 디버깅: 객체 처리 시작 (CVE ID가 있는 경우 함께 출력)
+    if (isCVEListEndpoint && data.cve_id) {
+      debugLog(`[convertDateStringsToDate:${url}][${path}] 객체 처리 시작, CVE ID: ${data.cve_id}`);
+    } else if (isCVEListEndpoint) {
+      debugLog(`[convertDateStringsToDate:${url}][${path}] 객체 처리 시작, 필드:`, Object.keys(data).join(', '));
+    }
+    
+    // 중요 날짜 필드 먼저 처리
+    for (const field of CRITICAL_DATE_FIELDS) {
+      if (field in data) {
+        // 디버깅: 중요 날짜 필드 처리 (CVE ID가 있는 경우 함께 출력)
+        if (isCVEListEndpoint && data.cve_id) {
+          debugLog(`[convertDateStringsToDate:${url}][${path}] CVE ID: ${data.cve_id}, ${field}=${data[field]}, 타입: ${typeof data[field]}`);
+        } else if (isCVEListEndpoint) {
+          debugLog(`[convertDateStringsToDate:${url}][${path}] ${field}=${data[field]}, 타입: ${typeof data[field]}`);
         }
-      } catch (error) {
-        console.error(`날짜 변환 오류 (${field}):`, error);
+        
+        if (data[field] === null || data[field] === undefined) {
+          // 디버깅: null/undefined 날짜 필드 발견
+          debugLog(`[convertDateStringsToDate:${url}][${path}] ${field} 필드가 null 또는 undefined`);
+          result[field] = data[field];
+        } else if (typeof data[field] === 'string') {
+          try {
+            // ISO 형식 날짜 문자열 감지 및 변환
+            const dateValue = new Date(data[field]);
+            if (!isNaN(dateValue.getTime())) {
+              result[field] = dateValue;
+              // 디버깅: 날짜 변환 성공
+              debugLog(`[convertDateStringsToDate:${url}][${path}] ${field} 필드 날짜 변환 성공:`, dateValue);
+            } else {
+              result[field] = data[field];
+              // 디버깅: 유효하지 않은 날짜 문자열
+              debugLog(`[convertDateStringsToDate:${url}][${path}] ${field} 필드 유효하지 않은 날짜 문자열:`, data[field]);
+            }
+          } catch (error) {
+            result[field] = data[field];
+            // 디버깅: 날짜 변환 오류
+            console.error(`[convertDateStringsToDate:${url}][${path}] ${field} 필드 날짜 변환 오류:`, error);
+          }
+        } else {
+          result[field] = data[field];
+        }
       }
     }
-  });
+    
+    // 나머지 필드 처리
+    Object.keys(data).forEach(key => {
+      if (!CRITICAL_DATE_FIELDS.includes(key)) {
+        if (typeof data[key] === 'string') {
+          try {
+            // ISO 형식 날짜 문자열 감지 및 변환
+            const dateValue = new Date(data[key]);
+            if (!isNaN(dateValue.getTime())) {
+              result[key] = dateValue;
+            } else {
+              result[key] = data[key];
+            }
+          } catch (error) {
+            result[key] = data[key];
+          }
+        } else if (typeof data[key] === 'object' && data[key] !== null) {
+          result[key] = convertDateStringsToDate(data[key], url, `${path}.${key}`);
+        } else {
+          result[key] = data[key];
+        }
+      }
+    });
+    
+    return result;
+  }
   
-  return result;
+  return data;
 }
 
 // Request Interceptor
 api.interceptors.request.use(
   async (config) => {
     try {
+      // 전역 변수에 현재 API 요청 정보 저장 (caseConverter에서 URL 추적용)
+      window._currentApiRequest = {
+        url: config.url,
+        method: config.method,
+        timestamp: new Date().toISOString()
+      };
+      
       // 로깅 제외 대상 확인
       const shouldLog = !isExcludedFromLogging(config.url);
       
@@ -400,54 +469,205 @@ api.interceptors.response.use(
       if (response.data) {
         // 응답 데이터 형식 확인 (배열 또는 객체)
         if (Array.isArray(response.data)) {
-          // 스네이크 케이스에서 카멜 케이스로 변환
-          response.data = response.data.map(item => snakeToCamel(item, EXCLUDED_FIELDS));
-          
-          // 날짜 필드 처리 - convertDateStrToKST 대신 convertDateStringsToDate 사용
-          if (shouldProcessDates(response.config.url)) {
-            // 개발 환경에서 로깅
-            if (process.env.NODE_ENV === 'development') {
-              console.log('변환 전 날짜 필드 (배열):', {
-                샘플: response.data.length > 0 ? response.data[0] : '빈 배열',
-                항목수: response.data.length
+          // 원본 데이터 (변환 전) 로깅
+          if (response.data.length > 0) {
+            // 첫 번째 항목을 깊은 복사
+            const firstItem = JSON.parse(JSON.stringify(response.data[0]));
+            // 중요 날짜 필드 이름 가능성 체크
+            const allKeys = Object.keys(firstItem);
+            const dateLikeKeys = allKeys.filter(key => 
+              /(?:date|time|at|_?created|_?modified|_?updated|_?published|_?expire|_?release)/i.test(key)
+            );
+            
+            // null 날짜 필드 감지
+            const nullDateFields = [];
+            const emptyDateFields = [];
+            dateLikeKeys.forEach(key => {
+              if (firstItem[key] === null) {
+                nullDateFields.push(key);
+              } else if (firstItem[key] === '') {
+                emptyDateFields.push(key);
+              }
+            });
+            
+            // 기본 로깅
+            console.log(`[axios] 원본 데이터 (배열) URL: ${response.config.url}:`, {
+              items_count: response.data.length,
+              first_item: firstItem,
+              raw_data: JSON.stringify(response.data[0]).substring(0, 200),
+              all_keys: allKeys,
+              date_like_keys: dateLikeKeys,
+              has_null_date_fields: nullDateFields.length > 0,
+              null_date_fields: nullDateFields,
+              has_empty_date_fields: emptyDateFields.length > 0,
+              empty_date_fields: emptyDateFields,
+              has_created_at: 'created_at' in firstItem,
+              has_createdAt: 'createdAt' in firstItem,
+              has_last_modified_at: 'last_modified_at' in firstItem,
+              has_lastModifiedAt: 'lastModifiedAt' in firstItem,
+              created_at: firstItem.created_at,
+              created_at_type: typeof firstItem.created_at,
+              last_modified_at: firstItem.last_modified_at,
+              last_modified_at_type: typeof firstItem.last_modified_at
+            });
+            
+            // NULL 날짜 필드가 있는 경우 경고 로그
+            if (nullDateFields.length > 0 || emptyDateFields.length > 0) {
+              console.warn(`[axios] 원본 데이터에 NULL/빈 날짜 필드 발견 URL: ${response.config.url}`, {
+                endpoint: response.config.url,
+                null_fields: nullDateFields,
+                empty_fields: emptyDateFields,
+                item_preview: JSON.stringify(firstItem).substring(0, 200)
               });
             }
+          }
+          
+          // 스네이크 케이스에서 카멜 케이스로 변환(URL 정보 포함)
+          response.data = response.data.map(item => snakeToCamel(item, {
+            excludeFields: EXCLUDED_FIELDS,
+            requestUrl: response.config.url
+          }));
+          
+          // 카멜케이스 변환 후 로깅
+          if (response.data.length > 0) {
+            // 데이터 상세 확인을 위한 첫 번째 항목 복사
+            const firstItem = { ...response.data[0] };
+            const nullDateFields = [];
             
+            // null인 날짜 필드 감지
+            if (firstItem.createdAt === null) nullDateFields.push('createdAt');
+            if (firstItem.lastModifiedAt === null) nullDateFields.push('lastModifiedAt');
+            
+            // 기본 로깅
+            console.log(`[axios] 카멜케이스 변환 후 (배열) URL: ${response.config.url}:`, {
+              items_count: response.data.length,
+              first_item: firstItem,
+              createdAt: firstItem.createdAt,
+              createdAt_type: typeof firstItem.createdAt,
+              lastModifiedAt: firstItem.lastModifiedAt,
+              lastModifiedAt_type: typeof firstItem.lastModifiedAt,
+              has_null_date_fields: nullDateFields.length > 0,
+              null_date_fields: nullDateFields
+            });
+            
+            // NULL 날짜 필드가 있으면 더 상세한 로깅
+            if (nullDateFields.length > 0) {
+              console.warn(`[axios] NULL 날짜 필드 감지 URL: ${response.config.url}`, {
+                endpoint: response.config.url,
+                method: response.config.method,
+                fields: nullDateFields,
+                item_preview: JSON.stringify(firstItem).substring(0, 200)
+              });
+            }
+          }
+          
+          // 날짜 필드 처리
+          if (shouldProcessDates(response.config.url)) {
             // 날짜 문자열을 Date 객체로 변환
-            response.data = convertDateStringsToDate(response.data);
+            response.data = convertDateStringsToDate(response.data, response.config.url);
+            
+            // 날짜 변환 후 로깅
+            if (response.data.length > 0) {
+              console.log(`[axios] 날짜 변환 후 (배열) URL: ${response.config.url}:`, {
+                items_count: response.data.length,
+                first_item_createdAt: response.data[0].createdAt,
+                first_item_createdAt_type: typeof response.data[0].createdAt,
+                first_item_createdAt_instanceof_Date: response.data[0].createdAt instanceof Date,
+                first_item_lastModifiedAt: response.data[0].lastModifiedAt,
+                first_item_lastModifiedAt_type: typeof response.data[0].lastModifiedAt,
+                first_item_lastModifiedAt_instanceof_Date: response.data[0].lastModifiedAt instanceof Date
+              });
+            }
           }
         } else if (typeof response.data === 'object' && response.data !== null) {
-          // 스네이크 케이스에서 카멜 케이스로 변환
-          response.data = snakeToCamel(response.data, EXCLUDED_FIELDS);
+          // 원본 데이터 (변환 전) 로깅
+          // 중요 날짜 필드 이름 가능성 체크
+          const allKeys = Object.keys(response.data);
+          const dateLikeKeys = allKeys.filter(key => 
+            /(?:date|time|at|_?created|_?modified|_?updated|_?published|_?expire|_?release)/i.test(key)
+          );
           
-          // 날짜 필드 처리 - convertDateStrToKST 대신 convertDateStringsToDate 사용
+          // null 또는 빈 날짜 필드 감지
+          const nullDateFields = [];
+          const emptyDateFields = [];
+          dateLikeKeys.forEach(key => {
+            if (response.data[key] === null) {
+              nullDateFields.push(key);
+            } else if (response.data[key] === '') {
+              emptyDateFields.push(key);
+            }
+          });
+          
+          // 기본 로깅
+          console.log(`[axios] 원본 데이터 (객체) URL: ${response.config.url}:`, {
+            data: response.data,
+            all_keys: allKeys,
+            date_like_keys: dateLikeKeys,
+            has_null_date_fields: nullDateFields.length > 0,
+            null_date_fields: nullDateFields,
+            has_empty_date_fields: emptyDateFields.length > 0,
+            empty_date_fields: emptyDateFields,
+            created_at: response.data.created_at,
+            created_at_type: typeof response.data.created_at,
+            last_modified_at: response.data.last_modified_at, 
+            last_modified_at_type: typeof response.data.last_modified_at
+          });
+          
+          // NULL 날짜 필드가 있는 경우 경고 로그
+          if (nullDateFields.length > 0 || emptyDateFields.length > 0) {
+            console.warn(`[axios] 원본 객체 데이터에 NULL/빈 날짜 필드 발견 URL: ${response.config.url}`, {
+              endpoint: response.config.url,
+              null_fields: nullDateFields,
+              empty_fields: emptyDateFields,
+              preview: JSON.stringify(response.data).substring(0, 200)
+            });
+          }
+          
+          // 스네이크 케이스에서 카멜 케이스로 변환(URL 정보 포함)
+          response.data = snakeToCamel(response.data, {
+            excludeFields: EXCLUDED_FIELDS,
+            requestUrl: response.config.url
+          });
+          
+          // 카멜케이스 변환 후 로깅
+          // null인 날짜 필드 감지
+          const nullDateFieldsAfterConversion = [];
+          if (response.data.createdAt === null) nullDateFieldsAfterConversion.push('createdAt');
+          if (response.data.lastModifiedAt === null) nullDateFieldsAfterConversion.push('lastModifiedAt');
+          
+          console.log(`[axios] 카멜케이스 변환 후 (객체) URL: ${response.config.url}:`, {
+            createdAt: response.data.createdAt,
+            createdAt_type: typeof response.data.createdAt,
+            lastModifiedAt: response.data.lastModifiedAt,
+            lastModifiedAt_type: typeof response.data.lastModifiedAt,
+            has_null_date_fields: nullDateFieldsAfterConversion.length > 0,
+            null_date_fields: nullDateFieldsAfterConversion
+          });
+          
+          // NULL 날짜 필드가 있으면 더 상세한 로깅
+          if (nullDateFieldsAfterConversion.length > 0) {
+            console.warn(`[axios] NULL 날짜 필드 감지 URL: ${response.config.url}`, {
+              endpoint: response.config.url,
+              method: response.config.method,
+              fields: nullDateFieldsAfterConversion,
+              data_preview: JSON.stringify(response.data).substring(0, 200)
+            });
+          }
+          
+          // 날짜 필드 처리
           if (shouldProcessDates(response.config.url)) {
-            // 개발 환경에서 로깅
-            if (process.env.NODE_ENV === 'development' && 
-                (response.data.createdAt || response.data.lastModifiedAt)) {
-              console.log('변환 전 날짜 필드:', {
-                createdAt: response.data.createdAt,
-                lastModifiedAt: response.data.lastModifiedAt,
-                createdAt_type: typeof response.data.createdAt,
-                lastModifiedAt_type: typeof response.data.lastModifiedAt
-              });
-            }
-            
             // 날짜 문자열을 Date 객체로 변환
-            response.data = convertDateStringsToDate(response.data);
+            response.data = convertDateStringsToDate(response.data, response.config.url);
             
-            // 개발 환경에서 로깅
-            if (process.env.NODE_ENV === 'development' && 
-                (response.data.createdAt || response.data.lastModifiedAt)) {
-              console.log('변환 후 날짜 필드:', {
-                createdAt: response.data.createdAt,
-                lastModifiedAt: response.data.lastModifiedAt,
-                createdAt_type: typeof response.data.createdAt,
-                createdAt_instanceof_Date: response.data.createdAt instanceof Date,
-                lastModifiedAt_type: typeof response.data.lastModifiedAt,
-                lastModifiedAt_instanceof_Date: response.data.lastModifiedAt instanceof Date
-              });
-            }
+            // 날짜 변환 후 로깅
+            console.log(`[axios] 날짜 변환 후 (객체) URL: ${response.config.url}:`, {
+              createdAt: response.data.createdAt,
+              createdAt_type: typeof response.data.createdAt,
+              createdAt_instanceof_Date: response.data.createdAt instanceof Date,
+              lastModifiedAt: response.data.lastModifiedAt,
+              lastModifiedAt_type: typeof response.data.lastModifiedAt,
+              lastModifiedAt_instanceof_Date: response.data.lastModifiedAt instanceof Date
+            });
           }
         }
       }

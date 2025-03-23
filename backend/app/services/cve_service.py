@@ -100,7 +100,34 @@ class CVEService:
             # 전체 개수 카운트
             total = await self.repository.count(query)
             
-            logger.debug(f"CVE 목록 조회 완료: 총 {total}개 중 {len(cves)}개 조회됨")
+            # 디버깅: 특정 CVE ID에 대한 로그만 출력
+            for cve in cves:
+                cve_id = cve.get('cve_id', '알 수 없음')
+                if cve_id and 'CVE-2023-' in cve_id:
+                    # created_at 필드 확인
+                    if 'created_at' in cve:
+                        created_at = cve['created_at']
+                        logger.info(f"[Service] CVE ID: {cve_id}, created_at: {created_at}, 타입: {type(created_at)}")
+                    else:
+                        logger.warning(f"[Service] CVE ID: {cve_id}, created_at 필드 없음")
+                    
+                    # last_modified_at 필드 확인
+                    if 'last_modified_at' in cve:
+                        last_modified_at = cve['last_modified_at']
+                        logger.info(f"[Service] CVE ID: {cve_id}, last_modified_at: {last_modified_at}, 타입: {type(last_modified_at)}")
+                    else:
+                        logger.warning(f"[Service] CVE ID: {cve_id}, last_modified_at 필드 없음")
+            
+            logger.info(f"CVE 목록 조회 완료: 총 {total}개 중 {len(cves)}개 조회됨")
+            
+            # null 날짜 필드 처리 - 현재 시간으로 설정
+            current_time = get_utc_now()
+            for cve in cves:
+                # 날짜 필드가 없거나 null인 경우 현재 시간으로 설정
+                if 'created_at' not in cve or cve['created_at'] is None:
+                    cve['created_at'] = current_time
+                if 'last_modified_at' not in cve or cve['last_modified_at'] is None:
+                    cve['last_modified_at'] = current_time
             
             return {
                 "total": total,
@@ -120,27 +147,30 @@ class CVEService:
         include_details: bool = True
     ) -> Union[Optional[CVEModel], Optional[Dict[str, Any]]]:
         """
-        CVE ID로 CVE 정보를 조회합니다.
+        CVE ID로 CVE 상세 정보를 조회합니다.
         
         Args:
             cve_id: 조회할 CVE ID
-            as_model: 모델 형태로 반환할지 여부 (True: CVEModel, False: Dict)
-            include_details: 상세 정보 포함 여부 (기본값: True)
+            as_model: 모델 형태로 반환할지 여부
+            include_details: 상세 정보 포함 여부
             
         Returns:
             CVEModel 또는 Dict (없으면 None)
         """
         try:
+            # 직접 콘솔에 출력하는 print 로그 추가 (이는 항상 출력됨)
+            print(f"####### get_cve_detail 함수 호출됨: cve_id={cve_id} #######")
+            
             logger.info(f"CVE '{cve_id}' 정보 조회 시작")
             
             # 대소문자 구분 없이 CVE ID로 조회
             cve = await self.repository.find_by_cve_id(cve_id)
             
             if not cve:
-                logger.debug(f"CVE를 찾을 수 없음: {cve_id}")
+                logger.info(f"CVE를 찾을 수 없음: {cve_id}")
                 return None
                 
-            logger.debug(f"CVE 찾음: {cve.id}, {cve.cve_id}")
+            logger.info(f"CVE 찾음: {cve.id}, {cve.cve_id}")
                 
             # 모델 그대로 반환 요청시
             if as_model:
@@ -149,8 +179,20 @@ class CVEService:
             # 모델을 딕셔너리로 변환
             cve_dict = cve.dict()
             
+            # 직접 콘솔에 출력하는 print 로그 추가 (normalize_datetime_fields 호출 전)
+            print(f"####### normalize_datetime_fields 호출 전: created_at={cve_dict.get('created_at')} ({type(cve_dict.get('created_at')).__name__}), last_modified_at={cve_dict.get('last_modified_at')} ({type(cve_dict.get('last_modified_at')).__name__}) #######")
+            
+            # normalize_datetime_fields 호출 전 날짜 필드 로깅
+            logger.info(f"normalize_datetime_fields 호출 전 날짜 필드: created_at={cve_dict.get('created_at')} ({type(cve_dict.get('created_at')).__name__}), last_modified_at={cve_dict.get('last_modified_at')} ({type(cve_dict.get('last_modified_at')).__name__})")
+            
             # 날짜 필드 처리
             cve_dict = normalize_datetime_fields(cve_dict)
+            
+            # 직접 콘솔에 출력하는 print 로그 추가 (normalize_datetime_fields 호출 후)
+            print(f"####### normalize_datetime_fields 호출 후: created_at={cve_dict.get('created_at')} ({type(cve_dict.get('created_at')).__name__}), last_modified_at={cve_dict.get('last_modified_at')} ({type(cve_dict.get('last_modified_at')).__name__}) #######")
+            
+            # normalize_datetime_fields 호출 후 날짜 필드 로깅
+            logger.info(f"normalize_datetime_fields 호출 후 날짜 필드: created_at={cve_dict.get('created_at')} ({type(cve_dict.get('created_at')).__name__}), last_modified_at={cve_dict.get('last_modified_at')} ({type(cve_dict.get('last_modified_at')).__name__})")
         
             return cve_dict
             
@@ -198,7 +240,7 @@ class CVEService:
             
             # 기존 CVE 중복 체크 (cve_id가 있는 경우)
             if "cve_id" in cve_data and cve_data["cve_id"]:
-                existing_cve = await self.get_cve(cve_data["cve_id"], as_model=True)
+                existing_cve = await self.get_cve_detail(cve_data["cve_id"], as_model=True)
                 if existing_cve:
                     logger.warning(f"이미 존재하는 CVE ID: {cve_data['cve_id']}")
                     # 이미 존재하는 CVE ID이므로 생성하지 않고 None 반환
@@ -235,12 +277,12 @@ class CVEService:
             logger.info(f"CVE 업데이트 요청: cve_id={cve_id}, updated_by={updated_by}")
             
             # 기존 CVE 조회
-            existing_cve = await self.get_cve(cve_id, as_model=True)
+            existing_cve = await self.get_cve_detail(cve_id, as_model=True)
             if not existing_cve:
                 logger.warning(f"업데이트할 CVE를 찾을 수 없음: {cve_id}")
                 return None
                 
-            logger.debug(f"기존 CVE 정보: id={existing_cve.id}, cve_id={existing_cve.cve_id}")
+            logger.info(f"기존 CVE 정보: id={existing_cve.id}, cve_id={existing_cve.cve_id}")
                 
             # pydantic 모델을 딕셔너리로 변환
             if not isinstance(update_data, dict):
@@ -274,7 +316,7 @@ class CVEService:
                         "new_value": new_value
                     })
             
-            logger.debug(f"변경 필드 수: {len(changes)}")
+            logger.info(f"변경 필드 수: {len(changes)}")
             
             # 변경 이력 데이터 추가
             if changes:
@@ -306,7 +348,7 @@ class CVEService:
                 
                 if result:
                     logger.info(f"CVE {cve_id} 업데이트 성공")
-                    updated_cve = await self.get_cve(cve_id)
+                    updated_cve = await self.get_cve_detail(cve_id, as_model=True)
                     return updated_cve
                 
                 logger.warning(f"CVE 업데이트 실패: {cve_id}")
@@ -334,7 +376,7 @@ class CVEService:
             logger.info(f"CVE 삭제 시도: {cve_id}")
             
             # CVE 조회 (모델로 받기)
-            cve = await self.get_cve(cve_id, as_model=True)
+            cve = await self.get_cve_detail(cve_id, as_model=True)
             if not cve:
                 logger.warning(f"삭제할 CVE를 찾을 수 없음: {cve_id}")
                 return False
@@ -391,7 +433,7 @@ class CVEService:
                         continue
                         
                     # 이미 존재하는 CVE인지 확인
-                    existing_cve = await self.get_cve(cve_id, as_model=True)
+                    existing_cve = await self.get_cve_detail(cve_id, as_model=True)
                     
                     if existing_cve:
                         # 업데이트

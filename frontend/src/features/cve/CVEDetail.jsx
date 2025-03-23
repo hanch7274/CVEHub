@@ -44,7 +44,9 @@ import {
   Refresh as RefreshIcon,
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
-  Visibility as VisibilityIcon
+  Visibility as VisibilityIcon,
+  AccessTimeIcon,
+  UpdateIcon
 } from '@mui/icons-material';
 import GenericDataTab from './components/GenericDataTab';
 import {
@@ -65,7 +67,7 @@ import { useUpdateCVEField } from '../../api/hooks/useCVEMutation';
 import { useAuth } from '../../contexts/AuthContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { QUERY_KEYS } from '../../api/queryKeys';
-import { formatDate, DATE_FORMATS, isValid } from '../../utils/dateUtils';
+import { formatDate, DATE_FORMATS, isValid, formatForDisplay } from '../../utils/dateUtils';
 
 // 활성 댓글 개수 계산
 const countActiveComments = (comments) => {
@@ -320,6 +322,30 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     onSuccess: (data) => {
       logger.info('CVEDetail', '데이터 로딩 성공', { dataReceived: !!data });
       
+      // 시간 필드 디버깅을 위한 로그 추가
+      if (data) {
+        console.log('CVE 데이터 시간 필드 디버깅:', {
+          createdAt: {
+            값: data.createdAt,
+            타입: typeof data.createdAt,
+            JSON형식: JSON.stringify(data.createdAt),
+            toString: String(data.createdAt || ''),
+            isDate: data.createdAt instanceof Date,
+            isISOString: typeof data.createdAt === 'string' && 
+                     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(data.createdAt)
+          },
+          lastModifiedAt: {
+            값: data.lastModifiedAt,
+            타입: typeof data.lastModifiedAt,
+            JSON형식: JSON.stringify(data.lastModifiedAt),
+            toString: String(data.lastModifiedAt || ''),
+            isDate: data.lastModifiedAt instanceof Date,
+            isISOString: typeof data.lastModifiedAt === 'string' && 
+                     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(data.lastModifiedAt)
+          }
+        });
+      }
+      
       if (snackbarShown.current) {
         closeSnackbar();
         enqueueSnackbar('데이터를 성공적으로 불러왔습니다', { 
@@ -367,21 +393,6 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     setIsCached(isDataFromCache);
   }, [isDataFromCache]);
   
-  // CVEDetail 컴포넌트에 추가
-useEffect(() => {
-  if (cveData) {
-    console.log('CVE 데이터 날짜 필드 확인:', {
-      createdAt: cveData.createdAt,
-      createdAt_type: typeof cveData.createdAt,
-      createdAt_instanceof_Date: cveData.createdAt instanceof Date,
-      lastModifiedAt: cveData.lastModifiedAt,
-      lastModifiedAt_type: typeof cveData.lastModifiedAt,
-      lastModifiedAt_instanceof_Date: cveData.lastModifiedAt instanceof Date,
-      formatDateDisplay_result: formatDateDisplay(cveData.createdAt)
-    });
-  }
-}, [cveData]);
-  
   // 탭 카운트 업데이트 함수
   const updateTabCounts = useCallback((data) => {
     if (!data) return;
@@ -402,7 +413,44 @@ useEffect(() => {
   // 필드 업데이트 뮤테이션
   const { mutate: updateCVEField } = useUpdateCVEField();
 
-  // 웹소켓 메시지 핸들러 - React Query 캐시 무효화 활용
+  // 필드 업데이트 처리 - React Query 활용
+  const handleFieldUpdate = useCallback((field, value) => {
+    if (!propsCveId || !field) return;
+    setLoading(true);
+    updateCVEField(
+      { cveId: propsCveId, fieldName: field, fieldValue: value },
+      {
+        onSuccess: () => {
+          logger.info('CVEDetail', `필드 업데이트 성공: ${field}`);
+          queryClient.invalidateQueries({
+            predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === QUERY_KEYS.CVE.list
+          });
+          setLoading(false);
+        },
+        onError: (err) => {
+          enqueueSnackbar(`업데이트 실패: ${err.message || '알 수 없는 오류'}`, {
+            variant: 'error',
+            anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+          });
+          setLoading(false);
+        }
+      }
+    );
+  }, [propsCveId, updateCVEField, queryClient, enqueueSnackbar, setLoading]);
+
+  // 타이틀 업데이트 핸들러
+  const handleTitleUpdate = useCallback(async (newTitle) => {
+    if (!cveData || !propsCveId || newTitle === cveData.title) return;
+    handleFieldUpdate('title', newTitle);
+  }, [cveData, propsCveId, handleFieldUpdate]);
+
+  // 설명 업데이트 핸들러
+  const handleDescriptionUpdate = useCallback(async (newDescription) => {
+    if (!cveData || !propsCveId || newDescription === cveData.description) return;
+    handleFieldUpdate('description', newDescription);
+  }, [cveData, propsCveId, handleFieldUpdate]);
+
+  // 웹소켓 메시지 핸들러 - 간소화
   const handleWebSocketUpdate = useCallback((data) => {
     logger.info('CVEDetail', '웹소켓 업데이트 수신', data);
     if (!data) return;
@@ -503,71 +551,6 @@ useEffect(() => {
       return () => {}; // 오류 발생 시 빈 클린업 함수 반환
     }
   }, [propsCveId, open, socket, handleWebSocketUpdate]);
-
-  // 필드 업데이트 처리 - React Query 활용
-  const handleFieldUpdate = useCallback((field, value) => {
-    if (!propsCveId || !field) return;
-    setLoading(true);
-    updateCVEField(
-      { cveId: propsCveId, fieldName: field, fieldValue: value },
-      {
-        onSuccess: () => {
-          logger.info('CVEDetail', `필드 업데이트 성공: ${field}`);
-          queryClient.invalidateQueries({
-            predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === QUERY_KEYS.CVE.list
-          });
-          setLoading(false);
-        },
-        onError: (err) => {
-          enqueueSnackbar(`업데이트 실패: ${err.message || '알 수 없는 오류'}`, {
-            variant: 'error',
-            anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-          });
-          setLoading(false);
-        }
-      }
-    );
-  }, [propsCveId, updateCVEField, enqueueSnackbar, queryClient]);
-
-  // 모달을 열 때 데이터 새로고침 - 수정
-  useEffect(() => {
-    // open 상태가 변경될 때만 실행
-    if (open && propsCveId) {
-      // 로딩 상태 설정
-      setLoading(true);
-      
-      // 데이터 새로고침
-      refetchCveDetail()
-        .then(() => {
-          // 성공적으로 데이터를 가져온 경우 로딩 상태 해제
-          setLoading(false);
-        })
-        .catch(err => {
-          logger.error('CVEDetail', '데이터 로딩 실패', { error: err.message });
-          setLoading(false);
-        });
-    } else if (!open) {
-      // 모달이 닫힐 때 로딩 상태 초기화
-      setLoading(false);
-    }
-  }, [open, propsCveId, refetchCveDetail]);
-
-  // WebSocket 연결 상태가 변경될 때 캐시 무효화 - 간소화
-  useEffect(() => {
-    // Socket.IO가 연결되었을 때만 실행
-    if (connected && propsCveId && !loading && !isQueryLoading) {
-      logger.info('CVEDetail', 'Socket 연결됨, 데이터 갱신 검토');
-      
-      // 마지막 데이터 업데이트 시간 확인
-      const now = new Date().getTime();
-      
-      // 마지막 업데이트로부터 1분 이상 지났다면 캐시 무효화
-      if (dataUpdatedAt && (now - dataUpdatedAt) > 60000) {
-        logger.info('CVEDetail', '소켓 연결 후 오래된 데이터 감지됨, 캐시 무효화');
-        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(propsCveId) });
-      }
-    }
-  }, [connected, propsCveId, dataUpdatedAt, queryClient, loading, isQueryLoading]);
 
   // CVE 구독 처리
   useEffect(() => {
@@ -713,6 +696,19 @@ useEffect(() => {
     }
   }, [propsCveId, open, refetchCveDetail]);
 
+  useEffect(() => {
+    if (cveData) {
+      console.log('CVEDetail에서 받은 cveData:', JSON.stringify(cveData, null, 2));
+      console.log('날짜 필드 체크:', {
+        created_at: cveData.created_at,
+        createdAt: cveData.createdAt,
+        last_modified_at: cveData.last_modified_at,
+        lastModifiedAt: cveData.lastModifiedAt,
+        publishedDate: cveData.publishedDate
+      });
+    }
+  }, [cveData]);
+
   // 편집 권한 확인
   const canEdit = useCallback(() => {
     // 여기에 필요한 권한 체크 로직 추가
@@ -721,49 +717,15 @@ useEffect(() => {
 
   // 날짜 포맷팅 함수
   const formatDateDisplay = (dateValue) => {
-    // 디버깅 로그 추가
-    console.log('CVE 데이터 날짜 필드 확인:', {
-      값: dateValue,
-      타입: typeof dateValue,
-      instanceof_Date: dateValue instanceof Date,
-      isISOString: typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(dateValue),
-      toString: dateValue ? String(dateValue) : null
-    });
+    if (!dateValue) return '-';
     
-    // 문자열이고 ISO 형식이면 그대로 사용
-    if (typeof dateValue === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(dateValue)) {
-      return formatDate(dateValue, DATE_FORMATS.DISPLAY.DEFAULT);
-    }
+    console.log('formatDateDisplay 호출:', {dateValue, type: typeof dateValue});
     
-    // Date 객체면 그대로 사용
-    if (dateValue instanceof Date && !isNaN(dateValue.getTime())) {
-      return formatDate(dateValue, DATE_FORMATS.DISPLAY.DEFAULT);
-    }
-    
-    // 그외 마지막 시도
-    try {
-      const parsedDate = typeof dateValue === 'string' ? new Date(dateValue) : dateValue;
-      if (parsedDate && !isNaN(parsedDate.getTime())) {
-        return formatDate(parsedDate, DATE_FORMATS.DISPLAY.DEFAULT);
-      }
-    } catch (error) {
-      console.error('날짜 파싱 오류:', error);
-    }
-    
-    return '-';
+    // 단순화된 구현: formatForDisplay 함수 직접 사용
+    const formatted = formatForDisplay(dateValue);
+    console.log('formatDateDisplay 결과:', formatted);
+    return formatted;
   };
-
-  // 타이틀 업데이트 핸들러
-  const handleTitleUpdate = useCallback(async (newTitle) => {
-    if (!cveData || !propsCveId || newTitle === cveData.title) return;
-    handleFieldUpdate('title', newTitle);
-  }, [cveData, propsCveId, handleFieldUpdate]);
-
-  // 설명 업데이트 핸들러
-  const handleDescriptionUpdate = useCallback(async (newDescription) => {
-    if (!cveData || !propsCveId || newDescription === cveData.description) return;
-    handleFieldUpdate('description', newDescription);
-  }, [cveData, propsCveId, handleFieldUpdate]);
 
   // Severity 옵션 정의
   const SEVERITY_OPTIONS = [
@@ -937,51 +899,6 @@ useEffect(() => {
     }
   }, [socket, connected, propsCveId, enqueueSnackbar, queryClient, loading, isQueryLoading]);
 
-  // 날짜 필드 검증을 위한 useEffect
-  useEffect(() => {
-    if (cveData) {
-      // cveData 전체 구조 로깅
-      console.log('CVEDetail - cveData 전체 구조:', {
-        ...cveData,
-        _id: cveData._id,
-        cveId: cveData.cveId,
-        createdAt: cveData.createdAt,
-        lastModifiedAt: cveData.lastModifiedAt,
-        createdAtType: typeof cveData.createdAt,
-        lastModifiedAtType: typeof cveData.lastModifiedAt
-      });
-      
-      // 날짜 필드 로깅 및 검증
-      const dateFields = ['createdAt', 'lastModifiedAt'];
-      dateFields.forEach(field => {
-        if (field in cveData) {
-          console.log(`CVEDetail: ${field} 필드 값:`, cveData[field], typeof cveData[field]);
-          
-          // 빈 객체 또는 빈 문자열 검사
-          if (!cveData[field] || 
-              cveData[field] === null || 
-              (typeof cveData[field] === 'object' && Object.keys(cveData[field]).length === 0)) {
-            console.log(`CVEDetail: ${field} 필드가 비어있습니다.`);
-          } else {
-            // 시간 변환 테스트
-            try {
-              const formattedDate = formatDateDisplay(cveData[field]);
-              console.log(`CVEDetail: ${field} 필드 변환 결과:`, {
-                원본: cveData[field],
-                변환결과: formattedDate,
-                타입: typeof cveData[field]
-              });
-            } catch (error) {
-              console.error(`CVEDetail: ${field} 필드 변환 오류:`, error);
-            }
-          }
-        } else {
-          console.warn(`CVEDetail: ${field} 필드가 없습니다.`);
-        }
-      });
-    }
-  }, [cveData]);
-
   // 에러 다이얼로그 렌더링
   const renderErrorDialog = () => {
     return (
@@ -1020,6 +937,46 @@ useEffect(() => {
       </Dialog>
     );
   };
+
+  // 모달을 열 때 데이터 새로고침 
+  useEffect(() => {
+    // open 상태가 변경될 때만 실행
+    if (open && propsCveId) {
+      // 로딩 상태 설정
+      setLoading(true);
+      
+      // 데이터 새로고침
+      refetchCveDetail()
+        .then(() => {
+          // 성공적으로 데이터를 가져온 경우 로딩 상태 해제
+          setLoading(false);
+        })
+        .catch(err => {
+          logger.error('CVEDetail', '데이터 로딩 실패', { error: err.message });
+          setLoading(false);
+        });
+    } else if (!open) {
+      // 모달이 닫힐 때 로딩 상태 초기화
+      setLoading(false);
+    }
+  }, [open, propsCveId, refetchCveDetail]);
+
+  // WebSocket 연결 상태가 변경될 때 캐시 무효화
+  useEffect(() => {
+    // Socket.IO가 연결되었을 때만 실행
+    if (connected && propsCveId && !loading && !isQueryLoading) {
+      logger.info('CVEDetail', 'Socket 연결됨, 데이터 갱신 검토');
+      
+      // 마지막 데이터 업데이트 시간 확인
+      const now = new Date().getTime();
+      
+      // 마지막 업데이트로부터 1분 이상 지났다면 캐시 무효화
+      if (dataUpdatedAt && (now - dataUpdatedAt) > 60000) {
+        logger.info('CVEDetail', '소켓 연결 후 오래된 데이터 감지됨, 캐시 무효화');
+        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(propsCveId) });
+      }
+    }
+  }, [connected, propsCveId, dataUpdatedAt, queryClient, loading, isQueryLoading]);
 
   if (isLoading) {
     return (
@@ -1067,7 +1024,7 @@ useEffect(() => {
               <Chip
                 size="small"
                 icon={<HistoryIcon fontSize="small" />}
-                label={`생성: ${formatDateDisplay(cveData.createdAt)}`}
+                label={`생성: ${cveData && cveData.created_at ? formatDateDisplay(cveData.created_at) : (cveData && cveData.createdAt ? formatDateDisplay(cveData.createdAt) : '-')}`}
                 variant="outlined"
                 sx={{ fontSize: '0.7rem', height: 24 }}
               />
@@ -1076,7 +1033,7 @@ useEffect(() => {
               <Chip
                 size="small"
                 icon={<HistoryIcon fontSize="small" />}
-                label={`수정: ${formatDateDisplay(cveData.lastModifiedAt)}`}
+                label={`수정: ${cveData && cveData.last_modified_at ? formatDateDisplay(cveData.last_modified_at) : (cveData && cveData.lastModifiedAt ? formatDateDisplay(cveData.lastModifiedAt) : '-')}`}
                 variant="outlined"
                 sx={{ fontSize: '0.7rem', height: 24 }}
               />

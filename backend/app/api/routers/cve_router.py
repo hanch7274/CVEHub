@@ -167,6 +167,9 @@ async def get_cve_detail(
         CVE 상세 정보
     """
     try:
+        # 라우터에서 직접 콘솔에 출력하는 print 로그 추가
+        print(f"##### API 라우터: GET /cves/{cve_id} 호출됨, bypass_cache={bypass_cache} #####")
+        
         logger.info(f"사용자 '{current_user.username}'이(가) CVE '{cve_id}' 상세 정보 요청")
         
         cache_key = f"{CACHE_KEY_PREFIXES['cve_detail']}{cve_id}"
@@ -175,11 +178,18 @@ async def get_cve_detail(
         if not bypass_cache:
             cached_data = await get_cache(cache_key)
             if cached_data:
+                print(f"##### 캐시에서 CVE 상세 정보 로드: {cache_key} #####")
                 logger.debug(f"캐시에서 CVE 상세 정보 로드: {cache_key}")
                 return cached_data
+            else:
+                print(f"##### 캐시에 데이터 없음: {cache_key} #####")
+        else:
+            print(f"##### 캐시 우회 옵션 활성화됨 #####")
         
         # 캐시에 없거나 우회 옵션이 설정된 경우 DB에서 조회
+        print(f"##### cve_service.get_cve_detail({cve_id}) 호출 시작 #####")
         result = await cve_service.get_cve_detail(cve_id, include_details=True)
+        print(f"##### cve_service.get_cve_detail({cve_id}) 호출 완료, 결과 있음: {result is not None} #####")
         
         # 결과 캐싱
         await cache_cve_detail(cve_id, result)
@@ -208,7 +218,7 @@ async def head_cve(
     클라이언트 캐싱을 위해 Last-Modified 헤더 제공
     """
     try:
-        cve = await cve_service.get_cve(cve_id)
+        cve = await cve_service.get_cve_detail(cve_id, include_details=True)
         if not cve:
             raise HTTPException(status_code=404, detail=f"CVE ID {cve_id} not found")
         
@@ -243,7 +253,7 @@ async def create_cve(
     """새로운 CVE를 생성합니다."""
     try:
         # 이미 존재하는 CVE인지 확인
-        existing_cve = await cve_service.get_cve(cve_data.cve_id)
+        existing_cve = await cve_service.get_cve_detail(cve_data.cve_id, include_details=True)
         if existing_cve:
             raise HTTPException(
                 status_code=409,
@@ -307,7 +317,7 @@ async def update_cve(
         logger.debug(f"cve_id 형식: {cve_id}, ObjectId 형식: {is_object_id}, CVE 형식: {is_cve_format}")
         
         # CVE 존재 확인
-        existing_cve = await cve_service.get_cve(cve_id)
+        existing_cve = await cve_service.get_cve_detail(cve_id, include_details=True)
         if not existing_cve:
             logger.warning(f"업데이트할 CVE를 찾을 수 없음: {cve_id}")
             
@@ -316,7 +326,7 @@ async def update_cve(
                 logger.debug(f"대소문자 구분 없이 조회 시도")
                 try:
                     # 대소문자 구분 없이 조회 시도
-                    alt_cve = await cve_service.get_cve(cve_id)
+                    alt_cve = await cve_service.get_cve_detail(cve_id, include_details=True)
                     if alt_cve:
                         logger.info(f"대소문자 구분 없이 CVE 찾음: {alt_cve.get('cve_id', '')}")
                         existing_cve = alt_cve

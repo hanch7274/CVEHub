@@ -349,11 +349,22 @@ export { isValid };
  * @returns {string} 포맷팅된 날짜 문자열
  */
 export const formatDate = (dateValue, formatStr = DATE_FORMATS.DISPLAY.DEFAULT, timeZone = TIME_ZONES.KST) => {
+  // 개발 환경에서만 로깅
+  if (process.env.NODE_ENV === 'development' && false) { // 로깅 비활성화
+    console.log('formatDate 호출:', {
+      원본값: dateValue,
+      타입: typeof dateValue,
+      instanceof_Date: dateValue instanceof Date
+    });
+  }
+  
   const date = parseDate(dateValue);
+  
   if (!date) return '-';
   
   try {
-    return formatInTimeZone(date, timeZone, formatStr, { locale: ko });
+    const formattedResult = formatInTimeZone(date, timeZone, formatStr, { locale: ko });
+    return formattedResult;
   } catch (error) {
     console.error('날짜 포맷팅 오류:', error, dateValue);
     return '-';

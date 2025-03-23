@@ -36,13 +36,11 @@ import {
   useMediaQuery,
   alpha
 } from '@mui/material';
-
+import { TIME_ZONES } from '../../utils/dateUtils';
 import SearchIcon from '@mui/icons-material/Search';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import AddIcon from '@mui/icons-material/Add';
-import VisibilityIcon from '@mui/icons-material/Visibility';
-import EditIcon from '@mui/icons-material/Edit';
 import SearchOffIcon from '@mui/icons-material/SearchOff';
 import { useAuth } from '../../contexts/AuthContext';
 import { useQueryClient } from '@tanstack/react-query';
@@ -165,14 +163,61 @@ const getStatusColor = (status, theme) => {
 };
 
 // 날짜 포맷팅 함수
-const formatDate = (dateValue) => {
-  // 빈 값이나 빈 객체 체크
-  if (!dateValue || 
-      (typeof dateValue === 'object' && Object.keys(dateValue).length === 0)) {
+const formatDate = (dateValue, cveId = '알 수 없음') => {
+  // 디버깅: 입력 값 확인 (첫 번째 CVE에 대해서만 로그 출력)
+  if (cveId && cveId.includes('CVE-2023-')) {
+    console.log(`[CVEList.formatDate] CVE ID: ${cveId}, 입력 값:`, {
+      value: dateValue,
+      type: typeof dateValue,
+      isDate: dateValue instanceof Date,
+      isNull: dateValue === null,
+      isUndefined: dateValue === undefined
+    });
+  }
+  
+  // 빈 값 체크 - 가장 먼저 체크하여 null이나 undefined 경우 바로 처리
+  if (!dateValue) {
+    if (cveId && cveId.includes('CVE-2023-')) {
+      console.log(`[CVEList.formatDate] CVE ID: ${cveId}, 빈 값 감지`);
+    }
     return '-';
   }
   
-  return formatForDisplay(dateValue, DATE_FORMATS.DISPLAY.DEFAULT);
+  // 빈 객체 체크
+  if (typeof dateValue === 'object' && !(dateValue instanceof Date) && dateValue !== null && Object.keys(dateValue).length === 0) {
+    if (cveId && cveId.includes('CVE-2023-')) {
+      console.log(`[CVEList.formatDate] CVE ID: ${cveId}, 빈 객체 감지`);
+    }
+    return '-';
+  }
+  
+  try {
+    // 현재 시간을 기본값으로 사용 (백엔드에서 null 값이 전달된 경우)
+    if (dateValue === null) {
+      if (cveId && cveId.includes('CVE-2023-')) {
+        console.log(`[CVEList.formatDate] CVE ID: ${cveId}, null 값 감지, 현재 시간 사용`);
+      }
+      return formatForDisplay(new Date(), DATE_FORMATS.DISPLAY.DEFAULT, TIME_ZONES.KST);
+    }
+    
+    // 문자열인 경우 Date 객체로 변환
+    if (typeof dateValue === 'string') {
+      if (cveId && cveId.includes('CVE-2023-')) {
+        console.log(`[CVEList.formatDate] CVE ID: ${cveId}, 문자열 감지, Date 객체로 변환 시도:`, dateValue);
+      }
+      dateValue = new Date(dateValue);
+    }
+    
+    // 결과 반환
+    const result = formatForDisplay(dateValue, DATE_FORMATS.DISPLAY.DEFAULT, TIME_ZONES.KST);
+    if (cveId && cveId.includes('CVE-2023-')) {
+      console.log(`[CVEList.formatDate] CVE ID: ${cveId}, 변환 결과:`, result);
+    }
+    return result;
+  } catch (err) {
+    console.error(`[CVEList.formatDate] CVE ID: ${cveId}, 오류:`, err);
+    return '-';
+  }
 };
 
 const CVECardSkeleton = () => (
@@ -595,9 +640,27 @@ const CVETable = React.memo(({
                     />
                   </TableCell>
                   {!isMobile && (
-                    <TableCell sx={tableCellBaseStyle}>{formatDate(cve.createdAt)}</TableCell>
+                    <TableCell sx={tableCellBaseStyle}>
+                      {formatDate(cve.createdAt || cve.created_at, cve.cveId)}
+                      <div style={{ display: 'none' }}>
+                        {console.log('TableCell createdAt 디버깅:', {
+                          createdAt: cve.createdAt,
+                          created_at: cve.created_at,
+                          원본cve: cve
+                        })}
+                      </div>
+                    </TableCell>
                   )}
-                  <TableCell sx={tableCellBaseStyle}>{formatDate(cve.lastModifiedAt)}</TableCell>
+                  <TableCell sx={tableCellBaseStyle}>
+                    {formatDate(cve.lastModifiedAt || cve.last_modified_at, cve.cveId)}
+                    <div style={{ display: 'none' }}>
+                      {console.log('TableCell lastModifiedAt 디버깅:', {
+                        lastModifiedAt: cve.lastModifiedAt,
+                        last_modified_at: cve.last_modified_at,
+                        원본cve: cve
+                      })}
+                    </div>
+                  </TableCell>
                   <TableCell sx={tableCellBaseStyle}>
                     <Box sx={{ display: 'flex', gap: 1 }}>
                       <Tooltip title="삭제">
@@ -630,7 +693,7 @@ const CVETable = React.memo(({
         </Table>
       </TableContainer>
       <TablePagination
-        rowsPerPageOptions={[5, 10, 25]}
+        rowsPerPageOptions={[1, 5, 10, 25]}
         component="div"
         count={totalCVECount} 
         rowsPerPage={rowsPerPage}
@@ -817,7 +880,7 @@ const CVEList = () => {
   
   // 필터 상태 (상태, 심각도, 정렬 옵션)
   const [page, setPage] = useState(1);
-  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [rowsPerPage, setRowsPerPage] = useState(1); // 테스트를 위해 1로 변경
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [severityFilter, setSeverityFilter] = useState('');
