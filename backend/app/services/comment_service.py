@@ -155,13 +155,14 @@ class CommentService:
                         logger.error(f"Maximum comment depth reached: {MAX_COMMENT_DEPTH}")
                         return None, f"최대 댓글 깊이({MAX_COMMENT_DEPTH})에 도달했습니다."
             
-            # 새 댓글 생성
-            now = datetime.now(ZoneInfo("Asia/Seoul"))
+            # 댓글 생성
+            now = datetime.now(ZoneInfo("UTC"))
             comment = Comment(
+                id=str(PydanticObjectId()),
                 cve_id=cve_id,
                 content=content,
                 user_id=user.id,
-                username=user.username,
+                created_by=user.username,
                 parent_id=PydanticObjectId(parent_id) if parent_id else None,
                 created_at=now,
                 last_modified_at=None,

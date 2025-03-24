@@ -31,6 +31,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { QUERY_KEYS } from '../../api/queryKeys';
 import { getUTCTimestamp } from '../../utils/dateUtils';
+import { getUser } from '../../utils/storage/tokenStorage';
 
 const POC_SOURCES = {
   Etc: "Etc",
@@ -59,6 +60,14 @@ const STATUS_OPTIONS = [
   { value: '분석불가', label: '분석불가' }
 ];
 
+const SEVERITY_OPTIONS = [
+  { value: 'Critical', label: 'Critical' },
+  { value: 'High', label: 'High' },
+  { value: 'Medium', label: 'Medium' },
+  { value: 'Low', label: 'Low' },
+  { value: 'None', label: 'None' }
+];
+
 const CreateCVE = ({ open = false, onClose, onSuccess }) => {
   const [formData, setFormData] = useState({
     cveId: '',
@@ -85,13 +94,15 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
   const queryClient = useQueryClient();
-  
+  const currentUser = getUser();
+  const username = currentUser?.username || 'anonymous';
+
   const { mutate, isLoading, error: mutationError } = useCreateCVE({
     onSuccess: (data) => {
       // CVE 목록 데이터 무효화
       queryClient.invalidateQueries({ 
         queryKey: QUERY_KEYS.CVE.lists(),
-        refetchActive: true
+        refetchType: 'active'
       });
       
       // 성공 메시지 표시
@@ -144,7 +155,11 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
     if (!newPoc.url.trim()) return;
     setFormData(prev => ({
       ...prev,
-      pocs: [...prev.pocs, { ...newPoc }]
+      pocs: [...prev.pocs, { 
+        ...newPoc,
+        created_by: username,
+        last_modified_by: username
+      }]
     }));
     setNewPoc({ source: POC_SOURCES.Etc, url: '', description: '' });
   };
@@ -160,7 +175,11 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
     if (!newSnortRule.rule.trim()) return;
     setFormData(prev => ({
       ...prev,
-      snortRules: [...prev.snortRules, { ...newSnortRule }]
+      snortRules: [...prev.snortRules, { 
+        ...newSnortRule,
+        created_by: username,
+        last_modified_by: username
+      }]
     }));
     setNewSnortRule({ 
       rule: '', 
@@ -180,7 +199,12 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
     if (newReference.trim()) {
       setFormData(prev => ({
         ...prev,
-        references: [...prev.references, { url: newReference.trim(), dateAdded: getUTCTimestamp() }]
+        references: [...prev.references, { 
+          url: newReference.trim(), 
+          dateAdded: getUTCTimestamp(),
+          created_by: username,
+          last_modified_by: username
+        }]
       }));
       setNewReference('');
     }
@@ -267,7 +291,7 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
           {/* 기본 정보 */}
           <Paper elevation={0} variant="outlined" sx={{ p: 3 }}>
             <Typography variant="h6" sx={{ mb: 2, color: 'text.primary' }}>기본 정보</Typography>
-            <Box sx={{ display: 'grid', gridTemplateColumns: '2fr 3fr 1fr', gap: 2 }}>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '2fr 3fr 1fr 1fr', gap: 2 }}>
               <TextField
                 required
                 label="CVE ID"
@@ -298,6 +322,23 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
                   sx={{ borderRadius: 1 }}
                 >
                   {STATUS_OPTIONS.map(option => (
+                    <MenuItem key={option.value} value={option.value}>
+                      {option.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <FormControl size="medium">
+                <InputLabel>심각도</InputLabel>
+                <Select
+                  name="severity"
+                  value={formData.severity}
+                  onChange={handleInputChange}
+                  label="심각도"
+                  sx={{ borderRadius: 1 }}
+                >
+                  {SEVERITY_OPTIONS.map(option => (
                     <MenuItem key={option.value} value={option.value}>
                       {option.label}
                     </MenuItem>

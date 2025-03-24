@@ -24,7 +24,7 @@ import {
   EmptyState
 } from './CommonStyles';
 import { useQueryClient } from '@tanstack/react-query';
-import { api } from '../../../utils/auth';
+import  api from '../../../api/config/axios';
 import { useSnackbar } from 'notistack';
 import { SOCKET_EVENTS } from '../../../services/socketio/constants';
 import useWebSocketHook from '../../../api/hooks/useWebSocketHook';
@@ -144,7 +144,7 @@ const GenericDataTab = memo(({
       const newItemWithMetadata = {
         ...newItem,
         dateAdded: kstTime.toISOString(),  // KST 시간을 ISO 문자열로 변환
-        addedBy: currentUser?.username || 'anonymous'
+        createdBy: currentUser?.username || 'anonymous'
       };
 
       // 추가적인 메타데이터 처리 (있다면)
@@ -479,7 +479,7 @@ const GenericDataTab = memo(({
                   mt: 0.5
                 }}>
                   <Typography variant="caption" color="text.secondary">
-                    Added by {item.addedBy}
+                    Added by {item.createdBy}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
                     •

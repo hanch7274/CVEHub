@@ -128,6 +128,10 @@ class CVEService:
                     cve['created_at'] = current_time
                 if 'last_modified_at' not in cve or cve['last_modified_at'] is None:
                     cve['last_modified_at'] = current_time
+                
+                # id 필드가 없는 경우 cve_id 값을 복사
+                if 'id' not in cve and 'cve_id' in cve:
+                    cve['id'] = cve['cve_id']
             
             return {
                 "total": total,
@@ -143,8 +147,8 @@ class CVEService:
     async def get_cve_detail(
         self, 
         cve_id: str, 
-        as_model: bool = False,
-        include_details: bool = True
+        as_model: bool = False, 
+        include_details: bool = False
     ) -> Union[Optional[CVEModel], Optional[Dict[str, Any]]]:
         """
         CVE ID로 CVE 상세 정보를 조회합니다.
@@ -158,11 +162,6 @@ class CVEService:
             CVEModel 또는 Dict (없으면 None)
         """
         try:
-            # 직접 콘솔에 출력하는 print 로그 추가 (이는 항상 출력됨)
-            print(f"####### get_cve_detail 함수 호출됨: cve_id={cve_id} #######")
-            
-            logger.info(f"CVE '{cve_id}' 정보 조회 시작")
-            
             # 대소문자 구분 없이 CVE ID로 조회
             cve = await self.repository.find_by_cve_id(cve_id)
             
@@ -170,7 +169,7 @@ class CVEService:
                 logger.info(f"CVE를 찾을 수 없음: {cve_id}")
                 return None
                 
-            logger.info(f"CVE 찾음: {cve.id}, {cve.cve_id}")
+            logger.info(f"CVE 찾음: {cve.cve_id}")
                 
             # 모델 그대로 반환 요청시
             if as_model:
@@ -178,22 +177,19 @@ class CVEService:
                 
             # 모델을 딕셔너리로 변환
             cve_dict = cve.dict()
-            
-            # 직접 콘솔에 출력하는 print 로그 추가 (normalize_datetime_fields 호출 전)
-            print(f"####### normalize_datetime_fields 호출 전: created_at={cve_dict.get('created_at')} ({type(cve_dict.get('created_at')).__name__}), last_modified_at={cve_dict.get('last_modified_at')} ({type(cve_dict.get('last_modified_at')).__name__}) #######")
-            
-            # normalize_datetime_fields 호출 전 날짜 필드 로깅
-            logger.info(f"normalize_datetime_fields 호출 전 날짜 필드: created_at={cve_dict.get('created_at')} ({type(cve_dict.get('created_at')).__name__}), last_modified_at={cve_dict.get('last_modified_at')} ({type(cve_dict.get('last_modified_at')).__name__})")
-            
+
+            # ObjectId 변환 로직 제거 (cve_id만 사용하므로 필요 없음)
+            # _id 필드가 있다면 제거
+            if '_id' in cve_dict:
+                cve_dict.pop('_id')
+
             # 날짜 필드 처리
             cve_dict = normalize_datetime_fields(cve_dict)
             
-            # 직접 콘솔에 출력하는 print 로그 추가 (normalize_datetime_fields 호출 후)
-            print(f"####### normalize_datetime_fields 호출 후: created_at={cve_dict.get('created_at')} ({type(cve_dict.get('created_at')).__name__}), last_modified_at={cve_dict.get('last_modified_at')} ({type(cve_dict.get('last_modified_at')).__name__}) #######")
+            # id 필드가 없는 경우 cve_id 값을 복사
+            if 'id' not in cve_dict and 'cve_id' in cve_dict:
+                cve_dict['id'] = cve_dict['cve_id']
             
-            # normalize_datetime_fields 호출 후 날짜 필드 로깅
-            logger.info(f"normalize_datetime_fields 호출 후 날짜 필드: created_at={cve_dict.get('created_at')} ({type(cve_dict.get('created_at')).__name__}), last_modified_at={cve_dict.get('last_modified_at')} ({type(cve_dict.get('last_modified_at')).__name__})")
-        
             return cve_dict
             
         except Exception as e:
@@ -250,7 +246,7 @@ class CVEService:
             new_cve = await self.repository.create(cve_data)
             
             if new_cve:
-                logger.info(f"CVE 생성 성공: CVE ID={new_cve.cve_id}, MongoDB ID={new_cve.id}")
+                logger.info(f"CVE 생성 성공: CVE ID={new_cve.cve_id}")
                 return new_cve
             else:
                 logger.error("CVE 생성 실패: Repository에서 None 반환")
@@ -282,7 +278,7 @@ class CVEService:
                 logger.warning(f"업데이트할 CVE를 찾을 수 없음: {cve_id}")
                 return None
                 
-            logger.info(f"기존 CVE 정보: id={existing_cve.id}, cve_id={existing_cve.cve_id}")
+            logger.info(f"기존 CVE 정보: cve_id={existing_cve.cve_id}")
                 
             # pydantic 모델을 딕셔너리로 변환
             if not isinstance(update_data, dict):
@@ -340,21 +336,22 @@ class CVEService:
             if 'created_at' not in update_data and hasattr(existing_cve, 'created_at'):
                 update_data['created_at'] = existing_cve.created_at
             
-            # 업데이트 실행
-            id_for_update = str(existing_cve.id)
-            
+            # 업데이트 실행 - cve_id를 사용하도록 변경
             try:
-                result = await self.repository.update(id_for_update, update_data)
+                # id_for_update에 cve_id 사용
+                result = await self.repository.update_by_cve_id(cve_id, update_data)
                 
                 if result:
                     logger.info(f"CVE {cve_id} 업데이트 성공")
-                    updated_cve = await self.get_cve_detail(cve_id, as_model=True)
+                    updated_cve = await self.get_cve_detail(cve_id, as_model=False)
+                    
+                    # ObjectId 변환 로직 제거 (cve_id만 사용하므로 필요 없음)
                     return updated_cve
-                
-                logger.warning(f"CVE 업데이트 실패: {cve_id}")
-                return None
+                else:
+                    logger.warning(f"CVE 업데이트 실패: {cve_id}")
+                    return None
             except Exception as e:
-                logger.error(f"repository.update 호출 중 오류: {str(e)}")
+                logger.error(f"repository.update_by_cve_id 호출 중 오류: {str(e)}")
                 logger.error(traceback.format_exc())
                 raise
         except Exception as e:
@@ -381,8 +378,8 @@ class CVEService:
                 logger.warning(f"삭제할 CVE를 찾을 수 없음: {cve_id}")
                 return False
                 
-            # 삭제 실행
-            result = await self.repository.delete(str(cve.id))
+            # 삭제 실행 - cve.id 대신 cve_id 사용
+            result = await self.repository.delete_by_cve_id(cve_id)
             
             if result:
                 logger.info(f"CVE 삭제 성공: {cve_id}")

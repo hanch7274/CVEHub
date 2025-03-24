@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { useEffect, useCallback, useState, useRef } from 'react';
 import cveService from '../services/cveService';
 import logger from '../../utils/logging';
@@ -12,6 +12,14 @@ const SUBSCRIPTION_EVENTS = {
   SUBSCRIPTION_ERROR: 'subscription:error',
   UNSUBSCRIPTION_ERROR: 'unsubscription:error'
 };
+
+// 로깅 유틸리티 함수
+const useLogger = (prefix) => ({
+  info: (message, data) => logger.info(prefix, message, data),
+  warn: (message, data) => logger.warn(prefix, message, data),
+  error: (message, error) => logger.error(prefix, message, error),
+  debug: (message, data) => logger.debug(prefix, message, data)
+});
 
 /**
  * CVE 목록 조회 Hook
@@ -159,45 +167,11 @@ export const useCVEDetail = (cveId, options = {}, customService = cveService) =>
         const result = await customService.getCVEById(cveId);
         const endTime = Date.now();
         
-        // 날짜 필드 디버깅 로그 추가
-        if (result) {
-          console.log('useCVEDetail: API 원본 데이터 날짜 필드', {
-            createdAt: {
-              값: result.createdAt,
-              타입: typeof result.createdAt,
-              소스: 'API 원본'
-            },
-            lastModifiedAt: {
-              값: result.lastModifiedAt,
-              타입: typeof result.lastModifiedAt,
-              소스: 'API 원본'
-            }
-          });
-        }
-        
         logger.info('useCVEDetail', 'CVE 상세 조회 완료', { 
           cveId, 
           elapsedTime: `${endTime - startTime}ms`,
           dataSize: JSON.stringify(result).length
         });
-        
-        // 결과 반환 전 최종 데이터의 날짜 필드 확인
-        if (result) {
-          // 깊은 복사본을 만들어 로깅 (참조 문제 방지)
-          const returnedData = JSON.parse(JSON.stringify(result));
-          console.log('useCVEDetail: 컴포넌트에 반환되는 최종 데이터 날짜 필드', {
-            createdAt: {
-              값: returnedData.createdAt,
-              타입: typeof returnedData.createdAt,
-              소스: '반환 데이터'
-            },
-            lastModifiedAt: {
-              값: returnedData.lastModifiedAt,
-              타입: typeof returnedData.lastModifiedAt,
-              소스: '반환 데이터'
-            }
-          });
-        }
         
         return result;
       } catch (error) {
@@ -343,12 +317,12 @@ export const useCVEListUpdates = () => {
 
   // CVE 업데이트 이벤트 처리 함수
   const handleCVEUpdated = useCallback((updatedCVE) => {
-    logger.info('useCVEListUpdates', 'CVE 업데이트됨', { cveId: updatedCVE?.id });
+    logger.info('useCVEListUpdates', 'CVE 업데이트됨', { cveId: updatedCVE?.cve_id });
     
-    if (updatedCVE?.id) {
+    if (updatedCVE?.cve_id) {
       // CVE 상세 쿼리 캐시 갱신
       queryClient.setQueryData(
-        QUERY_KEYS.CVE.detail(updatedCVE.id),
+        QUERY_KEYS.CVE.detail(updatedCVE.cve_id),
         updatedCVE
       );
       
@@ -744,6 +718,134 @@ export const useCVESubscription = (cveId) => {
 };
 
 /**
+ * CVE 데이터 업데이트를 위한 Hook
+ * @param {string} cveId - CVE ID
+ * @param {Object} options - React Query 옵션
+ * @returns {Object} - useMutation 결과
+ */
+export const useUpdateCVE = (cveId, options = {}) => {
+  const queryClient = useQueryClient();
+  const logger = useLogger('useUpdateCVE');
+  const optimisticUpdateIdRef = useRef(0);
+  
+  // 깊은 병합 유틸리티 함수
+  const deepMerge = (target, source) => {
+    if (!source) return target;
+    
+    const result = { ...target };
+    
+    Object.keys(source).forEach(key => {
+      if (source[key] === null) {
+        // null 값은 해당 필드 제거로 처리
+        result[key] = null;
+      } else if (Array.isArray(source[key])) {
+        // 배열은 전체 대체 (병합하지 않음)
+        result[key] = [...source[key]];
+      } else if (typeof source[key] === 'object' && source[key] !== null) {
+        // 중첩 객체는 재귀적으로 병합
+        result[key] = deepMerge(result[key] || {}, source[key]);
+      } else {
+        // 기본 값은 그대로 복사
+        result[key] = source[key];
+      }
+    });
+    
+    return result;
+  };
+  
+  // 기본 옵션 설정
+  const defaultOptions = {
+    onMutate: async (updateData) => {
+      // 낙관적 업데이트 ID 생성 (중복 방지용)
+      const updateId = ++optimisticUpdateIdRef.current;
+      
+      // 기존 쿼리 취소
+      await queryClient.cancelQueries({ queryKey: QUERY_KEYS.CVE.detail(cveId) });
+      
+      // 이전 데이터 저장
+      const previousData = queryClient.getQueryData(QUERY_KEYS.CVE.detail(cveId));
+      
+      // 낙관적 업데이트 적용
+      if (previousData) {
+        logger.info('낙관적 업데이트 적용', { cveId, updateId, fields: Object.keys(updateData) });
+        
+        // 깊은 병합을 통한 업데이트된 데이터 생성
+        const updatedData = deepMerge(previousData, updateData);
+        
+        // 마지막 수정 시간 업데이트 (클라이언트에서 임시로)
+        updatedData.lastModifiedAt = new Date().toISOString();
+        
+        // 캐시 직접 업데이트
+        queryClient.setQueryData(QUERY_KEYS.CVE.detail(cveId), updatedData);
+      } else {
+        logger.warn('낙관적 업데이트 실패: 캐시에 데이터 없음', { cveId });
+      }
+      
+      return { previousData, updateId };
+    },
+    
+    onError: (err, newData, context) => {
+      // 오류 발생 시 이전 데이터로 롤백
+      if (context?.previousData) {
+        logger.warn('업데이트 오류로 롤백', { 
+          cveId, 
+          updateId: context.updateId,
+          error: err.message 
+        });
+        queryClient.setQueryData(QUERY_KEYS.CVE.detail(cveId), context.previousData);
+      }
+    },
+    
+    onSuccess: (data, variables, context) => {
+      logger.info('서버 업데이트 성공', { 
+        cveId, 
+        updateId: context?.updateId,
+        serverResponseSize: JSON.stringify(data).length
+      });
+      
+      // options.onSuccess가 있으면 실행
+      if (options.onSuccess) {
+        options.onSuccess(data, variables, context);
+      }
+      
+      // 서버 데이터로 캐시 업데이트 (선택적)
+      if (options.refetchOnSuccess !== false) {
+        // 기본적으로는 서버 데이터와 동기화하기 위해 쿼리 무효화
+        // refetchActive를 true로 설정하여 관련 모든 쿼리 새로고침
+        queryClient.invalidateQueries({ 
+          queryKey: QUERY_KEYS.CVE.detail(cveId),
+          refetchType: 'active' 
+        });
+      }
+    },
+    
+    onSettled: (data, error, variables, context) => {
+      logger.debug('업데이트 작업 완료', { 
+        cveId, 
+        updateId: context?.updateId,
+        success: !error 
+      });
+      
+      // options.onSettled가 있으면 실행
+      if (options.onSettled) {
+        options.onSettled(data, error, variables, context);
+      }
+    }
+  };
+  
+  return useMutation({
+    mutationFn: (updateData) => {
+      logger.info('CVE 업데이트 요청', { cveId, fields: Object.keys(updateData) });
+      return cveService.updateCVE(cveId, updateData);
+    },
+    onMutate: defaultOptions.onMutate,
+    onError: defaultOptions.onError,
+    onSuccess: defaultOptions.onSuccess,
+    onSettled: defaultOptions.onSettled
+  });
+};
+
+/**
  * 전체 CVE 개수를 조회하는 훅
  * 필터링 없이 DB에 존재하는 모든 CVE의 개수를 반환합니다.
  * @param {Object} options - React Query 옵션
@@ -802,5 +904,6 @@ export default {
   handleCVESubscriptionUpdate,
   setupCVESubscriptions,
   useTotalCVECount,
-  useCVEStats
+  useCVEStats,
+  useUpdateCVE
 };

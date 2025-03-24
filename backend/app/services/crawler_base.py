@@ -449,7 +449,7 @@ class BaseCrawlerService(ABC, LoggingMixin):
         self.log_info(f"CVE {cve_id} 데이터베이스 업데이트 중...")
         
         # 기존 CVE 찾기
-        existing = await self.cve_service.get_cve(cve_id)
+        existing = await self.cve_service.get_cve_detail(cve_id)
         is_new = existing is None
         
         if is_new:
@@ -505,7 +505,7 @@ class BaseCrawlerService(ABC, LoggingMixin):
                 raise Exception(f"CVE {cve_id} 생성 실패")
                 
             # 모델 조회
-            cve_model = await self.cve_service.get_cve(cve_id)
+            cve_model = await self.cve_service.get_cve_detail(cve_id)
             return cve_model
         else:
             # 기존 CVE 업데이트
@@ -525,5 +525,5 @@ class BaseCrawlerService(ABC, LoggingMixin):
                 raise Exception(f"CVE {cve_id} 업데이트 실패")
                 
             # 모델 조회
-            cve_model = await self.cve_service.get_cve(cve_id)
+            cve_model = await self.cve_service.get_cve_detail(cve_id)
             return cve_model

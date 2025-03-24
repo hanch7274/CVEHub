@@ -162,7 +162,7 @@ export const snortRulesTabConfig = {
     return {
       ...item,
       createdAt: item.dateAdded,
-      createdBy: item.addedBy,
+      createdBy: item.createdBy,
       modifiedAt: null,
       modifiedBy: null
     };
@@ -253,7 +253,7 @@ export const DEFAULT_REFERENCE = {
   url: '',
   description: '',
   dateAdded: new Date().toISOString(),
-  addedBy: 'anonymous'
+  createdBy: 'anonymous'
 };
 
 export const referencesTabConfig = {

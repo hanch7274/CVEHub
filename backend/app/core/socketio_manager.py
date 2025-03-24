@@ -56,6 +56,13 @@ class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, datetime):
             return obj.strftime('%Y-%m-%d %H:%M:%S')
+        # MongoDB ObjectId 처리 추가
+        try:
+            from bson import ObjectId
+            if isinstance(obj, ObjectId):
+                return str(obj)
+        except ImportError:
+            pass
         return super().default(obj)
 
 def _calculate_message_size(message):

@@ -426,8 +426,8 @@ const FilterBar = React.memo(({
   );
 });
 
-const TableSkeletonRow = ({ isMobile, colSpan }) => (
-  <TableRow>
+const TableSkeletonRow = React.memo(({ isMobile, colSpan, rowKey }) => (
+  <TableRow key={rowKey}>
     <TableCell><Skeleton variant="text" /></TableCell>
     {!isMobile && <TableCell><Skeleton variant="text" /></TableCell>}
     <TableCell><Skeleton variant="text" /></TableCell>
@@ -436,7 +436,7 @@ const TableSkeletonRow = ({ isMobile, colSpan }) => (
     <TableCell><Skeleton variant="text" /></TableCell>
     <TableCell><Skeleton variant="text" /></TableCell>
   </TableRow>
-);
+));
 
 const NoDataRow = ({ colSpan, searchQuery, onResetSearch, theme }) => (
   <TableRow>
@@ -521,12 +521,12 @@ const CVETable = React.memo(({
             {isLoading ? (
               // 로딩 중일 때 스켈레톤 UI 표시
               Array.from(new Array(5)).map((_, index) => (
-                <TableSkeletonRow key={`skeleton-${index}`} isMobile={isMobile} />
+                <TableSkeletonRow key={`skeleton-${index}`} isMobile={isMobile} colSpan={isMobile ? 5 : 7} rowKey={`skeleton-${index}`} />
               ))
             ) : cves && cves.length > 0 ? (
               cves.map((cve) => (
                 <TableRow
-                  key={cve.id}
+                  key={cve.cve_id}
                   onClick={() => onCVEClick(cve)}
                   sx={{
                     cursor: 'pointer',
@@ -783,7 +783,7 @@ const EmptyStateDisplay = ({ searchQuery, onResetSearch, isFiltered }) => {
       
       {isFiltered ? (
         <>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
             {searchQuery ? `"${searchQuery}"에 대한 검색 결과가 없습니다.` : '현재 필터 조건에 맞는 CVE가 없습니다.'}
           </Typography>
           <Button
@@ -969,9 +969,9 @@ const CVEList = () => {
       else if (trimmedValue.length >= 1 && trimmedValue !== searchQuery) {
         console.log('검색 쿼리 설정:', trimmedValue);
         // 쿼리 캐시 무효화 후 새 검색 실행
-        queryClient.invalidateQueries({ 
-          predicate: (query) => Array.isArray(query.queryKey) && 
-                               query.queryKey[0] === QUERY_KEYS.CVE.list
+        queryClient.invalidateQueries({
+          queryKey: [QUERY_KEYS.CVE.list],
+          refetchType: 'active'
         });
         setSearchQuery(trimmedValue);
         setPage(1); // 페이지 초기화
@@ -986,9 +986,9 @@ const CVEList = () => {
     setSearchQuery('');
     
     // 검색 초기화 시 캐시 무효화
-    queryClient.invalidateQueries({ 
-      predicate: (query) => Array.isArray(query.queryKey) && 
-                            query.queryKey[0] === QUERY_KEYS.CVE.list
+    queryClient.invalidateQueries({
+      queryKey: [QUERY_KEYS.CVE.list],
+      refetchType: 'active'
     });
     
     setPage(1);

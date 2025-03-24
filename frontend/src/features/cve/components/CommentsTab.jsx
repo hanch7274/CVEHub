@@ -6,11 +6,9 @@ import {
 } from '@mui/material';
 import Comment from './Comment';
 import MentionInput from './MentionInput';
-import { api } from '../../../utils/auth';
-import { formatDistanceToNow } from 'date-fns';
-import { ko } from 'date-fns/locale';
+import api from '../../../api/config/axios';
 import { useSnackbar } from 'notistack';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, useMutation } from '@tanstack/react-query';
 import {
   ListHeader,
   EmptyState
@@ -18,6 +16,8 @@ import {
 import { Comment as CommentIcon } from '@mui/icons-material';
 import { SOCKET_EVENTS } from '../../../services/socketio/constants';
 import logger from '../../../utils/logging';
+import { QUERY_KEYS } from '../../../api/queryKeys';
+import useWebSocketHook from '../../../api/hooks/useWebSocketHook';
 
 // 멘션된 사용자를 추출하는 유틸리티 함수
 const extractMentions = (content) =>
@@ -46,8 +46,41 @@ const CommentsTab = React.memo(({
     }
   }, [currentUser?.username, enqueueSnackbar]);
   
-  // useCVEWebSocketUpdate 훅을 사용하여 웹소켓 메시지 처리 및 알림
-  //const { sendCustomMessage } = useCVEWebSocketUpdate(cve.cveId, handleCommentNotification);
+  // 웹소켓 업데이트 함수 - 낙관적 업데이트 적용
+  const updateCommentsCache = useCallback((cachedData, eventData) => {
+    if (!cachedData || !eventData || !eventData.data) {
+      return cachedData;
+    }
+    
+    logger.info('CommentsTab', '댓글 캐시 업데이트', {
+      eventType: eventData.type,
+      updateId: eventData.updateId || Date.now()
+    });
+    
+    // 업데이트된 CVE 데이터
+    const updatedCVE = eventData.data;
+    
+    // 캐시된 데이터 복사
+    const newData = { ...cachedData };
+    
+    // 댓글 데이터 업데이트
+    if (updatedCVE.comments) {
+      newData.comments = updatedCVE.comments;
+    }
+    
+    return newData;
+  }, []);
+  
+  // 웹소켓 이벤트 리스너 등록
+  const sendMessage = useWebSocketHook(
+    SOCKET_EVENTS.CVE_UPDATED,
+    handleCommentNotification,
+    {
+      optimisticUpdate: true,
+      queryKey: QUERY_KEYS.CVE.detail(cve.cveId),
+      updateDataFn: updateCommentsCache
+    }
+  );
 
   // 상위 상태
   const [newComment, setNewComment] = useState('');
@@ -126,136 +159,304 @@ const CommentsTab = React.memo(({
     onCommentCountChange?.(activeCommentCount);
   }, [activeCommentCount, onCommentCountChange]);
 
-  // 댓글 삭제 함수
-  const handleDelete = useCallback(async (commentId, permanent = false) => {
-    try {
-      setLoading(true);
-      const response = await api.delete(`/cves/${cve.cveId}/comments/${commentId}`, {
-        params: { permanent }
-      });
+  // 낙관적 업데이트를 위한 공통 유틸리티 함수
+  const performOptimisticUpdate = useCallback((updateFn) => {
+    const queryKey = QUERY_KEYS.CVE.detail(cve.cveId);
+    const cachedData = queryClient.getQueryData(queryKey);
+    
+    if (cachedData) {
+      const optimisticData = updateFn(cachedData);
+      queryClient.setQueryData(queryKey, optimisticData);
+      
+      // 댓글 수 업데이트
+      const newActiveCount = optimisticData.comments.filter(c => !c.isDeleted).length;
+      onCommentCountChange?.(newActiveCount);
+      
+      return cachedData; // 롤백을 위해 원본 데이터 반환
+    }
+    return null;
+  }, [cve.cveId, queryClient, onCommentCountChange]);
 
-      if (response) {
-        await parentSendMessage(
-          SOCKET_EVENTS.COMMENT_DELETED,
-          {
-            cveId: cve.cveId,
-            field: 'comments',
-            cve: response.data
-          }
-        );
+  // 댓글 삭제 mutation
+  const deleteCommentMutation = useMutation({
+    mutationFn: ({ commentId, permanent }) => api.delete(`/cves/${cve.cveId}/comments/${commentId}`, {
+      params: { permanent }
+    }),
+    onMutate: async ({ commentId, permanent }) => {
+      setLoading(true);
+      
+      // 낙관적 업데이트 수행
+      return performOptimisticUpdate(cachedData => {
+        const optimisticData = { ...cachedData };
+        const commentIndex = optimisticData.comments.findIndex(c => c.id === commentId);
         
-        // 즉시 데이터 갱신 호출 제거
-        enqueueSnackbar(
-          permanent ? '댓글이 완전히 삭제되었습니다.' : '댓글이 삭제되었습니다.',
-          { variant: 'success' }
-        );
-      }
-    } catch (error) {
+        if (commentIndex !== -1) {
+          if (permanent) {
+            optimisticData.comments.splice(commentIndex, 1);
+          } else {
+            optimisticData.comments[commentIndex] = {
+              ...optimisticData.comments[commentIndex],
+              isDeleted: true
+            };
+          }
+        }
+        
+        return optimisticData;
+      });
+    },
+    onSuccess: async (response, { commentId, permanent }) => {
+      await parentSendMessage(
+        SOCKET_EVENTS.COMMENT_DELETED,
+        {
+          cveId: cve.cveId,
+          field: 'comments',
+          cve: response.data
+        }
+      );
+      
+      enqueueSnackbar(
+        permanent ? '댓글이 완전히 삭제되었습니다.' : '댓글이 삭제되었습니다.',
+        { variant: 'success' }
+      );
+    },
+    onError: (error, { commentId, permanent }, context) => {
       console.error('댓글 삭제 중 오류:', error);
+      
+      // 오류 발생 시 원래 데이터로 롤백
+      if (context) {
+        queryClient.setQueryData(QUERY_KEYS.CVE.detail(cve.cveId), context);
+      }
+      
       enqueueSnackbar(
         error.response?.data?.detail || '댓글 삭제 중 오류가 발생했습니다.',
         { variant: 'error' }
       );
-    } finally {
+    },
+    onSettled: () => {
       setLoading(false);
     }
-  }, [cve.cveId, parentSendMessage, enqueueSnackbar]);
+  });
 
-  // 댓글 수정 함수
-  const handleEdit = useCallback(async (commentId, content) => {
-    try {
+  // 댓글 수정 mutation
+  const editCommentMutation = useMutation({
+    mutationFn: ({ commentId, content }) => api.patch(`/cves/${cve.cveId}/comments/${commentId}`, {
+      content,
+      parentId: null
+    }),
+    onMutate: async ({ commentId, content }) => {
       setLoading(true);
-      const mentions = extractMentions(content);
-      const response = await api.patch(`/cves/${cve.cveId}/comments/${commentId}`, {
-        content,
-        parentId: null
-      });
-
-      if (response) {
-        if (mentions.length > 0) {
-          await parentSendMessage(
-            SOCKET_EVENTS.MENTION_ADDED,
-            {
-              type: 'mention',
-              recipients: mentions,
-              content: `${currentUser.username}님이 댓글에서 회원님을 멘션했습니다.`,
-              metadata: {
-                cveId: cve.cveId,
-                commentId: commentId,
-                comment_content: content
-              }
-            }
-          );
+      
+      // 낙관적 업데이트 수행
+      return performOptimisticUpdate(cachedData => {
+        const optimisticData = { ...cachedData };
+        const commentIndex = optimisticData.comments.findIndex(c => c.id === commentId);
+        
+        if (commentIndex !== -1) {
+          optimisticData.comments[commentIndex] = {
+            ...optimisticData.comments[commentIndex],
+            content: content,
+            lastModifiedAt: new Date().toISOString()
+          };
         }
         
-        // WebSocket 메시지 전송 - 필드 정보 추가
+        return optimisticData;
+      });
+    },
+    onSuccess: async (response, { commentId, content }) => {
+      const mentions = extractMentions(content);
+      
+      if (mentions.length > 0) {
         await parentSendMessage(
-          SOCKET_EVENTS.COMMENT_UPDATED,
+          SOCKET_EVENTS.MENTION_ADDED,
           {
-            cveId: cve.cveId,
-            field: 'comments',
-            cve: response.data
+            type: 'mention',
+            recipients: mentions,
+            content: `${currentUser.username}님이 댓글에서 회원님을 멘션했습니다.`,
+            metadata: {
+              cveId: cve.cveId,
+              commentId: commentId,
+              comment_content: content
+            }
           }
         );
-        
-        // 즉시 데이터 갱신 호출 제거
-        enqueueSnackbar('댓글이 수정되었습니다.', { variant: 'success' });
-        handleFinishEdit();
       }
-    } catch (error) {
+      
+      await parentSendMessage(
+        SOCKET_EVENTS.COMMENT_UPDATED,
+        {
+          cveId: cve.cveId,
+          field: 'comments',
+          cve: response.data
+        }
+      );
+      
+      enqueueSnackbar('댓글이 수정되었습니다.', { variant: 'success' });
+      handleFinishEdit();
+    },
+    onError: (error, { commentId, content }, context) => {
       console.error('댓글 수정 중 오류:', error);
+      
+      // 오류 발생 시 원래 데이터로 롤백
+      if (context) {
+        queryClient.setQueryData(QUERY_KEYS.CVE.detail(cve.cveId), context);
+      }
+      
       enqueueSnackbar(
         error.response?.data?.detail || '댓글 수정 중 오류가 발생했습니다.',
         { variant: 'error' }
       );
-    } finally {
+    },
+    onSettled: () => {
       setLoading(false);
     }
-  }, [cve.cveId, currentUser, parentSendMessage, enqueueSnackbar, handleFinishEdit]);
+  });
 
-  // 답글 작성 함수
-  const handleReplySubmit = useCallback(async (parentId, content) => {
-    try {
+  // 답글 작성 mutation
+  const replyCommentMutation = useMutation({
+    mutationFn: ({ parentId, content }) => api.post(`/cves/${cve.cveId}/comments`, {
+      content,
+      parent_id: parentId,
+      mentions: extractMentions(content)
+    }),
+    onMutate: async ({ parentId, content }) => {
       setLoading(true);
-      const mentions = extractMentions(content);
-      const response = await api.post(`/cves/${cve.cveId}/comments`, {
-        content,
-        parent_id: parentId,
-        mentions
+      
+      // 낙관적 업데이트 수행
+      return performOptimisticUpdate(cachedData => {
+        const tempId = `temp-${Date.now()}`;
+        const tempComment = {
+          id: tempId,
+          content: content,
+          author: currentUser.username,
+          authorName: currentUser.displayName || currentUser.username,
+          profileImage: currentUser.profileImage,
+          createdAt: new Date().toISOString(),
+          parentId: parentId,
+          isDeleted: false,
+          isOptimistic: true
+        };
+        
+        const optimisticData = { ...cachedData };
+        optimisticData.comments = [...optimisticData.comments, tempComment];
+        
+        return optimisticData;
       });
-
-      if (response) {
-        if (mentions.length > 0) {
-          await parentSendMessage(
-            SOCKET_EVENTS.MENTION_ADDED,
-            {
-              type: 'mention',
-              recipients: mentions,
-              content: `${currentUser.username}님이 답글에서 회원님을 멘션했습니다.`,
-              metadata: {
-                cveId: cve.cveId,
-                commentId: response.data.id,
-                comment_content: content
-              }
+    },
+    onSuccess: async (response, { parentId, content }) => {
+      const mentions = extractMentions(content);
+      
+      if (mentions.length > 0) {
+        await parentSendMessage(
+          SOCKET_EVENTS.MENTION_ADDED,
+          {
+            type: 'mention',
+            recipients: mentions,
+            content: `${currentUser.username}님이 답글에서 회원님을 멘션했습니다.`,
+            metadata: {
+              cveId: cve.cveId,
+              commentId: response.data.id,
+              comment_content: content
             }
-          );
-        }
-        
-        setReplyingTo(null);
-        
-        // 즉시 데이터 갱신 호출 제거
-        enqueueSnackbar('답글이 작성되었습니다.', { variant: 'success' });
+          }
+        );
       }
-    } catch (error) {
+      
+      await parentSendMessage(
+        SOCKET_EVENTS.COMMENT_ADDED,
+        {
+          cveId: cve.cveId,
+          field: 'comments',
+          cve: response.data
+        }
+      );
+      
+      setReplyingTo(null);
+      enqueueSnackbar('답글이 작성되었습니다.', { variant: 'success' });
+    },
+    onError: (error, { parentId, content }, context) => {
       console.error('Failed to submit reply:', error);
+      
+      // 오류 발생 시 원래 데이터로 롤백
+      if (context) {
+        queryClient.setQueryData(QUERY_KEYS.CVE.detail(cve.cveId), context);
+      }
+      
       enqueueSnackbar(
         error.response?.data?.detail || '답글 작성 중 오류가 발생했습니다.',
         { variant: 'error' }
       );
-    } finally {
+    },
+    onSettled: () => {
       setLoading(false);
     }
-  }, [cve.cveId, currentUser, parentSendMessage, enqueueSnackbar]);
+  });
+
+  // 댓글 작성 mutation
+  const createCommentMutation = useMutation({
+    mutationFn: (content) => api.post(`/cves/${cve.cveId}/comments`, {
+      content,
+      mentions: extractMentions(content)
+    }),
+    onSuccess: async (response, content) => {
+      const mentions = extractMentions(content);
+      
+      if (mentions.length > 0) {
+        await parentSendMessage(
+          SOCKET_EVENTS.MENTION_ADDED,
+          {
+            type: 'mention',
+            recipients: mentions,
+            content: `${currentUser.username}님이 댓글에서 회원님을 멘션했습니다.`,
+            metadata: {
+              cveId: cve.cveId,
+              commentId: response.data.id,
+              comment_content: content
+            }
+          }
+        );
+      }
+
+      await parentSendMessage(
+        SOCKET_EVENTS.COMMENT_ADDED,
+        {
+          type: SOCKET_EVENTS.COMMENT_ADDED,
+          cveId: cve.cveId,
+          field: 'comments',
+          content: '새로운 댓글이 작성되었습니다.',
+          data: response.data
+        }
+      );
+      
+      setNewComment('');
+      setMentionInputKey(prev => prev + 1);
+      enqueueSnackbar('댓글이 작성되었습니다.', { variant: 'success' });
+    },
+    onError: (error) => {
+      console.error('Failed to submit comment:', error);
+      enqueueSnackbar(
+        error.response?.data?.detail || '댓글 작성 중 오류가 발생했습니다.',
+        { variant: 'error' }
+      );
+    },
+    onSettled: () => {
+      setLoading(false);
+    }
+  });
+
+  // 댓글 삭제 핸들러
+  const handleDelete = useCallback(async (commentId, permanent = false) => {
+    deleteCommentMutation.mutate({ commentId, permanent });
+  }, [deleteCommentMutation]);
+
+  // 댓글 수정 핸들러
+  const handleEdit = useCallback(async (commentId, content) => {
+    editCommentMutation.mutate({ commentId, content });
+  }, [editCommentMutation]);
+
+  // 답글 작성 핸들러
+  const handleReplySubmit = useCallback(async (parentId, content) => {
+    replyCommentMutation.mutate({ parentId, content });
+  }, [replyCommentMutation]);
 
   // 개별 댓글 아이템 (메모이제이션)
   const CommentItem = useCallback(({ comment }) => {
@@ -303,7 +504,7 @@ const CommentsTab = React.memo(({
         {comment.children?.map(child => renderComment(child))}
       </React.Fragment>
     );
-  }, []);
+  }, [MemoizedCommentItem]);
 
   // 댓글 목록 재조회
   const updateLocalComments = useCallback(async () => {
@@ -330,71 +531,18 @@ const CommentsTab = React.memo(({
   const handleCommentChange = useCallback((e) => {
     const value = e.target.value;
     setNewComment(value);
-    // commentInputRef는 객체를 저장하는 ref이므로 값을 직접 할당하지 않음
   }, []);
 
   // 댓글 작성 함수
   const handleSubmit = useCallback(async () => {
-    try {
-      if (!newComment.trim()) {
-        enqueueSnackbar('댓글 내용을 입력해주세요.', { variant: 'warning' });
-        return;
-      }
-
-      setLoading(true);
-      const mentions = extractMentions(newComment);
-      const response = await api.post(`/cves/${cve.cveId}/comments`, {
-        content: newComment,
-        mentions
-      });
-
-      if (response) {
-        // 멘션이 있을 경우 알림 전송
-        if (mentions.length > 0) {
-          await parentSendMessage(
-            SOCKET_EVENTS.MENTION_ADDED,
-            {
-              type: 'mention',
-              recipients: mentions,
-              content: `${currentUser.username}님이 댓글에서 회원님을 멘션했습니다.`,
-              metadata: {
-                cveId: cve.cveId,
-                commentId: response.data.id,
-                comment_content: newComment
-              }
-            }
-          );
-        }
-
-        // WebSocket 메시지 전송 - 필드 정보 추가
-        await parentSendMessage(
-          SOCKET_EVENTS.COMMENT_ADDED,
-          {
-            type: SOCKET_EVENTS.COMMENT_ADDED,
-            cveId: cve.cveId,
-            field: 'comments',
-            content: '새로운 댓글이 작성되었습니다.',
-            data: response.data
-          }
-        );
-        
-        setNewComment('');
-        // commentInputRef 올바르게 초기화
-        setMentionInputKey(prev => prev + 1);
-        
-        // 즉시 데이터 갱신 호출 제거
-        enqueueSnackbar('댓글이 작성되었습니다.', { variant: 'success' });
-      }
-    } catch (error) {
-      console.error('Failed to submit comment:', error);
-      enqueueSnackbar(
-        error.response?.data?.detail || '댓글 작성 중 오류가 발생했습니다.',
-        { variant: 'error' }
-      );
-    } finally {
-      setLoading(false);
+    if (!newComment.trim()) {
+      enqueueSnackbar('댓글 내용을 입력해주세요.', { variant: 'warning' });
+      return;
     }
-  }, [cve.cveId, newComment, currentUser, parentSendMessage, enqueueSnackbar]);
+    
+    setLoading(true);
+    createCommentMutation.mutate(newComment);
+  }, [newComment, createCommentMutation, enqueueSnackbar]);
 
   // 초기 로딩
   useEffect(() => {
@@ -465,54 +613,31 @@ const CommentsTab = React.memo(({
             <Box sx={{ flex: 1 }}>
               {MemoizedMentionInput}
             </Box>
-            <Button
-              variant="contained"
-              onClick={handleSubmit}
-              disabled={!newComment.trim() || loading}
-              sx={{
-                height: '40px',  // MentionInput의 기본 높이에 맞춤
-                minWidth: '100px',
-                whiteSpace: 'nowrap'
-              }}
-            >
-              댓글 작성
-            </Button>
           </Box>
         </Box>
       )}
 
-      {(!cve.comments || cve.comments.length === 0) ? (
-        <EmptyState>
-          <CommentIcon sx={{ fontSize: 48, color: 'primary.main', opacity: 0.7 }} />
-          <Typography variant="h6" gutterBottom>
-            No Comments Available
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            이 CVE에 대한 첫 번째 댓글을 작성해보세요.
-          </Typography>
-        </EmptyState>
-      ) : (
-        <Box sx={{
-          flex: 1,
-          overflowY: 'auto',
-          px: 2,
-          py: 1,
-          '& > *:not(:last-child)': { mb: 2 }
-        }}>
-          {organizedComments.map(comment => renderComment(comment))}
-        </Box>
-      )}
+      <Box sx={{ flex: 1, overflow: 'auto', px: 2 }}>
+        {organizedComments.length > 0 ? (
+          organizedComments.map(comment => renderComment(comment))
+        ) : (
+          <EmptyState>
+            <Typography variant="body1" color="text.secondary">
+              아직 댓글이 없습니다. 첫 댓글을 작성해보세요!
+            </Typography>
+          </EmptyState>
+        )}
+      </Box>
     </Box>
   );
 }, (prevProps, nextProps) => {
-  // 댓글 목록 변경 비교 - 효율적인 방식으로 개선
-  const commentsChanged = 
-    prevProps.cve.comments?.length !== nextProps.cve.comments?.length ||
+  // 댓글 목록 변경 여부 확인
+  const commentsChanged = prevProps.cve.comments?.length !== nextProps.cve.comments?.length ||
     prevProps.cve.comments?.some((prevComment, index) => {
       const nextComment = nextProps.cve.comments?.[index];
       if (!nextComment) return true;
       
-      return prevComment.id !== nextComment.id || 
+      return prevComment.id !== nextComment.id ||
              prevComment.content !== nextComment.content ||
              prevComment.lastModifiedAt !== nextComment.lastModifiedAt ||
              prevComment.isDeleted !== nextComment.isDeleted;

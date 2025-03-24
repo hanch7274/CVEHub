@@ -6,9 +6,9 @@ from typing import Dict, Any, Optional, Union
 from datetime import datetime
 import logging
 import traceback
+import json
 from pydantic import ValidationError
-
-from app.models.cve_model import CVEModel, Reference, ModificationHistory
+from app.models.cve_model import CVEModel
 from app.models.user import User
 from app.services.cve_service import CVEService
 from app.core.dependencies import get_cve_service
@@ -347,6 +347,25 @@ async def update_cve(
         update_dict = update_data.dict(exclude_unset=True)
         logger.debug(f"업데이트 데이터 (필터링 후): {update_dict}")
         
+        # 업데이트된 필드 추적
+        updated_fields = list(update_dict.keys())
+        field_key = "general"  # 기본값
+        
+        # 특정 필드 업데이트 감지
+        if len(updated_fields) == 1:
+            if "pocs" in updated_fields:
+                field_key = "poc"
+            elif "snort_rules" in updated_fields:
+                field_key = "snortRules"
+            elif "references" in updated_fields:
+                field_key = "references"
+            elif "status" in updated_fields:
+                field_key = "status"
+            elif "title" in updated_fields:
+                field_key = "title"
+            elif "comments" in updated_fields:
+                field_key = "comments"
+        
         # 업데이트 처리
         updated_cve = await cve_service.update_cve(
             cve_id=cve_id,
@@ -362,10 +381,10 @@ async def update_cve(
                 detail=error_msg
             )
         
-        logger.info(f"CVE 업데이트 성공: {cve_id}")
+        logger.info(f"CVE 업데이트 성공: {cve_id}, 업데이트된 필드: {field_key}")
         
-        # 소켓 알림 전송
-        await send_cve_notification("update", updated_cve)
+        # 소켓 알림 전송 - 업데이트된 필드 정보 포함
+        await send_cve_notification("update", updated_cve, field_key=field_key, updated_fields=updated_fields)
         
         # 캐시 무효화
         await invalidate_cve_caches(cve_id)
@@ -570,7 +589,7 @@ async def bulk_upsert_cves(
 
 # ----- WebSocket 알림 전송 유틸리티 함수 -----
 
-async def send_cve_notification(type: str, cve: Optional[Union[CVEModel, Dict[str, Any]]] = None, cve_id: Optional[str] = None, message: Optional[str] = None):
+async def send_cve_notification(type: str, cve: Optional[Union[CVEModel, Dict[str, Any]]] = None, cve_id: Optional[str] = None, message: Optional[str] = None, field_key: Optional[str] = None, updated_fields: Optional[list] = None):
     """WebSocket을 통해 CVE 관련 알림을 전송합니다."""
     try:
         if type == "add" or type == "update":
@@ -595,6 +614,11 @@ async def send_cve_notification(type: str, cve: Optional[Union[CVEModel, Dict[st
                     "data": cve_data,
                     "timestamp": datetime.now().isoformat()
                 }
+                
+                if field_key:
+                    data["field_key"] = field_key
+                if updated_fields:
+                    data["updated_fields"] = updated_fields
                 
                 if type == "add":
                     message_type = WSMessageType.CVE_CREATED

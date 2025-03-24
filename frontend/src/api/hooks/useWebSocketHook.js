@@ -10,6 +10,7 @@ import { useQueryClient } from '@tanstack/react-query';
  * @param {Object} options - 추가 옵션
  * @param {boolean} options.optimisticUpdate - 낙관적 업데이트 사용 여부
  * @param {Array} options.queryKey - 무효화할 쿼리 키
+ * @param {Function} options.updateDataFn - 데이터 업데이트 함수 (낙관적 업데이트에 사용)
  * @returns {Function} - 메시지 전송 함수
  */
 const useWebSocketHook = (event, callback, options = {}) => {
@@ -43,14 +44,37 @@ const useWebSocketHook = (event, callback, options = {}) => {
           `이벤트 수신: ${event}, 데이터: ${JSON.stringify(data, null, 2)}`
         );
         
-        // 낙관적 업데이트 처리
+        // 낙관적 업데이트 처리 (개선된 방식)
         if (optionsRef.current.optimisticUpdate && optionsRef.current.queryKey) {
           logger.debug(
             'useWebSocketHook',
             `낙관적 업데이트 적용: ${JSON.stringify(optionsRef.current.queryKey)}`
           );
           
-          // 쿼리 무효화 및 즉시 리패치
+          // 커스텀 업데이트 함수가 제공된 경우
+          if (optionsRef.current.updateDataFn && typeof optionsRef.current.updateDataFn === 'function') {
+            try {
+              // 현재 캐시된 데이터 가져오기
+              const cachedData = queryClient.getQueryData(optionsRef.current.queryKey);
+              
+              if (cachedData) {
+                // 업데이트 함수를 사용하여 데이터 업데이트
+                const updatedData = optionsRef.current.updateDataFn(cachedData, data);
+                
+                // 캐시 직접 업데이트
+                queryClient.setQueryData(optionsRef.current.queryKey, updatedData);
+                logger.debug('useWebSocketHook', '캐시 직접 업데이트 성공');
+                
+                // 업데이트 성공 시 쿼리 무효화 스킵
+                return;
+              }
+            } catch (updateError) {
+              logger.error('useWebSocketHook', '캐시 업데이트 중 오류 발생', updateError);
+              // 오류 발생 시 기본 무효화 방식으로 폴백
+            }
+          }
+          
+          // 기본 쿼리 무효화 (캐시 업데이트 실패 또는 업데이트 함수 없음)
           queryClient.invalidateQueries(optionsRef.current.queryKey, {
             refetchActive: true,
             refetchInactive: false

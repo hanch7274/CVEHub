@@ -26,7 +26,7 @@ import MentionInput from './MentionInput';
 
 /**
  * @param {object} props
- *   - comment: { id, content, username, createdAt, isDeleted, parentId, depth }
+ *   - comment: { id, content, createdBy, createdAt, isDeleted, parentId, depth }
  *   - depth: 댓글 깊이 (대댓글이면 1,2…)
  *   - currentUsername: 현재 로그인 유저명
  *   - isAdmin: 관리자 여부
@@ -66,7 +66,7 @@ const Comment = React.memo(({
   const [showOriginal, setShowOriginal] = useState(false);
 
   const isDeleted = comment.isDeleted;
-  const isAuthor = currentUsername === comment.username;
+  const isAuthor = currentUsername === comment.createdBy;
   const canModify = isAdmin || isAuthor;
 
   // 날짜 포맷 함수를 useMemo로 최적화
@@ -268,7 +268,7 @@ const Comment = React.memo(({
         <Box sx={{ flex: 1 }}>
           {/* 작성자 + 시간 */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-            <Typography variant="subtitle2">{comment.username}</Typography>
+            <Typography variant="subtitle2">{comment.createdBy}</Typography>
             <Typography variant="caption" color="text.secondary">
               {formattedDate}
             </Typography>

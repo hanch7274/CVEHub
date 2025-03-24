@@ -18,14 +18,14 @@ class EmergingThreatsCrawlerService(BaseCrawlerService):
     
     def __init__(self):
         super().__init__("emerging_threats", "EmergingThreats Crawler")
-        self.rule_url = settings.emerging_threats_url
-        self.temp_dir = settings.temp_dir
-        self.rule_file_path = os.path.join(self.temp_dir, "emerging-all.rules")
-        self.hash_file_path = os.path.join(self.temp_dir, "emerging-all.hash")
+        self.rule_url = settings.EMERGING_THREATS_URL
+        self.data_dir = settings.DATA_DIR
+        self.rule_file_path = os.path.join(self.data_dir, "emerging-all.rules")
+        self.hash_file_path = os.path.join(self.data_dir, "emerging-all.hash")
         self.updated_cves = []  # 업데이트된 CVE 목록
         
         # 임시 디렉토리 생성
-        os.makedirs(self.temp_dir, exist_ok=True)
+        os.makedirs(self.data_dir, exist_ok=True)
     
     async def fetch_data(self) -> bool: 
         """원격 저장소에서 룰 파일 다운로드"""
@@ -219,12 +219,12 @@ class EmergingThreatsCrawlerService(BaseCrawlerService):
                     "type": "Emerging-Threats",  # Emerging-Threats로 설정
                     "rule": rule_data["rule_content"],
                     "sid": rule_data["rule_sid"],
-                    "added_by": "emerging_threats_crawler",
+                    "created_by": "emerging_threats_crawler",
                     "created_at": get_utc_now()
                 }
                 
                 # 기존 CVE 가져오기
-                cve = await self.cve_service.get_cve(cve_id)
+                cve = await self.cve_service.get_cve_detail(cve_id)
                 is_new = cve is None
                 
                 if cve:

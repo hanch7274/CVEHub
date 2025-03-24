@@ -147,26 +147,17 @@ export const parseDate = (dateValue) => {
       
       let dateObj;
       
-      // 디버깅 정보
-      console.log('parseDate 디버깅:', {
-        입력값: dateValue,
-        isMongo: mongoPattern.test(dateValue),
-        isISOWithTZ: isoWithTZPattern.test(dateValue)
-      });
       
       if (mongoPattern.test(dateValue)) {
         // MongoDB 형식이면, 백엔드에서 UTC로 저장된다는 것을 알고 있으므로 'Z' 추가
         // CVEList API에서 오는 형식
         dateObj = new Date(dateValue + 'Z');
-        console.log('MongoDB 형식 날짜 변환:', dateValue, '->', dateObj.toISOString());
       } else if (isoWithTZPattern.test(dateValue)) {
         // 이미 시간대 정보가 포함된 ISO 형식 (CVEDetail API에서 오는 형식)
         dateObj = new Date(dateValue);
-        console.log('ISO+TZ 형식 날짜 변환:', dateValue, '->', dateObj.toISOString());
       } else {
         // 기타 형식은 기본 변환 시도
         dateObj = new Date(dateValue);
-        console.log('기타 형식 날짜 변환:', dateValue, '->', dateObj.toISOString());
       }
       
       // 유효한 날짜인지 확인

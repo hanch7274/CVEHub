@@ -118,8 +118,8 @@ def get_cve_service():
 
 # 사용 예시 (API 라우터)
 @router.get("/cves/{cve_id}")
-async def get_cve(cve_id: str, cve_service: CVEService = Depends(get_cve_service)):
-    return await cve_service.get_cve(cve_id)
+async def get_cve_detail(cve_id: str, cve_service: CVEService = Depends(get_cve_service)):
+    return await cve_service.get_cve_detail(cve_id)
 ```
 
 ## 4. 프론트엔드 아키텍처

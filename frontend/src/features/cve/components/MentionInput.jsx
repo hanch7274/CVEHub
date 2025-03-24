@@ -9,8 +9,8 @@ import {
   CircularProgress,
   ClickAwayListener
 } from '@mui/material';
-import { api } from '../../../utils/auth';
 import { debounce } from 'lodash';
+import api from '../../../api/config/axios';
 
 // ResizeObserver 오류 방지 함수
 const preventResizeObserverError = () => {

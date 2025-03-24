@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from bson import ObjectId
 
 from .cve_base_schemas import Reference, PoCBase, SnortRuleBase, ModificationHistory
 
@@ -12,7 +13,7 @@ from .cve_base_schemas import Reference, PoCBase, SnortRuleBase, ModificationHis
 
 class CVEListItem(BaseModel):
     """CVE 목록 아이템 모델"""
-    id: str
+    id: Optional[str]
     cve_id: str
     title: Optional[str] = None
     status: str
@@ -21,7 +22,8 @@ class CVEListItem(BaseModel):
     severity: Optional[str] = None
     class Config:
         json_encoders = {
-            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat() if v else None
+            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat() if v else None,
+            ObjectId: lambda v: str(v)
         }
 
 class CVEListResponse(BaseModel):
@@ -33,7 +35,7 @@ class CVEListResponse(BaseModel):
     
 class CVEDetailResponse(BaseModel):
     """CVE 상세 응답 모델"""
-    id: str
+    id: Optional[str]
     cve_id: str
     title: Optional[str] = None
     description: Optional[str] = None
@@ -49,7 +51,8 @@ class CVEDetailResponse(BaseModel):
     last_modified_by: Optional[str] = None
     class Config:
         json_encoders = {
-            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat() if v else None
+            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat() if v else None,
+            ObjectId: lambda v: str(v)
         }
     
 class CVEOperationResponse(BaseModel):

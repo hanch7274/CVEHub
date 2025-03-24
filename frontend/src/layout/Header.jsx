@@ -17,17 +17,13 @@ import { useTheme } from '@mui/material/styles';
 import LogoutIcon from '@mui/icons-material/Logout';
 import SettingsIcon from '@mui/icons-material/Settings';
 import PersonIcon from '@mui/icons-material/Person';
-import SignalWifi4BarIcon from '@mui/icons-material/SignalWifi4Bar';
-import SignalWifi3BarIcon from '@mui/icons-material/SignalWifi3Bar';
-import SignalWifiOffIcon from '@mui/icons-material/SignalWifiOff';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import { useAuth } from '../contexts/AuthContext';
 import { getAnimalEmoji } from '../utils/avatarUtils';
 import NotificationBell from '../features/notification/NotificationBell';
 import { useSocketIO } from '../contexts/SocketIOContext';
 import { useSnackbar } from 'notistack';
 import { useNavigate } from 'react-router-dom';
-import { SignalWifiStatusbar4Bar, SignalWifiStatusbarConnectedNoInternet4, SignalWifiOff } from '@mui/icons-material';
+import { SignalWifiStatusbar4Bar, SignalWifiOff } from '@mui/icons-material';
 
 const Header = ({ onOpenCVEDetail }) => {
   const theme = useTheme();

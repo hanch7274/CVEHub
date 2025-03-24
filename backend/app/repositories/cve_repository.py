@@ -46,9 +46,14 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
                 for field, direction in sort:
                     sort_list.append((field, direction))
             
-            # 모든 프로젝션에 _id 필드를 포함시킴
-            if not projection.get("_id", None):
-                projection["_id"] = 1
+            # _id 필드는 제외하고 cve_id 필드를 포함시킴
+            if "_id" in projection and projection["_id"] == 1:
+                # _id 필드 제외
+                projection.pop("_id")
+            
+            # cve_id 필드가 없으면 추가
+            if "cve_id" not in projection:
+                projection["cve_id"] = 1
                 
             # 모터 컬렉션을 사용하여 쿼리 실행
             cursor = collection.find(query, projection=projection)
@@ -68,11 +73,9 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
             # 결과 반환 - 응답 모델 요구사항에 맞게 데이터 가공
             result = []
             for doc in result_docs:
-                # _id를 문자열로 변환하고 id 필드로 복제
+                # _id 필드 제거 (MongoDB가 자동으로 추가한 경우)
                 if '_id' in doc:
-                    if isinstance(doc['_id'], ObjectId):
-                        doc['_id'] = str(doc['_id'])
-                    doc['id'] = doc['_id']  # 'id' 필드 추가 (이게 중요!)
+                    doc.pop('_id')
                 
                 # 날짜 필드 디버깅 - 특정 CVE ID에 대해서만 로그 출력
                 cve_id = doc.get('cve_id', '알 수 없음')
@@ -109,14 +112,38 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
     async def find_by_cve_id(self, cve_id: str) -> Optional[CVEModel]:
         """CVE ID 문자열로 CVE를 조회합니다 (대소문자 구분 없음)."""
         try:
-            import re
-            pattern = re.compile(f"^{cve_id}$", re.IGNORECASE)
-            cve = await self.collection.find_one({"cve_id": pattern})
+            logger.info(f"CVE ID 조회 시작: {cve_id}")
+            
+            # 1. 정확히 일치하는 경우 먼저 시도
+            cve = await self.collection.find_one({"cve_id": cve_id})
             if cve:
-                return CVEModel(**cve)
+                logger.info(f"정확히 일치하는 CVE 찾음: {cve_id}")
+                try:
+                    return CVEModel(**cve)
+                except Exception as validation_error:
+                    logger.error(f"CVE 모델 변환 중 검증 오류 (정확히 일치): {str(validation_error)}")
+                    # 오류 세부 정보 로깅
+                    for error in getattr(validation_error, 'errors', []):
+                        logger.error(f"검증 오류 상세: {error}")
+                
+            # 2. 대소문자 구분 없이 검색 (MongoDB $regex 사용)
+            logger.info(f"대소문자 구분 없는 정규식 검색 시도: ^{cve_id}$")
+            cve = await self.collection.find_one({"cve_id": {"$regex": f"^{cve_id}$", "$options": "i"}})
+            if cve:
+                logger.info(f"정규식으로 CVE 찾음: {cve.get('cve_id', 'unknown')}")
+                try:
+                    return CVEModel(**cve)
+                except Exception as validation_error:
+                    logger.error(f"CVE 모델 변환 중 검증 오류 (정규식 일치): {str(validation_error)}")
+                    # 오류 세부 정보 로깅
+                    for error in getattr(validation_error, 'errors', []):
+                        logger.error(f"검증 오류 상세: {error}")
+            
+            logger.warning(f"CVE를 찾을 수 없음: {cve_id}")
             return None
         except Exception as e:
             logger.error(f"CVE ID 조회 중 오류: {str(e)}")
+            logger.error(traceback.format_exc())
             return None
 
     async def get_by_status(self, status: str, skip: int = 0, limit: int = 10) -> List[CVEModel]:
@@ -149,15 +176,83 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
         """CVE의 댓글을 삭제합니다."""
         cve = await self.find_by_cve_id(cve_id)
         if cve and cve.comments:
-            if permanent:
-                cve.comments = [c for c in cve.comments if str(c.id) != comment_id]
-            else:
-                for comment in cve.comments:
-                    if str(comment.id) == comment_id:
+            for i, comment in enumerate(cve.comments):
+                if str(comment.id) == comment_id:
+                    if permanent:
+                        # 완전 삭제
+                        cve.comments.pop(i)
+                    else:
+                        # 소프트 삭제 (is_deleted 플래그만 설정)
                         comment.is_deleted = True
-                        break
-            await cve.save()
+                        comment.last_modified_at = datetime.now()
+                    await cve.save()
+                    break
         return cve
+        
+    async def update_by_cve_id(self, cve_id: str, update_data: dict) -> Optional[CVEModel]:
+        """
+        CVE ID를 사용하여 CVE를 업데이트합니다.
+        
+        Args:
+            cve_id: 업데이트할 CVE의 CVE ID (예: "CVE-2023-1234")
+            update_data: 업데이트할 데이터
+            
+        Returns:
+            Optional[CVEModel]: 업데이트된 CVE 모델 또는 None
+        """
+        try:
+            # CVE ID로 문서 찾기
+            cve = await self.find_by_cve_id(cve_id)
+            if not cve:
+                logger.warning(f"업데이트할 CVE를 찾을 수 없음: {cve_id}")
+                return None
+                
+            # PoC 필드 자동 추가 처리
+            if 'pocs' in update_data and update_data['pocs']:
+                for poc in update_data['pocs']:
+                    # created_by 필드가 없으면 추가
+                    if 'created_by' not in poc and 'added_by' not in poc:
+                        poc['created_by'] = update_data.get('last_modified_by', 'system')
+                    
+                    # last_modified_by 필드가 없으면 추가
+                    if 'last_modified_by' not in poc:
+                        poc['last_modified_by'] = update_data.get('last_modified_by', 'system')
+            
+            # SnortRule 필드 자동 추가 처리
+            if 'snort_rules' in update_data and update_data['snort_rules']:
+                for rule in update_data['snort_rules']:
+                    # created_by 필드가 없으면 추가
+                    if 'created_by' not in rule and 'added_by' not in rule:
+                        rule['created_by'] = update_data.get('last_modified_by', 'system')
+                    
+                    # last_modified_by 필드가 없으면 추가
+                    if 'last_modified_by' not in rule:
+                        rule['last_modified_by'] = update_data.get('last_modified_by', 'system')
+            
+            # Reference 필드 자동 추가 처리
+            if 'references' in update_data and update_data['references']:
+                for ref in update_data['references']:
+                    # created_by 필드가 없으면 추가
+                    if 'created_by' not in ref and 'added_by' not in ref:
+                        ref['created_by'] = update_data.get('last_modified_by', 'system')
+                    
+                    # last_modified_by 필드가 없으면 추가
+                    if 'last_modified_by' not in ref:
+                        ref['last_modified_by'] = update_data.get('last_modified_by', 'system')
+                
+            # 업데이트 데이터 적용
+            for key, value in update_data.items():
+                setattr(cve, key, value)
+                
+            # 변경사항 저장
+            await cve.save()
+            
+            # 업데이트된 CVE 반환
+            return cve
+        except Exception as e:
+            logger.error(f"CVE 업데이트 중 오류 발생: {str(e)}")
+            logger.error(traceback.format_exc())
+            return None
 
     async def add_poc(self, cve_id: str, poc_data: dict) -> Optional[CVEModel]:
         """CVE에 PoC를 추가합니다."""
@@ -332,3 +427,38 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
             except:
                 pass
             raise 
+
+    async def delete_snort_rule(self, cve_id: str, rule_id: str) -> Optional[CVEModel]:
+        """CVE의 Snort Rule을 삭제합니다."""
+        cve = await self.find_by_cve_id(cve_id)
+        if cve and cve.snort_rules:
+            cve.snort_rules = [rule for rule in cve.snort_rules if str(rule.id) != rule_id]
+            await cve.save()
+        return cve
+        
+    async def delete_by_cve_id(self, cve_id: str) -> bool:
+        """
+        CVE ID를 사용하여 CVE를 삭제합니다.
+        
+        Args:
+            cve_id: 삭제할 CVE의 CVE ID (예: "CVE-2023-1234")
+            
+        Returns:
+            bool: 삭제 성공 여부
+        """
+        try:
+            # CVE ID로 문서 찾기
+            cve = await self.find_by_cve_id(cve_id)
+            if not cve:
+                logger.warning(f"삭제할 CVE를 찾을 수 없음: {cve_id}")
+                return False
+                
+            # 문서 삭제
+            await cve.delete()
+            
+            # 삭제 성공
+            return True
+        except Exception as e:
+            logger.error(f"CVE 삭제 중 오류 발생: {str(e)}")
+            logger.error(traceback.format_exc())
+            return False

@@ -230,7 +230,7 @@ class NucleiCrawlerService(BaseCrawlerService):
                         content_hash = hashlib.md5(f"{cve_id}_{datetime.now().isoformat()}".encode('utf-8')).hexdigest()
                     
                     # 기존 CVE 조회
-                    existing_cve = await cve_service.get_cve(cve_id)
+                    existing_cve = await cve_service.get_cve_detail(cve_id)
                     
                     if existing_cve:
                         # 기존 CVE의 해시 확인

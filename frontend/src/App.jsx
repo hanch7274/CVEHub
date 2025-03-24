@@ -16,7 +16,7 @@ import { SnackbarProvider } from 'notistack';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import theme from './theme';
-import { injectErrorHandler, injectQueryClient } from './utils/auth';
+import { injectErrorHandler, injectQueryClient } from './services/authService';
 import { ErrorProvider, useError } from './contexts/ErrorContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';

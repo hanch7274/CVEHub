@@ -46,7 +46,7 @@ export const useCreateCVE = (options = {}) => {
       // CVE 목록 쿼리 무효화 (자동으로 다시 가져옴)
       queryClient.invalidateQueries({ 
         queryKey: QUERY_KEYS.CVE.lists(),
-        refetchActive: true
+        refetchType: 'active'
       });
       
       // 기본 성공 메시지 (options에 onSuccess가 없을 경우에만)
@@ -139,11 +139,11 @@ export const useUpdateCVE = (options = {}) => {
       // CVE 목록 및 상세 쿼리 무효화
       queryClient.invalidateQueries({ 
         queryKey: ['cves'],
-        refetchActive: true
+        refetchType: 'active'
       });
       queryClient.invalidateQueries({ 
         queryKey: ['cve', cveId],
-        refetchActive: true
+        refetchType: 'active'
       });
       
       // 기본 성공 메시지 (options에 onSuccess가 없을 경우에만)
@@ -221,11 +221,11 @@ export const useDeleteCVE = (options = {}) => {
       // CVE 목록 및 상세 쿼리 무효화
       queryClient.invalidateQueries({ 
         queryKey: ['cves'],
-        refetchActive: true
+        refetchType: 'active'
       });
       queryClient.invalidateQueries({ 
         queryKey: ['cve', cveId],
-        refetchActive: true
+        refetchType: 'active'
       });
       
       // 기본 성공 메시지 (options에 onSuccess가 없을 경우에만)
@@ -343,7 +343,7 @@ export const useUpdateCVEField = (options = {}, customService = cveService) => {
         logger.info('useUpdateCVEField', '목록 쿼리 무효화', { reason: '중요 필드 변경' });
         queryClient.invalidateQueries({ 
           queryKey: QUERY_KEYS.CVE.lists(),
-          refetchActive: true
+          refetchType: 'active'
         });
       }
       
@@ -378,10 +378,10 @@ export const useUpdateCVEStatus = (options = {}, customService = cveService) => 
       // CVE 목록 쿼리 무효화
       queryClient.invalidateQueries({ 
         queryKey: QUERY_KEYS.CVE.lists(),
-        refetchActive: true
+        refetchType: 'active'
       });
       // 해당 CVE 상세 쿼리 무효화
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(cveId) });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(cveId), refetchType: 'active' });
       
       // 기본 성공 메시지 (options에 onSuccess가 없을 경우에만)
       if (!optionsOnSuccess) {
@@ -432,22 +432,22 @@ export const handleRealtimeCVEUpdate = (queryClient) => (event) => {
     case SOCKET_EVENTS.CVE_CREATED:
       queryClient.invalidateQueries({ 
         queryKey: QUERY_KEYS.CVE.lists(),
-        refetchActive: true
+        refetchType: 'active'
       });
       break;
     case SOCKET_EVENTS.CVE_UPDATED:
       queryClient.invalidateQueries({ 
         queryKey: QUERY_KEYS.CVE.lists(),
-        refetchActive: true
+        refetchType: 'active'
       });
       if (cveId) {
-        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(cveId) });
+        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(cveId), refetchType: 'active' });
       }
       break;
     case SOCKET_EVENTS.CVE_DELETED:
       queryClient.invalidateQueries({ 
         queryKey: QUERY_KEYS.CVE.lists(),
-        refetchActive: true
+        refetchType: 'active'
       });
       if (cveId) {
         queryClient.removeQueries({ queryKey: QUERY_KEYS.CVE.detail(cveId) });
@@ -457,10 +457,10 @@ export const handleRealtimeCVEUpdate = (queryClient) => (event) => {
       // 캐시 무효화 이벤트 처리
       queryClient.invalidateQueries({ 
         queryKey: QUERY_KEYS.CVE.lists(),
-        refetchActive: true
+        refetchType: 'active'
       });
       if (cveId) {
-        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(cveId) });
+        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(cveId), refetchType: 'active' });
       } else {
         // 특정 CVE ID가 없는 경우 전체 CVE 관련 쿼리 무효화
         queryClient.invalidateQueries({ 

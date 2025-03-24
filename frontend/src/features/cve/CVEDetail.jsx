@@ -413,30 +413,125 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
   // 필드 업데이트 뮤테이션
   const { mutate: updateCVEField } = useUpdateCVEField();
 
-  // 필드 업데이트 처리 - React Query 활용
+  // 필드 업데이트 처리 - 낙관적 업데이트 적용
   const handleFieldUpdate = useCallback((field, value) => {
     if (!propsCveId || !field) return;
+    
+    // 필드 이름 매핑 (프론트엔드 camelCase -> 백엔드 snake_case)
+    const fieldMapping = {
+      title: 'title',
+      description: 'description',
+      status: 'status',
+      severity: 'severity',
+      cvssScore: 'cvss_score',
+      cvssVector: 'cvss_vector',
+      affectedSystems: 'affected_systems',
+      poc: 'pocs',
+      snortRules: 'snort_rules',
+      references: 'references'
+    };
+    
+    // 백엔드 필드 이름
+    const backendField = fieldMapping[field] || field;
+    
+    // 업데이트할 데이터 준비
+    const updateData = { [backendField]: value };
+    
+    // 현재 캐시된 데이터 가져오기
+    const cachedData = queryClient.getQueryData(QUERY_KEYS.CVE.detail(propsCveId));
+    
+    // 낙관적 업데이트를 위한 새 데이터 생성
+    if (cachedData) {
+      // 캐시 데이터 복사
+      const optimisticData = { ...cachedData };
+      
+      // 프론트엔드 필드 이름으로 업데이트
+      optimisticData[field] = value;
+      
+      // 캐시 직접 업데이트
+      queryClient.setQueryData(QUERY_KEYS.CVE.detail(propsCveId), optimisticData);
+      
+      // 리프레시 트리거 업데이트
+      const currentTrigger = refreshTriggersRef.current[field] || 0;
+      setRefreshTriggers(prev => {
+        const newTriggers = { ...prev };
+        newTriggers[field] = currentTrigger + 1;
+        refreshTriggersRef.current = newTriggers;
+        return newTriggers;
+      });
+      
+      // 탭 카운트 업데이트
+      if (['poc', 'snortRules', 'references'].includes(field) && Array.isArray(value)) {
+        updateTabCounts({ ...cachedData, [field]: value });
+      }
+    }
+    
     setLoading(true);
+    
+    // 서버에 업데이트 요청
     updateCVEField(
-      { cveId: propsCveId, fieldName: field, fieldValue: value },
+      { cveId: propsCveId, fieldName: backendField, fieldValue: value },
       {
         onSuccess: () => {
           logger.info('CVEDetail', `필드 업데이트 성공: ${field}`);
-          queryClient.invalidateQueries({
-            predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === QUERY_KEYS.CVE.list
-          });
+          
+          // 목록 쿼리 무효화 (필요한 경우)
+          if (['title', 'status', 'severity', 'cvssScore'].includes(field)) {
+            queryClient.invalidateQueries({
+              predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === QUERY_KEYS.CVE.list
+            });
+          }
+          
+          // 성공 알림
+          if (!snackbarShown.current) {
+            snackbarShown.current = true;
+            
+            // 필드 이름을 사용자 친화적으로 변환
+            let fieldName;
+            switch(field) {
+              case 'all': fieldName = '전체'; break;
+              case 'poc': fieldName = 'PoC'; break;
+              case 'snortRules': fieldName = 'Snort Rules'; break;
+              case 'references': fieldName = '참고자료'; break;
+              case 'comments': fieldName = '댓글'; break;
+              case 'status': fieldName = '상태'; break;
+              case 'title': fieldName = '제목'; break;
+              case 'description': fieldName = '설명'; break;
+              default: fieldName = field;
+            }
+            
+            // 알림 메시지 설정
+            const message = `${fieldName} 데이터를 업데이트했습니다`;
+            
+            // 스낵바 표시
+            enqueueSnackbar(message, {
+              variant: 'success',
+              autoHideDuration: 2000,
+              onClose: () => { snackbarShown.current = false; }
+            });
+          }
+          
           setLoading(false);
         },
         onError: (err) => {
+          logger.error('CVEDetail', `필드 업데이트 실패: ${field}`, { error: err.message });
+          
+          // 오류 발생 시 원래 데이터로 롤백
+          if (cachedData) {
+            queryClient.setQueryData(QUERY_KEYS.CVE.detail(propsCveId), cachedData);
+          }
+          
+          // 오류 알림
           enqueueSnackbar(`업데이트 실패: ${err.message || '알 수 없는 오류'}`, {
             variant: 'error',
             anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
           });
+          
           setLoading(false);
         }
       }
     );
-  }, [propsCveId, updateCVEField, queryClient, enqueueSnackbar, setLoading]);
+  }, [propsCveId, updateCVEField, queryClient, enqueueSnackbar, setLoading, updateTabCounts]);
 
   // 타이틀 업데이트 핸들러
   const handleTitleUpdate = useCallback(async (newTitle) => {
@@ -450,7 +545,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     handleFieldUpdate('description', newDescription);
   }, [cveData, propsCveId, handleFieldUpdate]);
 
-  // 웹소켓 메시지 핸들러 - 간소화
+  // 웹소켓 메시지 핸들러 - 최적화
   const handleWebSocketUpdate = useCallback((data) => {
     logger.info('CVEDetail', '웹소켓 업데이트 수신', data);
     if (!data) return;
@@ -478,11 +573,53 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       return newTriggers;
     });
     
-    // React Query 캐시 무효화를 통한 데이터 갱신 - 로딩 중이 아닐 때만 실행
+    // 캐시 직접 업데이트 (쿼리 무효화 대신)
     if (fieldKey !== 'comments' && !loading && !isQueryLoading) {
-      logger.info('CVEDetail', `${fieldKey} 필드 업데이트로 인한 캐시 무효화`);
-      // 캐시 무효화만 수행하고 React Query가 자동으로 refetch하도록 함
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(propsCveId) });
+      try {
+        // 현재 캐시된 데이터 가져오기
+        const cachedData = queryClient.getQueryData(QUERY_KEYS.CVE.detail(propsCveId));
+        
+        if (cachedData) {
+          logger.info('CVEDetail', `${fieldKey} 필드 업데이트를 위한 캐시 직접 업데이트`);
+          
+          // 데이터에 업데이트된 필드 적용
+          let updatedData = { ...cachedData };
+          
+          // 업데이트할 데이터가 있는 경우
+          if (data.updatedData) {
+            if (fieldKey === 'all') {
+              // 전체 데이터 업데이트
+              updatedData = { ...updatedData, ...data.updatedData };
+            } else if (fieldKey === 'poc' && data.updatedData.pocs) {
+              // PoC 업데이트
+              updatedData.pocs = data.updatedData.pocs;
+            } else if (fieldKey === 'snortRules' && data.updatedData.snortRules) {
+              // Snort Rules 업데이트
+              updatedData.snortRules = data.updatedData.snortRules;
+            } else if (fieldKey === 'references' && data.updatedData.references) {
+              // 참고자료 업데이트
+              updatedData.references = data.updatedData.references;
+            } else if (fieldKey === 'status' && data.updatedData.status) {
+              // 상태 업데이트
+              updatedData.status = data.updatedData.status;
+            } else if (fieldKey === 'title' && data.updatedData.title) {
+              // 제목 업데이트
+              updatedData.title = data.updatedData.title;
+            }
+          }
+          
+          // 캐시 직접 업데이트
+          queryClient.setQueryData(QUERY_KEYS.CVE.detail(propsCveId), updatedData);
+        } else {
+          // 캐시된 데이터가 없는 경우에만 쿼리 무효화
+          logger.info('CVEDetail', `캐시된 데이터 없음, 쿼리 무효화 수행: ${fieldKey}`);
+          queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(propsCveId) });
+        }
+      } catch (error) {
+        logger.error('CVEDetail', '캐시 업데이트 중 오류 발생', { error: error.message });
+        // 오류 발생 시 안전하게 쿼리 무효화
+        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(propsCveId) });
+      }
     }
     
     // 리프레시 알림
@@ -514,7 +651,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     setLoading(false);
   }, [enqueueSnackbar, propsCveId, queryClient, loading, isQueryLoading]);
 
-  // Socket.IO 업데이트 리스너 - 간소화
+  // Socket.IO 업데이트 리스너 - 최적화
   useEffect(() => {
     if (!propsCveId || !open) return;
     
@@ -526,10 +663,113 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       return;
     }
     
+    // 캐시 업데이트 함수 - 낙관적 업데이트에 사용
+    const updateCacheData = (cachedData, eventData) => {
+      if (!cachedData || !eventData || !eventData.data) {
+        return cachedData;
+      }
+      
+      logger.info('CVEDetail', '캐시 데이터 직접 업데이트', { 
+        field: eventData.field_key || 'general',
+        updateId: eventData.updateId || Date.now()
+      });
+      
+      const fieldKey = eventData.field_key || 'general';
+      const updatedData = { ...cachedData };
+      
+      // 업데이트할 데이터가 있는 경우
+      if (eventData.data) {
+        if (fieldKey === 'all') {
+          // 전체 데이터 업데이트
+          Object.assign(updatedData, eventData.data);
+        } else if (fieldKey === 'poc' && eventData.data.pocs) {
+          // PoC 업데이트
+          updatedData.pocs = eventData.data.pocs;
+        } else if (fieldKey === 'snortRules' && eventData.data.snortRules) {
+          // Snort Rules 업데이트
+          updatedData.snortRules = eventData.data.snortRules;
+        } else if (fieldKey === 'references' && eventData.data.references) {
+          // 참고자료 업데이트
+          updatedData.references = eventData.data.references;
+        } else if (fieldKey === 'status' && eventData.data.status) {
+          // 상태 업데이트
+          updatedData.status = eventData.data.status;
+        } else if (fieldKey === 'title' && eventData.data.title) {
+          // 제목 업데이트
+          updatedData.title = eventData.data.title;
+        } else if (fieldKey === 'description' && eventData.data.description) {
+          // 설명 업데이트
+          updatedData.description = eventData.data.description;
+        }
+      }
+      
+      // refreshTriggers 업데이트
+      const currentTrigger = refreshTriggersRef.current[fieldKey] || 0;
+      setRefreshTriggers(prev => {
+        const newTriggers = { ...prev };
+        newTriggers[fieldKey] = currentTrigger + 1;
+        refreshTriggersRef.current = newTriggers;
+        return newTriggers;
+      });
+      
+      // 업데이트 ID 저장
+      const updateId = eventData.updateId || Date.now();
+      lastProcessedUpdateIdRef.current[fieldKey] = updateId;
+      
+      // 리프레시 알림 표시
+      if (!snackbarShown.current) {
+        snackbarShown.current = true;
+        
+        // 필드 이름을 사용자 친화적으로 변환
+        let fieldName;
+        switch(fieldKey) {
+          case 'all': fieldName = '전체'; break;
+          case 'poc': fieldName = 'PoC'; break;
+          case 'snortRules': fieldName = 'Snort Rules'; break;
+          case 'references': fieldName = '참고자료'; break;
+          case 'comments': fieldName = '댓글'; break;
+          case 'status': fieldName = '상태'; break;
+          case 'title': fieldName = '제목'; break;
+          case 'description': fieldName = '설명'; break;
+          default: fieldName = fieldKey;
+        }
+        
+        // 스낵바 메시지 표시
+        enqueueSnackbar(`${fieldName} 필드가 성공적으로 업데이트되었습니다`, {
+          variant: 'success',
+          autoHideDuration: 2000,
+          onClose: () => { snackbarShown.current = false; }
+        });
+      }
+      
+      return updatedData;
+    };
+    
+    // 웹소켓 이벤트 핸들러
     const handleCVEUpdated = (data) => {
       if (data && (data.cveId === propsCveId || data.id === propsCveId)) {
         logger.info('CVEDetail', 'CVE 업데이트 이벤트 수신', data);
-        handleWebSocketUpdate(data);
+        
+        // 이미 처리된 업데이트인지 확인
+        const fieldKey = data.field_key || 'general';
+        const updateId = data.updateId || Date.now();
+        
+        if (lastProcessedUpdateIdRef.current[fieldKey] === updateId) {
+          logger.info('CVEDetail', `중복 업데이트 무시: ${fieldKey}, ID: ${updateId}`);
+          return;
+        }
+        
+        // 댓글 필드는 별도로 처리
+        if (fieldKey === 'comments') {
+          // 댓글은 별도의 쿼리로 처리되므로 여기서는 무시
+          return;
+        }
+        
+        // 로딩 중이 아닐 때만 처리
+        if (!loading && !isQueryLoading) {
+          // 웹소켓 업데이트 처리 - 낙관적 업데이트 적용
+          handleWebSocketUpdate(data);
+        }
       }
     };
     
@@ -550,9 +790,9 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       });
       return () => {}; // 오류 발생 시 빈 클린업 함수 반환
     }
-  }, [propsCveId, open, socket, handleWebSocketUpdate]);
-
-  // CVE 구독 처리
+  }, [propsCveId, open, socket, handleWebSocketUpdate, loading, isQueryLoading]);
+  
+  // 구독 기능 (Socket.IO)
   useEffect(() => {
     if (!propsCveId || !open) return;
 

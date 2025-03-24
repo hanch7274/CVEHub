@@ -25,7 +25,7 @@ class SnortRuleBase(BaseModel):
     type: str
     description: Optional[str] = None
     created_at: Optional[datetime] = None
-    added_by: Optional[str] = None
+    created_by: Optional[str] = None
     last_modified_at: Optional[datetime] = None
     last_modified_by: Optional[str] = None
     

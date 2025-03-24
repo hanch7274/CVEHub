@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # Redis settings
     REDIS_URL: str = "redis://redis:6379/0"
 
+    # Crawler settings
+    NUCLEI_TEMPLATES_URL: str = "https://github.com/projectdiscovery/nuclei-templates.git"
+    EMERGING_THREATS_URL: str = "https://rules.emergingthreats.net/open/snort-2.9.0/rules/emerging-all.rules"
+    TEMP_DIR: str = "/tmp/cvehub"
+
     class Config:
         env_prefix = ""
         env_file = ".env"

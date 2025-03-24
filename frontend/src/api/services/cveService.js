@@ -2,7 +2,7 @@
 import api from '../config/axios';
 import { CASE_CONVERSION_CONFIG } from '../../config';
 import logger from '../../utils/logging';
-import { camelToSnake } from '../../utils/caseConverter';
+import { camelToSnake, snakeToCamel } from '../../utils/caseConverter';
 
 // 변환에서 제외할 필드 목록
 const EXCLUDED_FIELDS = CASE_CONVERSION_CONFIG.EXCLUDED_FIELDS;
@@ -30,7 +30,11 @@ class CVEService {
    */
   async getCVEs(filters = {}) {
     try {
-      logger.info('cveService', '목록 조회 요청', filters);
+      logger.info('cveService', '목록 조회 요청', {
+        page: filters.page,
+        limit: filters.rowsPerPage,
+        search: filters.search
+      });
       
       // 백엔드 API와 호환되는 파라미터로 변환
       const params = {};
@@ -48,7 +52,6 @@ class CVEService {
       if (filters.search) {
         // 검색어는 'search' 파라미터로 전달 (백엔드 API에 맞춤)
         params.search = filters.search;
-        logger.info('cveService', '검색어 추가', { search: filters.search });
       }
       
       // 정렬 처리
@@ -69,8 +72,6 @@ class CVEService {
       
       // API 엔드포인트 선택 (/cves/list 사용)
       const endpoint = '/cves/list';
-      
-      logger.info('cveService', '변환된 API 요청 파라미터', params);
       
       // 캐시 우회를 위한 헤더 추가 (검색어가 있는 경우)
       const headers = filters.search ? {
@@ -100,7 +101,7 @@ class CVEService {
       
       return result;
     } catch (error) {
-      logger.error('cveService', '목록 조회 실패', { error: error.message, filters });
+      logger.error('cveService', '목록 조회 실패', { error: error.message });
       throw this._handleError(error, '목록 조회 실패');
     }
   }
@@ -126,16 +127,14 @@ class CVEService {
       
       logger.info('cveService', 'CVE 상세 정보 요청', { 
         cveId,
-        bypassCache: !!options.bypassCache,
-        headers
+        bypassCache: !!options.bypassCache
       });
       
       const response = await api.get(`/cves/${cveId}`, { headers });
       
       logger.info('cveService', 'CVE 상세 정보 응답', {
         cveId,
-        status: response.status,
-        dataSize: JSON.stringify(response.data).length
+        status: response.status
       });
       
       // 데이터는 이미 axios 인터셉터에서 처리됨
@@ -146,8 +145,7 @@ class CVEService {
       logger.error('cveService', 'CVE 상세 정보 조회 실패', { 
         cveId, 
         error: error.message,
-        status: error.response?.status,
-        data: error.response?.data
+        status: error.response?.status
       });
       
       throw this._handleError(error, '상세 정보 조회 실패');
@@ -203,7 +201,7 @@ class CVEService {
       const response = await api.post(url, cveData, requestOptions);
       
       // 응답 로깅
-      logger.info('cveService.createCVE', '생성 성공', { 
+      logger.info('cveService', '생성 성공', { 
         id: response.data?.id,
         status: response.status
       });
@@ -211,14 +209,13 @@ class CVEService {
       return response.data;
     } catch (error) {
       // 에러 처리 강화
-      logger.error('cveService.createCVE', '생성 실패', { 
+      logger.error('cveService', '생성 실패', { 
         error: error?.message,
-        status: error?.response?.status,
-        code: error?.code
+        status: error?.response?.status
       });
       
       // 에러 객체 구조 확인
-      const statusCode = error?.response?.status || error?.code || 500;
+      const statusCode = error?.response?.status || 500;
       
       // 409 에러 (중복 CVE) 처리
       if (statusCode === 409) {
@@ -287,7 +284,7 @@ class CVEService {
     }
 
     try {
-      logger.info('cveService', 'CVE 업데이트 요청', { cveId, data: updateData });
+      logger.info('cveService', 'CVE 업데이트 요청', { cveId });
       
       // 요청 옵션 설정
       const requestOptions = {
@@ -300,18 +297,15 @@ class CVEService {
       
       logger.info('cveService', 'CVE 업데이트 성공', { 
         cveId,
-        status: response.status,
-        statusText: response.statusText
+        status: response.status
       });
       
       return response.data;
     } catch (error) {
       logger.error('cveService', 'CVE 업데이트 실패', { 
         cveId, 
-        data: updateData,
         error: error.message,
-        status: error.response?.status,
-        statusText: error.response?.statusText
+        status: error.response?.status
       });
       
       // 에러 객체 강화 (config 정보 보존)
@@ -351,8 +345,7 @@ class CVEService {
     try {
       logger.info('cveService', 'CVE 필드 업데이트 요청', { 
         cveId, 
-        field: fieldName, 
-        value: fieldValue 
+        field: fieldName
       });
       
       // 업데이트할 데이터 구성
@@ -360,7 +353,7 @@ class CVEService {
         [fieldName]: fieldValue
       };
       
-      // 요청 옵션 설정
+      // 요청 옵션 설정 (options가 undefined여도 안전하게 처리)
       const requestOptions = {
         ...(options || {}),
         skipAuthRefresh: options?.skipAuthRefresh ?? false
@@ -372,8 +365,7 @@ class CVEService {
       logger.info('cveService', 'CVE 필드 업데이트 성공', { 
         cveId,
         field: fieldName,
-        status: response.status,
-        statusText: response.statusText
+        status: response.status
       });
       
       return response.data;
@@ -381,20 +373,19 @@ class CVEService {
       logger.error('cveService', 'CVE 필드 업데이트 실패', { 
         cveId, 
         field: fieldName,
-        value: fieldValue,
         error: error.message,
-        status: error.response?.status,
-        statusText: error.response?.statusText
+        status: error.response?.status
       });
       
-      // 에러 객체 강화 (config 정보 보존)
+      // 에러 객체 강화 (config 정보 보존, options가 undefined여도 안전하게 처리)
+      const safeOptions = options || {};
       const enhancedError = {
         ...error,
         code: error?.response?.status || 500,
         message: error?.response?.data?.detail || error?.response?.data?.message || error?.message || `CVE #${cveId} 필드 업데이트 실패`,
         config: {
           ...(error?.config || {}),
-          skipAuthRefresh: options?.skipAuthRefresh ?? false
+          skipAuthRefresh: safeOptions.skipAuthRefresh ?? false
         }
       };
       
@@ -420,62 +411,15 @@ class CVEService {
     }
 
     try {
-      logger.info('cveService', 'CVE 상태 업데이트 요청', { cveId, status });
+      logger.info('cveService', 'CVE 상태 업데이트 요청', { cveId });
       
-      // MongoDB ObjectId 형식인지 확인
-      const isObjectId = cveId.length === 24 && /^[0-9a-f]+$/.test(cveId);
-      
-      // CVE ID 형식인지 확인 (CVE-YYYY-NNNNN)
-      const isCveIdFormat = /^CVE-\d{4}-\d+$/.test(cveId);
-      
-      // 실제 사용할 ID 결정
-      let actualId = cveId;
-      let mongoId = null;
-      
-      // CVE ID 형식이고 MongoDB ObjectId가 아닌 경우, 먼저 CVE 상세 정보를 조회하여 MongoDB ObjectId를 얻습니다.
-      if (isCveIdFormat && !isObjectId) {
-        try {
-          // CVE 상세 정보 조회
-          const detailResponse = await api.get(`/cves/${cveId}`);
-          if (detailResponse.data && detailResponse.data.id) {
-            mongoId = detailResponse.data.id;
-            logger.debug('cveService', 'CVE ID를 MongoDB ObjectId로 변환', { 
-              cveId, 
-              mongoId 
-            });
-          }
-        } catch (detailError) {
-          logger.warn('cveService', 'CVE 상세 정보 조회 실패', { 
-            cveId, 
-            error: detailError.message 
-          });
-        }
-      } else if (isObjectId) {
-        // 이미 MongoDB ObjectId 형식인 경우
-        mongoId = cveId;
-      }
+      // MongoDB ObjectId 관련 로직 제거 - cve_id만 사용
+      const url = `/cves/${cveId}`;
       
       // 상태 필드만 업데이트하는 데이터 구조 생성
       const updateData = {
         status: status
       };
-      
-      // MongoDB ObjectId가 있는 경우 _id 필드 추가
-      if (mongoId) {
-        updateData._id = mongoId;
-      }
-      
-      // 디버그 로깅 추가
-      logger.debug('cveService', '상태 업데이트 요청 세부 정보', {
-        cveId,
-        isObjectId,
-        isCveIdFormat,
-        actualId,
-        mongoId,
-        url: `/cves/${actualId}`,
-        method: 'PATCH',
-        data: updateData
-      });
       
       // axios 대신 fetch API 사용 (인터셉터 문제 우회)
       const token = localStorage.getItem('accessToken');
@@ -483,16 +427,8 @@ class CVEService {
         throw new Error('인증 토큰이 없습니다');
       }
       
-      const url = `/cves/${actualId}`;
-      
       // 데이터를 스네이크 케이스로 변환
       const snakeCaseData = camelToSnake(updateData, { excludeFields: EXCLUDED_FIELDS });
-      
-      logger.debug('cveService', '실제 요청 정보', { 
-        url, 
-        method: 'PATCH',
-        data: snakeCaseData
-      });
       
       const response = await fetch(url, {
         method: 'PATCH',
@@ -510,30 +446,37 @@ class CVEService {
       
       const responseData = await response.json();
       
-      // 응답 데이터를 카멜 케이스로 변환
-      const camelCaseData = snakeToCamel(responseData, { excludeFields: EXCLUDED_FIELDS });
+      // 응답 데이터를 카멜 케이스로 변환 (최신 구현에 맞게 수정)
+      const camelCaseData = snakeToCamel(responseData, { 
+        excludeFields: EXCLUDED_FIELDS,
+        processDate: true,
+        requestUrl: url
+      });
       
       logger.info('cveService', 'CVE 상태 업데이트 성공', { 
         cveId, 
-        actualId,
-        mongoId,
         status,
         responseStatus: response.status
       });
       
       return camelCaseData;
     } catch (error) {
-      // 더 자세한 오류 로깅
+      // 오류 로깅
       logger.error('cveService', 'CVE 상태 업데이트 실패', { 
         cveId, 
         status, 
-        error: error.message,
-        stack: error.stack
+        error: error.message
       });
       
-      // 오류 메시지 개선
+      // 오류 메시지 개선 - skipAuthRefresh 관련 코드 제거
       const errorMessage = error.message || `CVE #${cveId} 상태 업데이트 실패`;
-      throw new Error(errorMessage);
+      
+      // 단순한 Error 객체 반환 (axios 인터셉터 의존성 제거)
+      const simpleError = new Error(errorMessage);
+      simpleError.code = error.code || 500;
+      simpleError.status = error.status || 500;
+      
+      throw simpleError;
     }
   }
 
@@ -563,8 +506,7 @@ class CVEService {
       
       logger.info('cveService', 'CVE 삭제 성공', { 
         cveId,
-        status: response.status,
-        statusText: response.statusText
+        status: response.status
       });
       
       // 참고: 이 서비스 레이어에서는 캐시 무효화를 직접 처리하지 않음
@@ -576,9 +518,7 @@ class CVEService {
       logger.error('cveService', 'CVE 삭제 실패', { 
         cveId, 
         error: error.message,
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        data: error.response?.data // 서버에서 반환한 오류 데이터 추가
+        status: error.response?.status
       });
       
       // 에러 객체 강화 (config 정보 보존)
@@ -602,9 +542,7 @@ class CVEService {
    */
   async getTotalCVECount() {
     try {
-      logger.info('cveService', '전체 CVE 개수 조회 요청');
       const response = await api.get('/cves/total-count');
-      logger.info('cveService', '전체 CVE 개수 조회 성공', { count: response.data.count });
       return response.data.count;
     } catch (error) {
       logger.error('cveService', '전체 CVE 개수 조회 실패', { error: error.message });
@@ -624,7 +562,13 @@ class CVEService {
     if (error.response) {
       // 서버 응답이 있지만 2xx 외의 상태 코드
       const statusCode = error.response.status;
-      const serverMessage = error.response.data?.message || error.response.data?.error || '알 수 없는 서버 오류';
+      
+      // 서버 메시지 추출 (detail 필드 우선, 없으면 message, error 순으로 확인)
+      const serverMessage = 
+        error.response.data?.detail || 
+        error.response.data?.message || 
+        error.response.data?.error || 
+        '알 수 없는 서버 오류';
       
       // 특정 상태 코드에 따른 처리
       switch (statusCode) {
@@ -646,11 +590,11 @@ class CVEService {
           return new Error(`${defaultMessage}: ${serverMessage} (${statusCode})`);
       }
     } else if (error.request) {
-      // 요청은 보냈지만 응답이 없음
+      // 요청은 보냈지만 응답이 없음 (네트워크 오류)
       return new Error('서버에서 응답이 없습니다. 네트워크 연결을 확인하세요.');
     } else {
       // 요청 설정 중 오류
-      return new Error(`${defaultMessage}: ${error.message}`);
+      return new Error(`${defaultMessage}: ${error.message || '알 수 없는 오류'}`);
     }
   }
 }

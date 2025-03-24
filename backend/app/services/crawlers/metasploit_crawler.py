@@ -92,7 +92,7 @@ class MetasploitCrawlerService(BaseCrawlerService):
                         'url': url,
                         'source': 'metasploit-framework',
                         'type': ref_type,
-                        'added_by': self.crawler_name
+                        'created_by': self.crawler_name
                     })
             
             # Metasploit 모듈 URL 생성
@@ -108,7 +108,7 @@ class MetasploitCrawlerService(BaseCrawlerService):
                 'source': 'metasploit-framework',
                 'type': 'Exploit',
                 'description': 'Metasploit Module',
-                'added_by': self.crawler_name
+                'created_by': self.crawler_name
             })
             
             # PoC 객체 생성
@@ -117,7 +117,7 @@ class MetasploitCrawlerService(BaseCrawlerService):
                 'url': module_url,
                 'description': f'Metasploit: {name}',
                 'created_at': current_time,
-                'added_by': self.crawler_name
+                'created_by': self.crawler_name
             }]
             
             return {

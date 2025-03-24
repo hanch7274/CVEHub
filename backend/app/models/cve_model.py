@@ -11,7 +11,7 @@ class PoC(BaseModel):
     url: str
     description: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    added_by: str = Field(..., description="추가한 사용자")
+    created_by: str = Field(..., description="추가한 사용자")
     last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
     last_modified_by: str = Field(..., description="마지막 수정자")
 
@@ -20,7 +20,7 @@ class SnortRule(BaseModel):
     type: str = Field(..., description="Rule 타입")
     description: Optional[str] = Field(None, description="Rule 설명")
     created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    added_by: str = Field(..., description="추가한 사용자")
+    created_by: str = Field(..., description="추가한 사용자")
     last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
     last_modified_by: str = Field(..., description="마지막 수정자")
 
@@ -29,14 +29,14 @@ class Reference(BaseModel):
     type: str = Field(default="OTHER", description="참조 타입")
     description: Optional[str] = Field(None, description="참조 설명")
     created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    added_by: str = Field(..., description="추가한 사용자")
+    created_by: str = Field(..., description="추가한 사용자")
     last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
     last_modified_by: str = Field(..., description="마지막 수정자")
 
 class Comment(BaseModel):
     id: str = Field(default_factory=lambda: str(ObjectId()))  # ObjectId 사용
     content: str
-    username: str  # 작성자 이름
+    created_by: str = Field(..., description="작성자 이름")  # username에서 created_by로 변경
     parent_id: Optional[str] = None  # 부모 댓글 ID
     depth: int = 0  # 댓글 깊이 (0: 최상위, 1: 대댓글, 2: 대대댓글, ...)
     is_deleted: bool = False  # 삭제 여부
@@ -177,8 +177,8 @@ class CVEModel(Document):
 
     class Settings:
         name = "cves"
+        id_field = "cve_id"
         indexes = [
-            "cve_id",
             "status",
             "assigned_to",
             "last_modified_at",

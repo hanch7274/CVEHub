@@ -27,7 +27,7 @@ def create_reference(
         "type": type,
         "description": description,
         "created_at": now,
-        "added_by": creator,
+        "created_by": creator,
         "last_modified_at": now,
         "last_modified_by": creator
     }
