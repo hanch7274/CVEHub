@@ -7,7 +7,7 @@ import Sidebar from './layout/Sidebar';
 import CVEList from './features/cve/CVEList';
 import CreateCVE from './features/cve/CreateCVE';
 import SignUp from './features/auth/SignUp';
-import Login from './features/auth/Login';
+import Login from './features/auth/Login.tsx';
 import PrivateRoute from './features/auth/PrivateRoute';
 import AuthRoute from './features/auth/AuthRoute';
 import { AuthProvider } from './contexts/AuthContext';
@@ -89,9 +89,13 @@ const MainLayout = React.memo(({ children }) => {
         component="main"
         sx={{
           flexGrow: 1,
-          p: 4,
+          p: { xs: 2, md: 4 },
           mt: '64px',
-          backgroundColor: '#F8F9FA'
+          pt: { xs: 2, md: 3 },
+          backgroundColor: '#F8F9FA',
+          minHeight: 'calc(100vh - 64px)',
+          width: '100%',
+          overflow: 'auto'
         }}
       >
         {React.cloneElement(children, { selectedCVE, setSelectedCVE })}

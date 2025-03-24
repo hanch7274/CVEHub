@@ -33,7 +33,6 @@ import {
   Alert,
   InputAdornment,
   useTheme,
-  useMediaQuery,
   alpha
 } from '@mui/material';
 import { TIME_ZONES, formatDate } from '../../utils/dateUtils';
@@ -43,7 +42,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import AddIcon from '@mui/icons-material/Add';
 import SearchOffIcon from '@mui/icons-material/SearchOff';
 import { useAuth } from '../../contexts/AuthContext';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query'; 
 import { useSocketIO } from '../../contexts/SocketIOContext';
 import { QUERY_KEYS } from '../../api/queryKeys';
 
@@ -426,13 +425,13 @@ const FilterBar = React.memo(({
   );
 });
 
-const TableSkeletonRow = React.memo(({ isMobile, colSpan, rowKey }) => (
-  <TableRow key={rowKey}>
-    <TableCell><Skeleton variant="text" /></TableCell>
-    {!isMobile && <TableCell><Skeleton variant="text" /></TableCell>}
+const TableSkeletonRow = React.memo(() => (
+  <TableRow>
     <TableCell><Skeleton variant="text" /></TableCell>
     <TableCell><Skeleton variant="text" /></TableCell>
-    {!isMobile && <TableCell><Skeleton variant="text" /></TableCell>}
+    <TableCell><Skeleton variant="text" /></TableCell>
+    <TableCell><Skeleton variant="text" /></TableCell>
+    <TableCell><Skeleton variant="text" /></TableCell>
     <TableCell><Skeleton variant="text" /></TableCell>
     <TableCell><Skeleton variant="text" /></TableCell>
   </TableRow>
@@ -479,7 +478,6 @@ const CVETable = React.memo(({
   onRowsPerPageChange, 
   onCVEClick,
   theme,
-  isMobile,
   sortOption,
   searchQuery,
   onResetSearch,
@@ -501,18 +499,14 @@ const CVETable = React.memo(({
       }}
     >
       <TableContainer sx={{ maxHeight: '60vh' }}>
-        <Table stickyHeader sx={{ minWidth: isMobile ? 650 : 900 }}>
+        <Table stickyHeader sx={{ minWidth: 900 }}>
           <TableHead>
             <TableRow>
               <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>CVE ID</TableCell>
-              {!isMobile && (
-                <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>제목</TableCell>
-              )}
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>제목</TableCell>
               <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>심각도</TableCell>
               <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>상태</TableCell>
-              {!isMobile && (
-                <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>등록일</TableCell>
-              )}
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>등록일</TableCell>
               <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>최종 수정일</TableCell>
               <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>액션</TableCell>
             </TableRow>
@@ -521,7 +515,7 @@ const CVETable = React.memo(({
             {isLoading ? (
               // 로딩 중일 때 스켈레톤 UI 표시
               Array.from(new Array(5)).map((_, index) => (
-                <TableSkeletonRow key={`skeleton-${index}`} isMobile={isMobile} colSpan={isMobile ? 5 : 7} rowKey={`skeleton-${index}`} />
+                <TableSkeletonRow key={`skeleton-${index}`} />
               ))
             ) : cves && cves.length > 0 ? (
               cves.map((cve) => (
@@ -539,23 +533,21 @@ const CVETable = React.memo(({
                   <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'medium', color: theme.palette.primary.main }}>
                     {cve.cveId}
                   </TableCell>
-                  {!isMobile && (
-                    <TableCell sx={tableCellBaseStyle}>
-                      <Tooltip title={cve.title || ''} placement="top">
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            maxWidth: 400,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap'
-                          }}
-                        >
-                          {cve.title || '-'}
-                        </Typography>
-                      </Tooltip>
-                    </TableCell>
-                  )}
+                  <TableCell sx={tableCellBaseStyle}>
+                    <Tooltip title={cve.title || ''} placement="top">
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          maxWidth: 400,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap'
+                        }}
+                      >
+                        {cve.title || '-'}
+                      </Typography>
+                    </Tooltip>
+                  </TableCell>
                   <TableCell sx={tableCellBaseStyle}>
                     <Chip
                       label={cve.severity ? cve.severity.toUpperCase() : '미정'}
@@ -580,33 +572,11 @@ const CVETable = React.memo(({
                       }}
                     />
                   </TableCell>
-                  {!isMobile && (
-                    <TableCell sx={tableCellBaseStyle}>
-                      {formatDate(cve.createdAt || cve.created_at, undefined, TIME_ZONES.KST)}
-                      <div style={{ display: 'none' }}>
-                        {console.log('TableCell createdAt 디버깅:', {
-                          createdAt: cve.createdAt,
-                          created_at: cve.created_at,
-                          원본cve: cve,
-                          formatResult: formatDate(cve.createdAt || cve.created_at, undefined, TIME_ZONES.KST),
-                          timeZone: TIME_ZONES.KST,
-                          isDate: (cve.createdAt || cve.created_at) instanceof Date
-                        })}
-                      </div>
-                    </TableCell>
-                  )}
+                  <TableCell sx={tableCellBaseStyle}>
+                    {formatDate(cve.createdAt || cve.created_at, undefined, TIME_ZONES.KST)}
+                  </TableCell>
                   <TableCell sx={tableCellBaseStyle}>
                     {formatDate(cve.lastModifiedAt || cve.last_modified_at, undefined, TIME_ZONES.KST)}
-                    <div style={{ display: 'none' }}>
-                      {console.log('TableCell lastModifiedAt 디버깅:', {
-                        lastModifiedAt: cve.lastModifiedAt,
-                        last_modified_at: cve.last_modified_at,
-                        원본cve: cve,
-                        formatResult: formatDate(cve.lastModifiedAt || cve.last_modified_at, undefined, TIME_ZONES.KST),
-                        timeZone: TIME_ZONES.KST,
-                        isDate: (cve.lastModifiedAt || cve.last_modified_at) instanceof Date
-                      })}
-                    </div>
                   </TableCell>
                   <TableCell sx={tableCellBaseStyle}>
                     <Box sx={{ display: 'flex', gap: 1 }}>
@@ -630,7 +600,7 @@ const CVETable = React.memo(({
               ))
             ) : (
               <NoDataRow 
-                colSpan={isMobile ? 5 : 7} 
+                colSpan={7} 
                 searchQuery={searchQuery} 
                 onResetSearch={onResetSearch}
                 theme={theme}
@@ -669,7 +639,6 @@ const CVETable = React.memo(({
 // 테이블 로딩 상태를 위한 스켈레톤 UI
 const CVETableSkeleton = () => {
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
   return (
     <Paper
@@ -683,18 +652,14 @@ const CVETableSkeleton = () => {
       }}
     >
       <TableContainer>
-        <Table sx={{ minWidth: isMobile ? 650 : 900 }}>
+        <Table sx={{ minWidth: 900 }}>
           <TableHead>
             <TableRow>
               <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>CVE ID</TableCell>
-              {!isMobile && (
-                <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>제목</TableCell>
-              )}
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>제목</TableCell>
               <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>심각도</TableCell>
               <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>상태</TableCell>
-              {!isMobile && (
-                <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>등록일</TableCell>
-              )}
+              <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>등록일</TableCell>
               <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>최종 수정일</TableCell>
               <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'bold', backgroundColor: alpha(theme.palette.primary.main, 0.08) }}>액션</TableCell>
             </TableRow>
@@ -703,10 +668,10 @@ const CVETableSkeleton = () => {
             {Array.from(new Array(5)).map((_, index) => (
               <TableRow key={`skeleton-${index}`}>
                 <TableCell><Skeleton animation="wave" height={30} /></TableCell>
-                {!isMobile && <TableCell><Skeleton animation="wave" height={30} /></TableCell>}
                 <TableCell><Skeleton animation="wave" height={30} /></TableCell>
                 <TableCell><Skeleton animation="wave" height={30} /></TableCell>
-                {!isMobile && <TableCell><Skeleton animation="wave" height={30} /></TableCell>}
+                <TableCell><Skeleton animation="wave" height={30} /></TableCell>
+                <TableCell><Skeleton animation="wave" height={30} /></TableCell>
                 <TableCell><Skeleton animation="wave" height={30} /></TableCell>
                 <TableCell><Skeleton animation="wave" height={30} /></TableCell>
               </TableRow>
@@ -809,12 +774,11 @@ const EmptyStateDisplay = ({ searchQuery, onResetSearch, isFiltered }) => {
 
 const CVEList = () => {
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { currentUser: user } = useAuth();
   const { enqueueSnackbar } = useSnackbar();
   const { socket } = useSocketIO();
+  const queryClient = useQueryClient(); 
 
   // 실시간 업데이트 구독
   useCVEListUpdates();
@@ -964,6 +928,12 @@ const CVEList = () => {
         console.log('검색어 초기화');
         setSearchQuery('');
         setPage(1);
+        
+        // 검색 초기화 시 캐시 무효화
+        queryClient.invalidateQueries({
+          queryKey: [QUERY_KEYS.CVE.list],
+          refetchType: 'active'
+        });
       } 
       // 검색어가 1글자 이상인 경우
       else if (trimmedValue.length >= 1 && trimmedValue !== searchQuery) {
@@ -1100,7 +1070,7 @@ const CVEList = () => {
   }, [handleCreateDialogClose, refetchCVEList]);
 
   return (
-    <Box sx={{ width: '100%', px: { xs: 1, sm: 2, md: 3 } }}>
+    <Box sx={{ width: '100%', px: { sm: 2, md: 3 } }}>
       {/* 상단 액션 버튼 추가 */}
       {renderActionButtons()}
       
@@ -1147,7 +1117,6 @@ const CVEList = () => {
               onRowsPerPageChange={handleRowsPerPageChange}
               onCVEClick={handleCVEClick}
               theme={theme}
-              isMobile={isMobile}
               sortOption={sortOption}
               searchQuery={searchQuery}
               onResetSearch={handleResetSearch}

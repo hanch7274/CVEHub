@@ -549,7 +549,9 @@ const CrawlerUpdateButton = () => {
   // 웹소켓 연결 상태 모니터링 
   useEffect(() => {
     logger.info('CrawlerUpdateButton', '웹소켓 연결 상태 모니터링 시작', {
-      isConnected: socketIO.connected
+      isConnected: socketIO.connected,
+      socketInstance: !!socketIO.socket,
+      socketInstanceConnected: socketIO.socket?.connected
     });
     
     // 폴링은 웹소켓 연결이 불안정한 경우의 백업 메커니즘으로 유지
@@ -560,6 +562,10 @@ const CrawlerUpdateButton = () => {
       // 실행 중이 아니라면 폴링 중지
       logger.info('CrawlerUpdateButton', '크롤러 실행 중지됨 - 폴링 중지');
       stopPolling();
+    } else if (isRunning && socketIO.connected && lastWebSocketUpdate) {
+      // 웹소켓 연결이 있고 이전에 웹소켓 업데이트가 있었다면 폴링 중지
+      logger.info('CrawlerUpdateButton', '웹소켓 연결 복구됨 - 폴링 중지');
+      stopPolling();
     }
     
     return () => {
@@ -568,11 +574,16 @@ const CrawlerUpdateButton = () => {
         stopPolling();
       }
     };
-  }, [socketIO.connected, isRunning, startPolling, stopPolling, pollTimer]);
+  }, [socketIO.connected, isRunning, pollTimer, lastWebSocketUpdate, stopPolling]);
 
   // 상태 초기화
   useEffect(() => {
-    loadCrawlerStatus();
+    // 컴포넌트 마운트 시 약간의 지연을 두고 크롤러 상태 로드
+    const timer = setTimeout(() => {
+      loadCrawlerStatus();
+    }, 500); // 500ms 지연
+    
+    return () => clearTimeout(timer);
   }, [loadCrawlerStatus]);
 
   // 메뉴 열기

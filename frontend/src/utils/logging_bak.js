@@ -421,31 +421,50 @@ class LoggingService {
 
   /**
    * 오류 로그
-   * @param {string} module - 모듈명
-   * @param {string} message - 로그 메시지
-   * @param {*} error - 오류 객체
+   * @param {string} module - 모듈명 또는 오류 메시지
+   * @param {string|undefined} message - 로그 메시지 (선택적)
+   * @param {*} error - 오류 객체 (선택적)
    */
   error(module, message, error) {
     try {
+      // 인자 개수에 따라 다르게 처리
+      let actualModule = 'App';
+      let actualMessage = '';
+      let actualError = null;
+
+      if (arguments.length === 1) {
+        // 인자가 1개인 경우: module은 메시지로 처리
+        actualMessage = module;
+      } else if (arguments.length === 2) {
+        // 인자가 2개인 경우: module은 모듈명, message는 메시지로 처리
+        actualModule = module;
+        actualMessage = message;
+      } else {
+        // 인자가 3개인 경우: 모두 그대로 사용
+        actualModule = module;
+        actualMessage = message;
+        actualError = error;
+      }
+
       // 오류 객체가 Error 인스턴스인 경우 구조화된 객체로 변환
-      let formattedError = error;
-      if (error instanceof Error) {
+      let formattedError = actualError;
+      if (actualError instanceof Error) {
         formattedError = {
-          message: error.message,
-          stack: error.stack,
-          name: error.name
+          message: actualError.message,
+          stack: actualError.stack,
+          name: actualError.name
         };
-      } else if (typeof error === 'object' && error !== null) {
+      } else if (typeof actualError === 'object' && actualError !== null) {
         // 이미 객체인 경우 그대로 사용
-        formattedError = error;
+        formattedError = actualError;
       }
       
-      this._log(LOG_LEVEL.ERROR, module, message, formattedError);
+      this._log(LOG_LEVEL.ERROR, actualModule, actualMessage, formattedError);
     } catch (logError) {
       const formattedError = error instanceof Error 
         ? { message: error.message, stack: error.stack } 
         : error;
-      console.error(`[안전 로깅] [ERROR] [${module}]`, message, formattedError || '');
+      console.error(`[안전 로깅] [ERROR]`, module, message || '', formattedError || '');
     }
   }
 
