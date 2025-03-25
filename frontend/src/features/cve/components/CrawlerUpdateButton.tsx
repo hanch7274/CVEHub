@@ -338,6 +338,20 @@ import React, {
   
     // ---- 웹소켓 ---------------------------------------------------
   
+    // 연결 상태 변경 처리 함수
+    const handleConnectionStateChange = useCallback((data: any) => {
+      logger.debug('CrawlerUpdateButton', '연결 상태 변경 이벤트', {
+        state: data.state,
+        isConnected: data.state === SOCKET_STATE.CONNECTED
+      });
+
+      if (data.state === SOCKET_STATE.CONNECTED) {
+        setIsSocketConnected(true);
+      } else if (data.state === SOCKET_STATE.DISCONNECTED) {
+        setIsSocketConnected(false);
+      }
+    }, []);
+
     // 소켓 연결 상태 감시 (최적화된 버전)
     useEffect(() => {
       // 초기 상태 설정 (최초 1회만)
@@ -346,33 +360,22 @@ import React, {
         prevSocketConnectedRef.current = socketIO.connected;
       }
 
-      const handleConnectionStateChange = (data: ConnectionStateChangeData) => {
-        const newConnState = data.state === SOCKET_STATE.CONNECTED;
-        
-        // 이전 상태와 다를 때만 업데이트 (중요!)
-        if (prevSocketConnectedRef.current !== newConnState) {
-          if (process.env.NODE_ENV === 'development') {
-            logger.debug('CrawlerUpdateButton', '연결 상태 변경됨', {
-              state: data.state,
-              isConnected: newConnState,
-              previous: prevSocketConnectedRef.current
-            });
-          }
-          
-          prevSocketConnectedRef.current = newConnState;
-          setIsSocketConnected(newConnState);
-        }
-      };
-
-      const unsubscribe = socketIO.subscribeEvent(
+      logger.debug('CrawlerUpdateButton', '연결 상태 이벤트 구독 시작');
+      
+      // 이벤트 구독 - unsubscribe 함수 반환하지 않음
+      socketIO.subscribeEvent(
         SOCKET_EVENTS.CONNECTION_STATE_CHANGE,
         handleConnectionStateChange
       );
 
       return () => {
-        unsubscribe();
+        logger.debug('CrawlerUpdateButton', '연결 상태 이벤트 구독 해제');
+        socketIO.unsubscribeEvent(
+          SOCKET_EVENTS.CONNECTION_STATE_CHANGE,
+          handleConnectionStateChange
+        );
       };
-    }, [socketIO]);
+    }, [socketIO, handleConnectionStateChange]);
   
     // 크롤러 업데이트 웹소켓 이벤트
     const handleCrawlerUpdateEvent = useCallback(

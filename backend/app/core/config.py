@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     LOG_PING_PONG: bool = False
     
     # 데이터 디렉토리 설정 추가
-    DATA_DIR: str = "data"
+    DATA_DIR: str = "/home/CVEHub/data"
 
     # Redis settings
     REDIS_URL: str = "redis://redis:6379/0"

@@ -6,12 +6,18 @@ import logger from '../utils/logging';
 import { SOCKET_STATE, SOCKET_EVENTS } from '../services/socketio/constants';
 import { getAccessToken } from '../utils/storage/tokenStorage';
 import { SOCKET_CONFIG } from '../config';
-import { SocketContextType } from '../types/socket';
 import { Socket } from 'socket.io-client';
 
 // 이벤트 핸들러 타입 정의
 type EventHandler = (data: any) => void;
-type EventHandlers = Record<string, Array<(data: any) => void>>;
+
+interface EventHandlers {
+  [key: string]: EventHandler[];
+}
+
+interface PendingSubscriptions {
+  [key: string]: EventHandler[];
+}
 
 // Provider Props 인터페이스
 interface SocketIOProviderProps {
@@ -33,6 +39,8 @@ const SocketIOProvider: React.FC<SocketIOProviderProps> = ({ children }) => {
   const [error, setError] = useState<Error | null>(null);
   // 이벤트 핸들러는 ref로 관리하여 상태 업데이트로 인한 무한 루프 방지
   const eventHandlersRef = useRef<EventHandlers>({});
+  // 대기 중인 구독 관리를 위한 ref 추가
+  const pendingSubscriptionsRef = useRef<PendingSubscriptions>({});
   const { enqueueSnackbar } = useSnackbar();
   const queryClient = useQueryClient();
   
@@ -55,7 +63,9 @@ const SocketIOProvider: React.FC<SocketIOProviderProps> = ({ children }) => {
   type ConnectionState = typeof SOCKET_STATE[keyof typeof SOCKET_STATE];
   const handleConnectionStatusChange = useCallback((data: { state: string; }) => {
     logger.debug('SocketIOContext', `연결 상태 변경: ${data.state}`, {
-      previous: connected
+      previous: connected,
+      eventHandlersCount: Object.keys(eventHandlersRef.current).length,
+      hasConnectionStateHandlers: eventHandlersRef.current[SOCKET_EVENTS.CONNECTION_STATE_CHANGE]?.length || 0
     });
     
     // 상태에 따라 connected 업데이트 - 중복 업데이트 방지
@@ -63,6 +73,29 @@ const SocketIOProvider: React.FC<SocketIOProviderProps> = ({ children }) => {
       case SOCKET_STATE.CONNECTED:
         if (!connected) {
           setConnected(true);
+          
+          // 상세 로깅 추가
+          logger.debug('SocketIOContext', '연결 상태 이벤트 발행', {
+            eventName: SOCKET_EVENTS.CONNECTION_STATE_CHANGE,
+            state: SOCKET_STATE.CONNECTED,
+            handlersCount: (eventHandlersRef.current[SOCKET_EVENTS.CONNECTION_STATE_CHANGE] || []).length
+          });
+          
+          // 모든 구독 핸들러에게 명시적으로 이벤트 발생
+          const handlersForConnectionStateChange = eventHandlersRef.current[SOCKET_EVENTS.CONNECTION_STATE_CHANGE] || [];
+          if (handlersForConnectionStateChange.length > 0) {
+            handlersForConnectionStateChange.forEach((handler, index) => {
+              logger.debug('SocketIOContext', `핸들러 ${index + 1} 호출 시도`);
+              try {
+                handler({ state: SOCKET_STATE.CONNECTED });
+                logger.debug('SocketIOContext', `핸들러 ${index + 1} 호출 성공`);
+              } catch (err) {
+                logger.error('SocketIOContext', `핸들러 ${index + 1} 호출 실패`, { error: err });
+              }
+            });
+          } else {
+            logger.warn('SocketIOContext', '연결 상태 이벤트 핸들러가 등록되지 않음');
+          }
           
           // 알림 표시는 상태 업데이트와 분리
           setTimeout(() => {
@@ -79,32 +112,91 @@ const SocketIOProvider: React.FC<SocketIOProviderProps> = ({ children }) => {
         if (connected) {
           setConnected(false);
           
-          // 알림 표시는 상태 업데이트와 분리
+          // 상세 로깅 추가
+          logger.debug('SocketIOContext', '연결 해제 상태 이벤트 발행', {
+            eventName: SOCKET_EVENTS.CONNECTION_STATE_CHANGE,
+            state: data.state,
+            handlersCount: (eventHandlersRef.current[SOCKET_EVENTS.CONNECTION_STATE_CHANGE] || []).length
+          });
+          
+          // 모든 구독 핸들러에게 명시적으로 이벤트 발생
+          const handlersForConnectionStateChange = eventHandlersRef.current[SOCKET_EVENTS.CONNECTION_STATE_CHANGE] || [];
+          if (handlersForConnectionStateChange.length > 0) {
+            handlersForConnectionStateChange.forEach((handler, index) => {
+              logger.debug('SocketIOContext', `핸들러 ${index + 1} 호출 시도 (연결 해제)`);
+              try {
+                handler({ state: data.state });
+                logger.debug('SocketIOContext', `핸들러 ${index + 1} 호출 성공 (연결 해제)`);
+              } catch (err) {
+                logger.error('SocketIOContext', `핸들러 ${index + 1} 호출 실패 (연결 해제)`, { error: err });
+              }
+            });
+          } else {
+            logger.warn('SocketIOContext', '연결 상태 이벤트 핸들러가 등록되지 않음 (연결 해제)');
+          }
+          
+          // 알림 표시
           setTimeout(() => {
-            enqueueSnackbar('서버와 연결이 끊어졌습니다', { 
+            enqueueSnackbar('서버와 연결이 끊어졌습니다', {
               variant: 'warning',
               autoHideDuration: 3000
             });
           }, 0);
         }
         break;
-        
-      default:
-        break;
-    }
-  }, [connected, enqueueSnackbar]);
-
-  // Socket.IO 인스턴스 생성
-  const createSocketInstance = useCallback(() => {
-    if (socketInstanceRef.current) {
-      logger.info('SocketIOContext', '기존 소켓 인스턴스가 있습니다. 연결 해제 후 재생성합니다.', {
-        function: 'createSocketInstance'
-      });
-      socketInstanceRef.current.disconnect();
-      socketInstanceRef.current = null;
     }
     
+    // 연결 상태 변경 후 최종 상태 로깅
+    logger.info('SocketIOContext', '연결 상태 업데이트 완료', {
+      connectionState: data.state === SOCKET_STATE.CONNECTED ? 'connected' : 'disconnected',
+      isConnected: data.state === SOCKET_STATE.CONNECTED,
+      socketConnected: connected
+    });
+  }, [connected, enqueueSnackbar]);
+  
+  // 연결 상태 변경 후 전역 이벤트로 발행
+  const broadcastConnectionState = useCallback(() => {
+    logger.debug('SocketIOContext', '연결 상태 변경 전역 이벤트 발행', {
+      connected,
+      socketId: socketInstanceRef.current?.id
+    });
+    
+    // 전역 이벤트로 발행
     try {
+      const event = new CustomEvent('socket_connection_change', {
+        detail: { 
+          connected, 
+          socketId: socketInstanceRef.current?.id,
+          timestamp: new Date().toISOString()
+        }
+      });
+      window.dispatchEvent(event);
+    } catch (error) {
+      logger.error('SocketIOContext', '전역 이벤트 발행 중 오류', { error });
+    }
+  }, [connected]);
+
+  // 연결 상태 변경 시 브로드캐스트
+  useEffect(() => {
+    broadcastConnectionState();
+  }, [connected, broadcastConnectionState]);
+  
+  // Socket.IO 인스턴스 생성
+  const createSocketInstance = useCallback(() => {
+    try {
+      if (socketInstanceRef.current) {
+        logger.debug('SocketIOContext', '기존 소켓 인스턴스가 있습니다.');
+        // 이미 연결된 소켓이 있으면 재사용
+        if (socketInstanceRef.current.connected) {
+          setSocket(socketInstanceRef.current);
+          setIsReady(true);
+          handleConnectionStatusChange({ state: SOCKET_STATE.CONNECTED });
+          // processLegacyHandlers 호출 제거
+          processPendingSubscriptions(); // 대기 중인 구독 처리 추가
+          return socketInstanceRef.current;
+        }
+      }
+      
       // 소켓 인스턴스 생성
       const newSocket = socketIOService.getSocket();
       
@@ -325,28 +417,101 @@ const SocketIOProvider: React.FC<SocketIOProviderProps> = ({ children }) => {
   }, [connected]);
   
   // 활성 구독 목록 가져오기
-  const getActiveSubscriptions = useCallback(() => {
-    // 구독 중인 CVE ID 목록 반환
-    // 실제 구현은 서버 상태에 따라 달라질 수 있으므로 여기서는 클라이언트 측 상태만 반환
-    return Object.keys(eventHandlersRef.current).filter(key => key.startsWith('cve_'));
+  const getActiveSubscriptions = useCallback<() => Record<string, number>>(() => {
+    const activeSubscriptions: Record<string, number> = {};
+    
+    // 각 이벤트 타입별 구독 수 계산
+    Object.entries(eventHandlersRef.current).forEach(([event, handlers]) => {
+      activeSubscriptions[event] = handlers.length;
+    });
+    
+    return activeSubscriptions;
   }, []);
   
   // 인증 상태 변경 처리 함수
-  const handleAuthStateChange = useCallback((isAuthenticated: boolean) => {
-    logger.info('SocketIOContext', `인증 상태 변경: ${isAuthenticated ? '인증됨' : '인증되지 않음'}`, {
-      function: 'handleAuthStateChange'
-    });
+  const handleAuthStateChange = useCallback(() => {
+    logger.debug('SocketIOContext', '인증 상태 변경 감지');
     
-    isAuthenticatedRef.current = isAuthenticated;
+    // 현재 토큰 가져오기
+    const token = getAccessToken();
     
-    if (isAuthenticated) {
-      // 인증된 경우 연결 시도
-      connect();
+    // 토큰이 있으면 재연결, 없으면 연결 해제
+    if (token) {
+      disconnect();
+      setTimeout(() => {
+        connect();
+      }, 300);
     } else {
-      // 인증되지 않은 경우 연결 해제
       disconnect();
     }
   }, [connect, disconnect]);
+  
+  // 대기 중인 구독 처리
+  const processPendingSubscriptions = useCallback(() => {
+    if (!socketInstanceRef.current || !connected) {
+      logger.debug('SocketIOContext', '소켓이 준비되지 않아 대기 중인 구독을 처리할 수 없습니다');
+      return;
+    }
+    
+    logger.debug('SocketIOContext', '대기 중인 구독 처리 시작', {
+      pendingEventsCount: Object.keys(pendingSubscriptionsRef.current).length
+    });
+    
+    // 대기 중인 모든 구독 처리
+    Object.entries(pendingSubscriptionsRef.current).forEach(([event, handlers]) => {
+      if (Array.isArray(handlers) && handlers.length > 0) {
+        handlers.forEach(handler => {
+          logger.debug('SocketIOContext', `대기 중인 구독 등록: ${event}`);
+          try {
+            subscribeEvent(event, handler);
+          } catch (error) {
+            logger.error('SocketIOContext', `대기 중인 구독 등록 실패: ${event}`, { error });
+          }
+        });
+      }
+    });
+    
+    // 처리 완료 후 초기화
+    pendingSubscriptionsRef.current = {};
+  }, [connected, subscribeEvent]);
+
+  // 소켓 준비 상태 변경 시 대기 중인 구독 처리
+  useEffect(() => {
+    if (connected && socketInstanceRef.current) {
+      processPendingSubscriptions();
+    }
+  }, [connected, processPendingSubscriptions]);
+  
+  // 소켓 준비 상태에 따라 이벤트 구독
+  const subscribeWhenReady = useCallback((event: string, handler: EventHandler) => {
+    logger.debug('SocketIOContext', `구독 요청: ${event}`, {
+      socketReady: socketInstanceRef.current && connected,
+      handlerExists: !!handler
+    });
+    
+    // 현재 연결되어 있으면 즉시 구독
+    if (socketInstanceRef.current && connected) {
+      logger.debug('SocketIOContext', `소켓 준비됨, 즉시 구독: ${event}`);
+      try {
+        subscribeEvent(event, handler);
+        return true;
+      } catch (error) {
+        logger.error('SocketIOContext', `구독 실패: ${event}`, { error });
+        return false;
+      }
+    } else {
+      // 연결 대기 목록에 추가
+      logger.debug('SocketIOContext', `소켓 준비되지 않음, 구독 예약: ${event}`);
+      pendingSubscriptionsRef.current = {
+        ...pendingSubscriptionsRef.current,
+        [event]: [
+          ...(pendingSubscriptionsRef.current[event] || []),
+          handler
+        ]
+      };
+      return false;
+    }
+  }, [connected, subscribeEvent]);
   
   // 소켓 이벤트 구독 등록
   const registerSocketEventListeners = useCallback(() => {
@@ -354,142 +519,120 @@ const SocketIOProvider: React.FC<SocketIOProviderProps> = ({ children }) => {
 
     const socket = socketInstanceRef.current;
 
-  // 이벤트 핸들러 내에서 emit 호출을 제거하고 다른 방식으로 상태 변경 감지
-  const handleConnect = () => {
-    logger.info('SocketIOContext', '소켓 연결됨');
-    
-    // 이미 연결되어 있는지 확인
-    if (!connected) {
-      setConnected(true);
-    }
-  };
-
-  // 연결 해제 이벤트 리스너도 유사하게 수정
-  const handleDisconnect = (reason: string) => {
-    logger.info('SocketIOContext', `소켓 연결 해제: ${reason}`);
-    
-    // 이미 연결 해제되어 있는지 확인
-    if (connected) {
-      setConnected(false);
-    }
-  
-    // 인증된 상태이고 자동 재연결이 활성화된 경우에만 재연결 시도
-    if (isAuthenticatedRef.current && shouldConnectRef.current) {
-      logger.info('SocketIOContext', '자동 재연결 시도 예약됨', {
-        delay: reconnectionDelay
-      });
-      
-      const timer = setTimeout(() => {
-        if (shouldConnectRef.current) {
-          connect();
+    const connectHandler = () => {
+      logger.info('SocketIOContext', '웹소켓 연결 성공', { 
+        socketId: socket.id,
+        // socket.io.uri는 private 속성이므로 접근 제거
+        path: socket.io.opts.path,
+        connected: socket.connected,
+        disconnected: socket.disconnected,
+        // 필요한 옵션만 선택적으로 기록
+        opts: {
+          path: socket.io.opts.path,
+          transports: socket.io.opts.transports,
+          upgrade: socket.io.opts.upgrade,
+          reconnection: socket.io.opts.reconnection,
         }
-      }, reconnectionDelay);
-      
-      // 타이머 참조 저장
-      reconnectTimerRef.current = timer;
-    }
-  };
-
-    // 소켓 오류 이벤트 리스너
-    const handleError = (err: Error) => {
-      logger.error('SocketIOContext', '소켓 오류', {
-        error: err.message
       });
-      setError(err);
-      setConnected(false);
-      // 오류 상태 이벤트 발생
-      if (socketIOService) {
-        socketIOService.emit(SOCKET_EVENTS.CONNECTION_STATE_CHANGE, { 
-          state: SOCKET_STATE.ERROR 
-        });
-      }
+      
+      // 연결 상태 업데이트 및 이벤트 발생
+      handleConnectionStatusChange({ state: SOCKET_STATE.CONNECTED });
+      
+      // 연결 상태가 변경되었음을 알리는 이벤트 발생
+      socket.emit(SOCKET_EVENTS.CONNECTION_STATE_CHANGE, { 
+        from: 'disconnected', 
+        to: 'connected',
+        timestamp: Date.now()
+      });
     };
+    
+    socket.on(SOCKET_EVENTS.CONNECT, connectHandler);
+    
+    // 이미 연결된 상태라면 상태 업데이트
+    if (socket.connected && !connected) {
+      logger.info('SocketIOContext', '소켓이 이미 연결된 상태입니다. 강제 상태 업데이트를 수행합니다.');
+      handleConnectionStatusChange({ state: SOCKET_STATE.CONNECTED });
 
-    // 이벤트 리스너 등록
-    socket.on('connect', handleConnect);
-    socket.on('connect_error', handleError);
-    socket.on('disconnect', handleDisconnect);
-    socket.io.on('reconnect', handleConnect);
-    socket.io.on('reconnect_attempt', () => logger.info('SocketIOContext', '재연결 시도 중'));
-    socket.io.on('reconnect_error', handleError);
-    socket.io.on('reconnect_failed', () => logger.warn('SocketIOContext', '재연결 실패'));
+      // 명시적 이벤트 발생
+      socket.emit(SOCKET_EVENTS.CONNECTION_STATE_CHANGE, { 
+        from: 'unknown', 
+        to: 'connected',
+        timestamp: Date.now()
+      });
+    }
     
     // 클린업 함수
     return () => {
-      // 이벤트 리스너 제거
-      socket.off('connect', handleConnect);
-      socket.off('connect_error', handleError);
-      socket.off('disconnect', handleDisconnect);
-      socket.io.off('reconnect', handleConnect);
-      socket.io.off('reconnect_attempt');
-      socket.io.off('reconnect_error', handleError);
-      socket.io.off('reconnect_failed');
+      logger.info('SocketIOContext', '소켓 이벤트 리스너 제거');
+      if (socket) {
+        socket.off(SOCKET_EVENTS.CONNECT, connectHandler);
+      }
     };
-  }, [connect, enqueueSnackbar, reconnectionDelay, socketIOService, handleConnectionStatusChange]);
+  }, [socketInstanceRef.current, handleConnectionStatusChange]); // 의존성 배열 최적화
 
-// 그리고 useEffect에서는 참조만 합니다
-useEffect(() => {
-  if (!socketInstanceRef.current) return;
-  
-  // 이벤트 리스너 등록 및 클린업 함수 얻기
-  const cleanupListeners = registerSocketEventListeners();
-  
-  // 연결 초기화 시 상태 확인 (한 번만)
-  if (!initializedRef.current) {
-    initializedRef.current = true;
-    const initialConnectionStatus = socketIOService.connected;
-    if (initialConnectionStatus !== connected) {
-      setConnected(initialConnectionStatus);
-      logger.info('SocketIOContext', '초기 연결 상태 설정', {
-        connected: initialConnectionStatus
-      });
+  useEffect(() => {
+    if (!socketInstanceRef.current) return;
+    
+    // 이벤트 리스너 등록 및 클린업 함수 얻기
+    const cleanupListeners = registerSocketEventListeners();
+    
+    // 연결 초기화 시 상태 확인 (한 번만)
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      const initialConnectionStatus = socketIOService.connected;
+      if (initialConnectionStatus !== connected) {
+        setConnected(initialConnectionStatus);
+        logger.info('SocketIOContext', '초기 연결 상태 설정', {
+          connected: initialConnectionStatus
+        });
+      }
     }
-  }
-  
-  return () => {
-    if (cleanupListeners) {
-      cleanupListeners();
-    }
-  };
-}, [registerSocketEventListeners, socketIOService]); // connected 의존성 제거
+    
+    return () => {
+      if (cleanupListeners) {
+        cleanupListeners();
+      }
+    };
+  }, [registerSocketEventListeners, socketIOService]); // connected 의존성 제거
 
-// useMemo를 사용하여 context 값 메모이제이션
-const value = useMemo<SocketContextType>(() => ({
-  socket,
-  connected,
-  isReady,
-  error,
-  connecting: !connected && !error,
-  reconnectAttempts: reconnectAttemptsRef.current,
-  connect,
-  disconnect,
-  subscribeEvent,
-  unsubscribeEvent,
-  isSubscribed,
-  emit,
-  subscribeCVEDetail,
-  unsubscribeCVEDetail,
-  getActiveSubscriptions,
-  handleAuthStateChange
-}), [
-  socket, 
-  connected, 
-  isReady, 
-  error, 
-  connect, 
-  disconnect, 
-  subscribeEvent, 
-  unsubscribeEvent, 
-  isSubscribed, 
-  emit, 
-  subscribeCVEDetail, 
-  unsubscribeCVEDetail, 
-  getActiveSubscriptions, 
-  handleAuthStateChange
-]);
+  // useMemo를 사용하여 context 값 메모이제이션
+  const contextValue = useMemo<SocketContextType>(() => ({
+    socket: socketInstanceRef.current,
+    connected,
+    isReady,
+    error,
+    connecting: !connected && !error,
+    reconnectAttempts: reconnectAttemptsRef.current,
+    connect,
+    disconnect,
+    subscribeEvent,
+    unsubscribeEvent,
+    isSubscribed,
+    emit,
+    subscribeCVEDetail,
+    unsubscribeCVEDetail,
+    getActiveSubscriptions,
+    subscribeWhenReady,
+    handleAuthStateChange
+  }), [
+    connected,
+    isReady,
+    error,
+    connect,
+    disconnect,
+    subscribeEvent,
+    unsubscribeEvent,
+    isSubscribed,
+    emit,
+    subscribeCVEDetail,
+    unsubscribeCVEDetail,
+    getActiveSubscriptions,
+    subscribeWhenReady,
+    handleAuthStateChange
+  ]);
 
   return (
-    <SocketIOContext.Provider value={value}>
+    <SocketIOContext.Provider value={contextValue}>
       {children}
     </SocketIOContext.Provider>
   );
@@ -504,6 +647,27 @@ const useSocketIO = (): SocketContextType => {
   }
   return context;
 };
+
+// 컨텍스트 인터페이스
+interface SocketContextType {
+  socket: Socket | null;
+  connected: boolean;
+  isReady: boolean;
+  error: Error | null;
+  connecting: boolean;
+  reconnectAttempts: number;
+  connect: () => void;
+  disconnect: () => void;
+  subscribeEvent: (event: string, handler: (data: any) => void) => void;
+  unsubscribeEvent: (event: string, handler: (data: any) => void) => void;
+  isSubscribed: (event: string, handler: (data: any) => void) => boolean;
+  emit: (event: string, data?: any) => void;
+  subscribeCVEDetail: (cveId: string) => void;
+  unsubscribeCVEDetail: (cveId: string) => void;
+  getActiveSubscriptions: () => Record<string, number>;
+  subscribeWhenReady: (event: string, handler: EventHandler) => boolean;
+  handleAuthStateChange: () => void;
+}
 
 // 파일 하단에서 내보내기
 export { SocketIOProvider, useSocketIO, SocketIOContext };

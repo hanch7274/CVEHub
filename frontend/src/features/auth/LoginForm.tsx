@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Container, Grid, Paper, TextField, Button, Typography, Box, CircularProgress } from '@mui/material';
 import { useAuth } from '../../contexts/AuthContext';
+import { AuthContextType, LoginRequest } from '../../types/auth';
 import { useSocketIO } from '../../contexts/SocketIOContext';
 import logger from '../../utils/logging';
-import { LoginRequest, AuthContextType } from '../../types/auth';
-import { SocketContextType } from '../../types/socket';
 
 // SocketIO 인터페이스 정의 (임시)
 // interface SocketIO {
@@ -27,7 +27,7 @@ const LoginForm: React.FC<LoginFormProps> = ({
 }) => {
   const navigate = useNavigate();
   const auth: AuthContextType = useAuth();
-  const socketIO: SocketContextType = useSocketIO();
+  const socketIO = useSocketIO();
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
