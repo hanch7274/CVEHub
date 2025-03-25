@@ -362,39 +362,76 @@ export const setupCVESubscriptions = (queryClient: any, webSocketService: any) =
 };
 
 export const useCVEListUpdates = () => {
-  const { socket, connected } = useSocketIO();
+  const socketIO = useSocketIO();
   const queryClient = useQueryClient();
   const logger = useLogger('useCVEListUpdates');
 
-  const handleCVECreated = useCallback((newCVE: any) => {
-    logger.info('CVE 생성됨', { cveId: newCVE?.id });
-    queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
-  }, [queryClient]);
+  // useRef를 사용하여 불필요한 렌더링 방지
+  const socketRef = useRef(socketIO.socket);
+  const connectedRef = useRef(socketIO.connected);
+  const queryClientRef = useRef(queryClient);
+  const isSubscribedRef = useRef(false);
 
-  const handleCVEUpdated = useCallback((updatedCVE: any) => {
-    logger.info('CVE 업데이트됨', { cveId: updatedCVE?.cve_id });
-    if (updatedCVE?.cve_id) {
-      queryClient.setQueryData(QUERY_KEYS.CVE.detail(updatedCVE.cve_id), updatedCVE);
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
-    }
-  }, [queryClient]);
-
-  const handleCVEDeleted = useCallback((deletedCVEId: string) => {
-    logger.info('CVE 삭제됨', { cveId: deletedCVEId });
-    if (deletedCVEId) {
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
-      queryClient.removeQueries({ queryKey: QUERY_KEYS.CVE.detail(deletedCVEId) });
-    }
-  }, [queryClient]);
-
+  // 최초 마운트 시 초기값 설정
   useEffect(() => {
-    if (!socket || !connected) return;
+    socketRef.current = socketIO.socket;
+    connectedRef.current = socketIO.connected;
+    queryClientRef.current = queryClient;
+  }, []);
 
+  // 핸들러 함수를 useRef로 정의하여 의존성 제거
+  const handlersRef = useRef({
+    handleCVECreated: (newCVE) => {
+      logger.info('CVE 생성됨', { cveId: newCVE?.id });
+      queryClientRef.current.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
+    },
+    
+    handleCVEUpdated: (updatedCVE) => {
+      logger.info('CVE 업데이트됨', { cveId: updatedCVE?.cve_id });
+      if (updatedCVE?.cve_id) {
+        queryClientRef.current.setQueryData(QUERY_KEYS.CVE.detail(updatedCVE.cve_id), updatedCVE);
+        queryClientRef.current.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
+      }
+    },
+    
+    handleCVEDeleted: (deletedCVEId) => {
+      logger.info('CVE 삭제됨', { cveId: deletedCVEId });
+      if (deletedCVEId) {
+        queryClientRef.current.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
+        queryClientRef.current.removeQueries({ queryKey: QUERY_KEYS.CVE.detail(deletedCVEId) });
+      }
+    }
+  });
+
+  // 소켓 연결 변경 감지를 위한 전용 useEffect
+  useEffect(() => {
+    if (socketIO.connected !== connectedRef.current) {
+      connectedRef.current = socketIO.connected;
+    }
+    
+    if (socketIO.socket !== socketRef.current) {
+      socketRef.current = socketIO.socket;
+    }
+  }, [socketIO.connected, socketIO.socket]);
+
+  // 이벤트 구독 관리를 위한 useEffect
+  useEffect(() => {
+    const socket = socketRef.current;
+    const connected = connectedRef.current;
+    const handlers = handlersRef.current;
+    
+    if (!socket || !connected) {
+      isSubscribedRef.current = false;
+      return;
+    }
+
+    if (isSubscribedRef.current) return;
+    
     logger.info('Socket.IO 이벤트 리스너 등록');
 
-    socket.on('cve:created', handleCVECreated);
-    socket.on('cve:updated', handleCVEUpdated);
-    socket.on('cve:deleted', handleCVEDeleted);
+    socket.on('cve:created', handlers.handleCVECreated);
+    socket.on('cve:updated', handlers.handleCVEUpdated);
+    socket.on('cve:deleted', handlers.handleCVEDeleted);
 
     socket.emit(SOCKET_EVENTS.SUBSCRIBE_CVES);
     logger.info('CVE 업데이트 구독 요청 전송', {
@@ -402,24 +439,29 @@ export const useCVEListUpdates = () => {
       socketId: socket.id,
       connected
     });
+    
+    isSubscribedRef.current = true;
 
     return () => {
+      if (!socket) return;
+      
       logger.info('Socket.IO 이벤트 리스너 해제');
 
-      socket.off('cve:created', handleCVECreated);
-      socket.off('cve:updated', handleCVEUpdated);
-      socket.off('cve:deleted', handleCVEDeleted);
+      socket.off('cve:created', handlers.handleCVECreated);
+      socket.off('cve:updated', handlers.handleCVEUpdated);
+      socket.off('cve:deleted', handlers.handleCVEDeleted);
 
       socket.emit(SOCKET_EVENTS.UNSUBSCRIBE_CVES);
       logger.info('CVE 업데이트 구독 해제 요청 전송', {
         eventName: SOCKET_EVENTS.UNSUBSCRIBE_CVES,
-        socketId: socket.id,
-        connected
+        socketId: socket.id
       });
+      
+      isSubscribedRef.current = false;
     };
-  }, [socket, connected, handleCVECreated, handleCVEUpdated, handleCVEDeleted]);
+  }, []); // 의존성 배열을 비워 마운트/언마운트 시에만 실행
 
-  return { isConnected: connected };
+  return { isConnected: connectedRef.current };
 };
 
 export const useCVESubscription = (cveId: string) => {

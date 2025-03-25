@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   AppBar,
   Toolbar,
@@ -29,6 +29,7 @@ import { getAnimalEmoji } from '../utils/avatarUtils';
 import SearchIcon from '@mui/icons-material/Search';
 import WifiIcon from '@mui/icons-material/Wifi';
 import WifiOffIcon from '@mui/icons-material/WifiOff';
+import { SOCKET_EVENTS, SOCKET_STATE } from '../services/socketio/constants';
 
 interface HeaderProps {
   onOpenCVEDetail?: (cveId: string, commentId?: string) => void;
@@ -41,17 +42,52 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
   const { enqueueSnackbar } = useSnackbar();
   const navigate = useNavigate();
   
-  // 웹소켓 상태 관련 변수
+  // 웹소켓 연결 상태 관리
+  const socketIORef = useRef(socketIO);
+  const [connectionState, setConnectionState] = useState<boolean>(socketIO.connected);
+  
+  // 메뉴 및 재연결 관련 상태
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
   const lastConnectionAttemptRef = useRef<number>(0);
   
-  // socketIO 객체의 안정적인 참조를 위한 ref
-  const socketIORef = useRef(socketIO);
-  const connectedRef = useRef(socketIO.connected);
+  // socketIO 객체 관련 useEffect 수정
+  useEffect(() => {
+    // socketIO 객체만 ref에 업데이트
+    socketIORef.current = socketIO;
+  }, [socketIO]); // socketIO를 의존성으로 유지
 
-  // 연결 상태 표시를 위한 state 추가
-  const [connectionState, setConnectionState] = useState<boolean>(socketIO.connected);
+  // 초기 마운트 시 연결 상태 설정을 위한 별도 useEffect
+  useEffect(() => {
+    // 컴포넌트 마운트 시 한 번만 초기 연결 상태 설정
+    setConnectionState(socketIO.connected);
+    
+    // 연결 상태 변경 이벤트 구독
+    const handleConnectionStateChange = (data) => {
+      const newConnectionState = data.state === SOCKET_STATE.CONNECTED;
+      
+      // 함수형 업데이트를 사용하여 최신 상태 참조
+      setConnectionState(prevState => {
+        // 상태가 실제로 변경될 때만 업데이트
+        if (prevState !== newConnectionState) {
+          // 연결이 복구되었을 경우 재연결 상태 업데이트
+          if (newConnectionState && isReconnecting) {
+            setIsReconnecting(false);
+          }
+          return newConnectionState;
+        }
+        return prevState;
+      });
+    };
+    
+    // 이벤트 구독 
+    const unsubscribe = socketIO.subscribeEvent(SOCKET_EVENTS.CONNECTION_STATE_CHANGE, handleConnectionStateChange);
+    
+    // 클린업 함수
+    return () => {
+      unsubscribe();
+    };
+  }, []); // 빈 의존성 배열 사용하여 마운트/언마운트 시에만 실행
 
   // 메뉴 열기/닫기 핸들러
   const handleMenu = (event: React.MouseEvent<HTMLElement>) => {
@@ -62,8 +98,8 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
     setAnchorEl(null);
   };
 
-  // 재연결 핸들러
-  const handleReconnect = () => {
+  // 재연결 핸들러 최적화
+  const handleReconnect = useCallback(() => {
     // 마지막 연결 시도로부터 3초 이내에는 재시도 방지
     const now = Date.now();
     if (lastConnectionAttemptRef.current && now - lastConnectionAttemptRef.current < 3000) {
@@ -75,28 +111,30 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
     }
     
     lastConnectionAttemptRef.current = now;
-    setIsReconnecting(true);
     
-    // 연결 상태 이벤트 발생 - SocketIOContext에서 처리
-    if (socketIO.emit) {
-      socketIO.emit('request_reconnect');
-    }
-    
-    // 5초 후 재연결 상태 초기화
-    setTimeout(() => {
-      setIsReconnecting(false);
-    }, 5000);
-  };
+    // 이미 재연결 중이 아닐 때만 상태 업데이트
+    setIsReconnecting(prev => {
+      if (!prev) {
+        // 실제 연결 로직
+        if (socketIORef.current.emit) {
+          socketIORef.current.emit('request_reconnect');
+        }
+        
+        // 5초 후 재연결 상태 초기화
+        setTimeout(() => {
+          setIsReconnecting(false);
+        }, 5000);
+        
+        return true; // 재연결 시작
+      }
+      return prev; // 이미 재연결 중이면 상태 유지
+    });
+  }, [enqueueSnackbar]); // socketIO 의존성 제거하고 socketIORef 사용
 
   // 연결 상태 렌더링 함수
-  const renderConnectionStatus = () => {
-    // 디버깅을 위한 로그 추가
-    console.log('Header: renderConnectionStatus 호출됨', {
-      socketConnected: socketIO.connected,
-      connectionState
-    });
-    
-    if (socketIO.connected) {
+  const renderConnectionStatus = useCallback(() => {
+    // 불필요한 렌더링을 줄이기 위해 최적화
+    if (connectionState) {
       return (
         <Tooltip title="서버에 연결됨">
           <IconButton
@@ -143,7 +181,7 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
         </Tooltip>
       );
     }
-  };
+  }, [connectionState, isReconnecting, theme.palette, handleReconnect]); // 모든 의존성 명시적으로 포함
 
   // 로그아웃 처리
   const handleLogout = async () => {
@@ -169,82 +207,6 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
 
   // 이메일이 없는 경우 기본 아바타 사용
   const animalEmoji = user?.email ? getAnimalEmoji(user.email) : '👤';
-
-  // socketIO 객체 업데이트 시 ref 업데이트
-  useEffect(() => {
-    socketIORef.current = socketIO;
-    // 실제 연결 상태 업데이트 - socket.connected 값을 직접 사용
-    const actualConnected = socketIO.connected;
-    connectedRef.current = actualConnected;
-    // 상태 업데이트로 UI 렌더링 트리거
-    setConnectionState(actualConnected);
-    
-    // 디버깅을 위한 로그 추가
-    console.log('Header: socketIO 업데이트', {
-      connected: socketIO.connected,
-      socketInstance: !!socketIO.socket,
-      socketInstanceConnected: socketIO.socket?.connected,
-      connectedRef: connectedRef.current,
-      connectionState
-    });
-  }, [socketIO, socketIO.connected]);
-
-  // 웹소켓 연결 상태 모니터링 - 컴포넌트 마운트 시 한 번만 설정
-  useEffect(() => {
-    // 초기 연결 상태 확인
-    let prevConnectionState = connectedRef.current;
-    
-    // 연결 상태 변경 감지 함수
-    const handleConnectionChange = () => {
-      // 소켓 인스턴스가 있는지 확인하고 실제 연결 상태 가져오기
-      const currentConnected = socketIORef.current.connected;
-      
-      // 디버깅을 위한 로그 추가
-      console.log('Header: 연결 상태 확인', { 
-        prev: prevConnectionState, 
-        current: currentConnected,
-        socketInstance: !!socketIORef.current.socket,
-        socketInstanceConnected: socketIORef.current.socket?.connected,
-        changed: currentConnected !== prevConnectionState
-      });
-      
-      // 연결 상태가 변경된 경우에만 처리
-      if (currentConnected !== prevConnectionState) {
-        console.log('Header: 연결 상태 변경 감지', { 
-          prev: prevConnectionState, 
-          current: currentConnected 
-        });
-        
-        // 연결됨 -> 연결 끊김
-        if (prevConnectionState && !currentConnected) {
-          enqueueSnackbar('서버 연결이 끊어졌습니다', {
-            variant: 'error',
-            anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-          });
-        }
-        // 연결 끊김 -> 연결됨
-        else if (!prevConnectionState && currentConnected) {
-          enqueueSnackbar('서버에 연결되었습니다', {
-            variant: 'success',
-            anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-          });
-        }
-        
-        // 상태 업데이트
-        prevConnectionState = currentConnected;
-        connectedRef.current = currentConnected;
-        setConnectionState(currentConnected);
-      }
-    };
-    
-    // 주기적으로 연결 상태 확인 (100ms 간격으로 변경하여 더 빠르게 감지)
-    const intervalId = setInterval(handleConnectionChange, 100);
-    
-    // 컴포넌트 언마운트 시 인터벌 정리
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, []); // 빈 의존성 배열로 컴포넌트 마운트 시 한 번만 실행
 
   return (
     <AppBar 

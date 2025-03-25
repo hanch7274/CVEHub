@@ -227,7 +227,7 @@ export interface UserUnsubscribedMessage extends SocketMessage {
  * 소켓 컨텍스트 인터페이스
  */
 export interface SocketContextType {
-  socket: Socket;
+  socket: Socket | null;
   connected: boolean;
   error: Error | null;
   connecting: boolean;

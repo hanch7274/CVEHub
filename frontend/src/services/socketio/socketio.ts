@@ -871,8 +871,7 @@ class SocketIOService implements ISocketIOService {
   
   // connected 속성에 대한 getter
   get connected(): boolean {
-    // socket.connected 값만 확인 (isConnected는 상태 변경 이벤트 발생 후에 업데이트되므로 신뢰할 수 없음)
-    return this.socket?.connected === true;
+    return this.socket !== null && this.socket.connected === true;
   }
 
   // 소켓 인스턴스 반환

@@ -20,6 +20,7 @@ const WebSocketQueryBridge = () => {
   const initAttemptRef = useRef(0);
   const maxInitAttempts = 5;
   const { enqueueSnackbar } = useSnackbar();
+  const eventHandlersSetupRef = useRef(false);
 
   useEffect(() => {
     // 컨텍스트에서 소켓 정보 가져오기
@@ -45,6 +46,11 @@ const WebSocketQueryBridge = () => {
         logger.warn('WebSocketQueryBridge', 'Socket.IO 연결되지 않음, 이벤트 리스너 설정 지연');
         initAttemptRef.current += 1;
       }
+      return;
+    }
+    
+    // 이미 이벤트 리스너가 설정되어 있다면 중복 설정 방지
+    if (eventHandlersSetupRef.current) {
       return;
     }
 
@@ -91,6 +97,9 @@ const WebSocketQueryBridge = () => {
       activeSocket.on(SOCKET_EVENTS.CVE_DELETED, handleCVEDeleted);
       activeSocket.on(SOCKET_EVENTS.SUBSCRIPTION_UPDATED, handleSubscriptionUpdated);
       
+      // 이벤트 핸들러 설정 완료 표시
+      eventHandlersSetupRef.current = true;
+      
       logger.info('WebSocketQueryBridge', '이벤트 리스너 등록 완료');
     } catch (error) {
       logger.error('WebSocketQueryBridge', '이벤트 리스너 등록 오류', error);
@@ -98,9 +107,8 @@ const WebSocketQueryBridge = () => {
 
     // 클린업 함수
     return () => {
-      if (initAttemptRef.current < maxInitAttempts) {
-        logger.info('WebSocketQueryBridge', '소켓 이벤트 리스너 해제');
-      }
+      // 컴포넌트가 언마운트될 때만 이벤트 리스너 해제
+      logger.info('WebSocketQueryBridge', '소켓 이벤트 리스너 해제');
       
       try {
         if (activeSocket) {
@@ -108,12 +116,15 @@ const WebSocketQueryBridge = () => {
           activeSocket.off(SOCKET_EVENTS.CVE_UPDATED, handleCVEUpdated);
           activeSocket.off(SOCKET_EVENTS.CVE_DELETED, handleCVEDeleted);
           activeSocket.off(SOCKET_EVENTS.SUBSCRIPTION_UPDATED, handleSubscriptionUpdated);
+          
+          // 이벤트 핸들러 제거 표시
+          eventHandlersSetupRef.current = false;
         }
       } catch (error) {
         logger.error('WebSocketQueryBridge', '이벤트 리스너 해제 오류', error);
       }
     };
-  }, [socketIO, queryClient]);
+  }, [queryClient]); // socketIO 의존성 제거, queryClient만 유지
 
   return null; // 이 컴포넌트는 UI를 렌더링하지 않습니다
 };

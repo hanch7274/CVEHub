@@ -71,7 +71,7 @@ export const SOCKET_EVENTS = {
   CVE_CACHE_INVALIDATED: 'cve_cache_invalidated', // 프론트엔드 전용: CVE 캐시 무효화
   ALL_CACHE_INVALIDATED: 'all_cache_invalidated', // 프론트엔드 전용: 모든 캐시 무효화
   CACHE_STATUS_UPDATE: 'cache_status_update', // 프론트엔드 전용: 캐시 상태 업데이트
-};
+} as const;
 
 /**
  * Socket.IO 연결 상태 상수
@@ -81,7 +81,7 @@ export const SOCKET_STATE = {
   CONNECTING: 'connecting',
   CONNECTED: 'connected',
   ERROR: 'error'
-};
+} as const;
 
 /**
  * 웹소켓 이벤트 로깅 관련 상수
@@ -95,7 +95,7 @@ export const WS_LOG_CONTEXT = {
   TARGET_ID: 'targetId',        // 대상 ID (CVE ID, 댓글 ID 등)
   LATENCY: 'latency',           // 지연 시간 (ms)
   STATUS: 'status'              // 상태 (성공/실패)
-};
+} as const;
 
 /**
  * 웹소켓 이벤트 방향
@@ -103,7 +103,7 @@ export const WS_LOG_CONTEXT = {
 export const WS_DIRECTION = {
   INCOMING: 'incoming', // 수신
   OUTGOING: 'outgoing'  // 발신
-};
+} as const;
 
 /**
  * 웹소켓 이벤트 상태
@@ -112,6 +112,24 @@ export const WS_STATUS = {
   SUCCESS: 'success',   // 성공
   FAILURE: 'failure',   // 실패
   PENDING: 'pending'    // 대기 중
-};
+} as const;
+
+// 타입 유틸리티: 객체의 값 타입을 추출
+export type ValueOf<T> = T[keyof T];
+
+// 각 상수에 대한 타입 정의
+export type SocketEvent = ValueOf<typeof SOCKET_EVENTS>;
+export type SocketState = ValueOf<typeof SOCKET_STATE>;
+export type WSLogContext = ValueOf<typeof WS_LOG_CONTEXT>;
+export type WSDirection = ValueOf<typeof WS_DIRECTION>;
+export type WSStatus = ValueOf<typeof WS_STATUS>;
+
+// 이벤트 핸들러 타입
+export type SocketEventHandler<T = any> = (data: T) => void;
+
+// ConnectionStateChangeEvent 타입 정의
+export interface ConnectionStateChangeEvent {
+  state: SocketState;
+}
 
 export default SOCKET_EVENTS;

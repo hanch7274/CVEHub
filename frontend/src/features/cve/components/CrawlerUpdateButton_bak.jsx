@@ -40,7 +40,7 @@ import { useSocketIO } from '../../../contexts/SocketIOContext'; // 중앙 집�
 import { formatDistance } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import logger, { LOG_LEVEL } from '../../../utils/logging';
-import { SOCKET_EVENTS } from '../../../services/socketio/constants';
+import { SOCKET_EVENTS, SOCKET_STATE } from '../../../services/socketio/constants';
 import useWebSocketHook from '../../../api/hooks/useWebSocketHook'; // 웹소켓 훅 사용
 
 // 로그 레벨 설정 (개발 환경에서 디버그 레벨로 설정)
@@ -520,6 +520,40 @@ const CrawlerUpdateButton = () => {
     }
   }, [enqueueSnackbar, queryClient, stopPolling]);
 
+  // 연결 상태 관리를 위한 상태 추가
+  const [isSocketConnected, setIsSocketConnected] = useState(socketIO.connected);
+
+  // 웹소켓 연결 상태 이벤트 구독
+  useEffect(() => {
+    // 초기 상태 설정
+    setIsSocketConnected(socketIO.connected);
+    
+    // 연결 상태 변경 이벤트 구독
+    const unsubscribe = socketIO.subscribeEvent(SOCKET_EVENTS.CONNECTION_STATE_CHANGE, (data) => {
+      const newConnectionState = data.state === SOCKET_STATE.CONNECTED;
+      
+      // 상태 업데이트는 항상 함수형 업데이트 사용
+      setIsSocketConnected(prevState => {
+        // 이전 상태와 다를 때만 로그 출력 및 상태 업데이트
+        if (prevState !== newConnectionState) {
+          if (process.env.NODE_ENV === 'development') {
+            console.log('CrawlerUpdateButton: 연결 상태 변경됨', {
+              state: data.state,
+              isConnected: newConnectionState
+            });
+          }
+          return newConnectionState;
+        }
+        return prevState;
+      });
+    });
+    
+    // 클린업 함수
+    return () => {
+      unsubscribe();
+    };
+  }, [socketIO]);
+  
   // 크롤러 업데이트 이벤트 핸들러
   const handleCrawlerUpdateEvent = useCallback((data) => {
     logger.info('CrawlerUpdateButton', '크롤러 업데이트 이벤트 수신', {
@@ -545,36 +579,37 @@ const CrawlerUpdateButton = () => {
   useWebSocketHook(SOCKET_EVENTS.CRAWLER_UPDATE_PROGRESS, handleCrawlerUpdateEvent, {
     optimisticUpdate: false // 낙관적 업데이트는 불필요
   });
-  
-  // 웹소켓 연결 상태 모니터링 
+
+  // 웹소켓 연결 상태에 따른 폴링 제어
   useEffect(() => {
-    logger.info('CrawlerUpdateButton', '웹소켓 연결 상태 모니터링 시작', {
-      isConnected: socketIO.connected,
-      socketInstance: !!socketIO.socket,
-      socketInstanceConnected: socketIO.socket?.connected
-    });
-    
-    // 폴링은 웹소켓 연결이 불안정한 경우의 백업 메커니즘으로 유지
-    if (isRunning && !socketIO.connected) {
-      logger.info('CrawlerUpdateButton', '웹소켓 연결 없음 - 폴링 시작');
-      startPolling();
-    } else if (!isRunning && pollTimer) {
-      // 실행 중이 아니라면 폴링 중지
+    if (isRunning) {
+      if (!isSocketConnected) {
+        // 웹소켓 연결이 없으면 폴링으로 대체
+        if (!pollTimer) {
+          logger.info('CrawlerUpdateButton', '웹소켓 연결 없음 - 폴링 시작');
+          startPolling();
+        }
+      } else if (lastWebSocketUpdate) {
+        // 웹소켓 연결이 복구되고 이전에 웹소켓 이벤트를 받은 적이 있으면 폴링 중지
+        if (pollTimer) {
+          logger.info('CrawlerUpdateButton', '웹소켓 연결 복구됨 - 폴링 중지');
+          stopPolling();
+        }
+      }
+    } else if (pollTimer) {
+      // 크롤러가 실행 중이 아니면 폴링 중지
       logger.info('CrawlerUpdateButton', '크롤러 실행 중지됨 - 폴링 중지');
-      stopPolling();
-    } else if (isRunning && socketIO.connected && lastWebSocketUpdate) {
-      // 웹소켓 연결이 있고 이전에 웹소켓 업데이트가 있었다면 폴링 중지
-      logger.info('CrawlerUpdateButton', '웹소켓 연결 복구됨 - 폴링 중지');
       stopPolling();
     }
     
+    // 컴포넌트 언마운트 시 정리
     return () => {
-      // 컴포넌트 언마운트 시 폴링 정리
       if (pollTimer) {
+        logger.info('CrawlerUpdateButton', '컴포넌트 언마운트 - 폴링 중지');
         stopPolling();
       }
     };
-  }, [socketIO.connected, isRunning, pollTimer, lastWebSocketUpdate, stopPolling]);
+  }, [isSocketConnected, isRunning, pollTimer, lastWebSocketUpdate, startPolling, stopPolling]);
 
   // 상태 초기화
   useEffect(() => {
