@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     # App settings
     PROJECT_NAME: str = "CVEHub"
     VERSION: str = "1.0.0"
-    CORS_ORIGINS: List[str] = ["*"]
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     # Database settings
     MONGODB_URL: str
@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     WS_PING_INTERVAL: int = 30
     WS_PING_TIMEOUT: int = 10
     WS_CLOSE_TIMEOUT: int = 5
+    WS_MAX_HTTP_BUFFER_SIZE: int = 1024 * 1024  # 1MB
+    WS_ENGINEIO_LOGGER: bool = False
+    WS_CLEANUP_INTERVAL: int = 300  # 5분마다 정리
     LOG_PING_PONG: bool = False
     
     # 데이터 디렉토리 설정 추가

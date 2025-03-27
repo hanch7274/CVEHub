@@ -261,6 +261,31 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     comments: 0
   });
 
+  // 소켓 참조를 useRef로 관리하여 이벤트 핸들러에서 항상 최신 값 참조
+  const socketRef = useRef(socket);
+  const connectedRef = useRef(connected);
+
+  // 소켓 및 연결 상태 업데이트
+  useEffect(() => {
+    // 소켓 참조 업데이트
+    socketRef.current = socket;
+    connectedRef.current = connected;
+    
+    // 디버깅 정보 업데이트
+    setSocketDebugInfo({
+      hasSocket: !!socket,
+      socketId: socket?.id,
+      connected,
+      lastUpdated: Date.now()
+    });
+    
+    logger.info('CVEDetail', '소켓 참조 업데이트됨', {
+      socketId: socket?.id,
+      connected,
+      hasSocket: !!socket
+    });
+  }, [socket, connected]);
+
   // 불필요한 타이머 관련 ref 제거
   const snackbarShown = useRef(false);
   const refreshTriggersRef = useRef(refreshTriggers);
@@ -271,6 +296,14 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
   useEffect(() => {
     currentUserRef.current = currentUser;
   }, [currentUser]);
+
+  // 소켓 디버깅 상태
+  const [socketDebugInfo, setSocketDebugInfo] = useState({
+    hasSocket: false,
+    socketId: undefined,
+    connected: false,
+    lastUpdated: Date.now()
+  });
 
   // 구독 기능 (Socket.IO)
   const { 
@@ -414,7 +447,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
   const { mutate: updateCVEField } = useUpdateCVEField();
 
   // 필드 업데이트 처리 - 낙관적 업데이트 적용
-  const handleFieldUpdate = useCallback((field, value) => {
+  const handleFieldUpdate = useCallback(async (field, value) => {
     if (!propsCveId || !field) return;
     
     // 필드 이름 매핑 (프론트엔드 camelCase -> 백엔드 snake_case)
@@ -481,37 +514,6 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
               predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === QUERY_KEYS.CVE.list
             });
           }
-          
-          // 성공 알림
-          if (!snackbarShown.current) {
-            snackbarShown.current = true;
-            
-            // 필드 이름을 사용자 친화적으로 변환
-            let fieldName;
-            switch(field) {
-              case 'all': fieldName = '전체'; break;
-              case 'poc': fieldName = 'PoC'; break;
-              case 'snortRules': fieldName = 'Snort Rules'; break;
-              case 'references': fieldName = '참고자료'; break;
-              case 'comments': fieldName = '댓글'; break;
-              case 'status': fieldName = '상태'; break;
-              case 'title': fieldName = '제목'; break;
-              case 'description': fieldName = '설명'; break;
-              default: fieldName = field;
-            }
-            
-            // 알림 메시지 설정
-            const message = `${fieldName} 데이터를 업데이트했습니다`;
-            
-            // 스낵바 표시
-            enqueueSnackbar(message, {
-              variant: 'success',
-              autoHideDuration: 2000,
-              onClose: () => { snackbarShown.current = false; }
-            });
-          }
-          
-          setLoading(false);
         },
         onError: (err) => {
           logger.error('CVEDetail', `필드 업데이트 실패: ${field}`, { error: err.message });
@@ -526,8 +528,6 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
             variant: 'error',
             anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
           });
-          
-          setLoading(false);
         }
       }
     );
@@ -651,188 +651,148 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     setLoading(false);
   }, [enqueueSnackbar, propsCveId, queryClient, loading, isQueryLoading]);
 
-  // Socket.IO 업데이트 리스너 - 최적화
-  useEffect(() => {
-    if (!propsCveId || !open) return;
+  // 웹소켓 이벤트 핸들러를 useCallback으로 안정화
+  const handleCVEUpdated = useCallback((data) => {
+    if (!data || !(data.cveId === propsCveId || data.id === propsCveId)) return;
     
-    logger.info('CVEDetail', `${propsCveId} 업데이트 이벤트 리스닝 시작`);
+    logger.info('CVEDetail', 'CVE 업데이트 이벤트 수신', {
+      dataId: data.id || data.cveId,
+      propsCveId,
+      type: data.field_key || 'general'
+    });
     
-    // 소켓 객체가 없거나 연결되지 않은 경우
-    if (!socket) {
-      logger.warn('CVEDetail', '소켓 객체가 초기화되지 않았습니다. 실시간 업데이트가 제한됩니다.');
+    // 이미 처리된 업데이트인지 확인
+    const fieldKey = data.field_key || 'general';
+    const updateId = data.updateId || Date.now();
+    
+    if (lastProcessedUpdateIdRef.current[fieldKey] === updateId) {
+      logger.info('CVEDetail', `중복 업데이트 무시: ${fieldKey}, ID: ${updateId}`);
       return;
     }
     
-    // 캐시 업데이트 함수 - 낙관적 업데이트에 사용
-    const updateCacheData = (cachedData, eventData) => {
-      if (!cachedData || !eventData || !eventData.data) {
-        return cachedData;
-      }
-      
-      logger.info('CVEDetail', '캐시 데이터 직접 업데이트', { 
-        field: eventData.field_key || 'general',
-        updateId: eventData.updateId || Date.now()
-      });
-      
-      const fieldKey = eventData.field_key || 'general';
-      const updatedData = { ...cachedData };
-      
-      // 업데이트할 데이터가 있는 경우
-      if (eventData.data) {
-        if (fieldKey === 'all') {
-          // 전체 데이터 업데이트
-          Object.assign(updatedData, eventData.data);
-        } else if (fieldKey === 'poc' && eventData.data.pocs) {
-          // PoC 업데이트
-          updatedData.pocs = eventData.data.pocs;
-        } else if (fieldKey === 'snortRules' && eventData.data.snortRules) {
-          // Snort Rules 업데이트
-          updatedData.snortRules = eventData.data.snortRules;
-        } else if (fieldKey === 'references' && eventData.data.references) {
-          // 참고자료 업데이트
-          updatedData.references = eventData.data.references;
-        } else if (fieldKey === 'status' && eventData.data.status) {
-          // 상태 업데이트
-          updatedData.status = eventData.data.status;
-        } else if (fieldKey === 'title' && eventData.data.title) {
-          // 제목 업데이트
-          updatedData.title = eventData.data.title;
-        } else if (fieldKey === 'description' && eventData.data.description) {
-          // 설명 업데이트
-          updatedData.description = eventData.data.description;
-        }
-      }
-      
-      // refreshTriggers 업데이트
-      const currentTrigger = refreshTriggersRef.current[fieldKey] || 0;
-      setRefreshTriggers(prev => {
-        const newTriggers = { ...prev };
-        newTriggers[fieldKey] = currentTrigger + 1;
-        refreshTriggersRef.current = newTriggers;
-        return newTriggers;
-      });
-      
-      // 업데이트 ID 저장
-      const updateId = eventData.updateId || Date.now();
-      lastProcessedUpdateIdRef.current[fieldKey] = updateId;
-      
-      // 리프레시 알림 표시
-      if (!snackbarShown.current) {
-        snackbarShown.current = true;
-        
-        // 필드 이름을 사용자 친화적으로 변환
-        let fieldName;
-        switch(fieldKey) {
-          case 'all': fieldName = '전체'; break;
-          case 'poc': fieldName = 'PoC'; break;
-          case 'snortRules': fieldName = 'Snort Rules'; break;
-          case 'references': fieldName = '참고자료'; break;
-          case 'comments': fieldName = '댓글'; break;
-          case 'status': fieldName = '상태'; break;
-          case 'title': fieldName = '제목'; break;
-          case 'description': fieldName = '설명'; break;
-          default: fieldName = fieldKey;
-        }
-        
-        // 스낵바 메시지 표시
-        enqueueSnackbar(`${fieldName} 필드가 성공적으로 업데이트되었습니다`, {
-          variant: 'success',
-          autoHideDuration: 2000,
-          onClose: () => { snackbarShown.current = false; }
-        });
-      }
-      
-      return updatedData;
-    };
+    // 댓글 필드는 별도로 처리
+    if (fieldKey === 'comments') {
+      // 댓글은 별도의 쿼리로 처리되므로 여기서는 무시
+      return;
+    }
     
-    // 웹소켓 이벤트 핸들러
-    const handleCVEUpdated = (data) => {
-      if (data && (data.cveId === propsCveId || data.id === propsCveId)) {
-        logger.info('CVEDetail', 'CVE 업데이트 이벤트 수신', data);
-        
-        // 이미 처리된 업데이트인지 확인
-        const fieldKey = data.field_key || 'general';
-        const updateId = data.updateId || Date.now();
-        
-        if (lastProcessedUpdateIdRef.current[fieldKey] === updateId) {
-          logger.info('CVEDetail', `중복 업데이트 무시: ${fieldKey}, ID: ${updateId}`);
-          return;
-        }
-        
-        // 댓글 필드는 별도로 처리
-        if (fieldKey === 'comments') {
-          // 댓글은 별도의 쿼리로 처리되므로 여기서는 무시
-          return;
-        }
-        
-        // 로딩 중이 아닐 때만 처리
-        if (!loading && !isQueryLoading) {
-          // 웹소켓 업데이트 처리 - 낙관적 업데이트 적용
-          handleWebSocketUpdate(data);
-        }
-      }
-    };
+    // 로딩 중이 아닐 때만 처리
+    if (!loading && !isQueryLoading) {
+      // 웹소켓 업데이트 처리 - 낙관적 업데이트 적용
+      handleWebSocketUpdate(data);
+    }
+  }, [propsCveId, handleWebSocketUpdate, loading, isQueryLoading]);
+
+  // 이벤트 리스너 등록 및 해제 (분리된 useEffect)
+  useEffect(() => {
+    if (!propsCveId || !open) return;
     
+    // socket과 connected 상태를 모두 확인
+    if (!socketRef.current || !connectedRef.current) {
+      logger.warn('CVEDetail', '소켓 객체가 초기화되지 않았거나 연결되지 않았습니다', {
+        hasSocket: !!socketRef.current,
+        socketId: socketRef.current?.id,
+        connected: connectedRef.current
+      });
+      return;
+    }
+    
+    const currentSocket = socketRef.current;
+    
+    // 소켓 연결 상태 확인 및 로그
+    logger.info('CVEDetail', '소켓 이벤트 리스너 등록 중', {
+      socketId: currentSocket.id,
+      connected: connectedRef.current,
+      event: 'cve_updated'
+    });
+
     try {
-      // Socket.IO 이벤트 등록
-      socket.on('cve_updated', handleCVEUpdated);
+      // 소켓이 존재하고 연결된 상태일 때만 이벤트 리스너 등록
+      currentSocket.on('cve_updated', handleCVEUpdated);
       
-      return () => {
-        // 이벤트 리스너 제거 시도 (소켓이 여전히 존재하는 경우만)
-        if (socket) {
-          socket.off('cve_updated', handleCVEUpdated);
-        }
-      };
+      logger.info('CVEDetail', '소켓 이벤트 리스너 등록 성공', {
+        event: 'cve_updated',
+        socketId: currentSocket.id
+      });
     } catch (error) {
-      logger.error('CVEDetail', '소켓 이벤트 리스너 설정 중 오류 발생', {
+      logger.error('CVEDetail', '소켓 이벤트 리스너 등록 실패', {
         error: error.message,
         stack: error.stack
       });
-      return () => {}; // 오류 발생 시 빈 클린업 함수 반환
     }
-  }, [propsCveId, open, socket, handleWebSocketUpdate, loading, isQueryLoading]);
-  
-  // 구독 기능 (Socket.IO)
+    
+    // 컴포넌트 언마운트 또는 의존성 변경 시 이벤트 리스너 제거
+    return () => {
+      try {
+        if (currentSocket && currentSocket.connected) {
+          logger.info('CVEDetail', '소켓 이벤트 리스너 제거', {
+            socketId: currentSocket.id,
+            event: 'cve_updated'
+          });
+          currentSocket.off('cve_updated', handleCVEUpdated);
+        }
+      } catch (error) {
+        logger.error('CVEDetail', '소켓 이벤트 리스너 제거 중 오류 발생', {
+          error: error.message
+        });
+      }
+    };
+  }, [propsCveId, open, handleCVEUpdated]);
+
+  // CVE 구독 처리
   useEffect(() => {
     if (!propsCveId || !open) return;
-
-    // 소켓 연결이 없는 경우 구독 시도하지 않음
-    if (!connected || !socket) {
-      logger.warn('CVEDetail', '소켓 연결이 없어 구독을 시도하지 않습니다.');
-      return;
+    
+    // 소켓 연결 상태를 상세히 로깅
+    logger.info('CVEDetail', '소켓 연결 상태 확인', {
+      connected: connectedRef.current,
+      socketExists: !!socketRef.current,
+      socketId: socketRef.current?.id,
+      readyForSubscription: !!(connectedRef.current && socketRef.current && socketRef.current.id && subscribe)
+    });
+    
+    // 안전 체크: 소켓이 연결되고 소켓 객체가 유효할 때만 구독 시도
+    if (connectedRef.current && socketRef.current && socketRef.current.id && subscribe) {
+      logger.info('CVEDetail', `CVE 구독 시도: ${propsCveId}`, {
+        socketId: socketRef.current.id
+      });
+      
+      try {
+        const subscriptionResult = subscribe();
+        
+        if (!subscriptionResult) {
+          logger.warn('CVEDetail', `CVE ${propsCveId} 구독 요청 실패`);
+        } else {
+          logger.info('CVEDetail', `CVE ${propsCveId} 구독 성공`);
+        }
+        
+      } catch (error) {
+        logger.error('CVEDetail', `CVE 구독 중 오류 발생: ${error.message}`);
+      }
+    } else {
+      logger.warn('CVEDetail', '소켓이 준비되지 않아 CVE 구독을 건너뜁니다', {
+        connected: connectedRef.current,
+        hasSocket: !!socketRef.current,
+        socketId: socketRef.current?.id,
+        hasSubscribeFunction: !!subscribe
+      });
     }
-
-    logger.info('CVEDetail', `CVE ${propsCveId} 업데이트 이벤트 리스닝 시작`);
-    logger.info('CVEDetail', `CVE 구독 시도: ${propsCveId}`);
-    
-    // 구독 요청 전송
-    const subscriptionResult = subscribe ? subscribe() : false;
-    
-    if (!subscriptionResult) {
-      logger.warn('CVEDetail', `CVE ${propsCveId} 구독 요청 실패`);
-    }
-    
-    // 브라우저 종료/새로고침 시 구독 해제 처리
-    const handleBeforeUnload = () => {
-      logger.info('CVEDetail', `브라우저 종료/새로고침 - CVE 구독 해제: ${propsCveId}`);
-      if (unsubscribe) unsubscribe();
-    };
-    
-    // 브라우저 종료/새로고침 이벤트 리스너 등록
-    window.addEventListener('beforeunload', handleBeforeUnload);
     
     // 클린업 함수
     return () => {
-      // 컴포넌트가 언마운트되거나 propsCveId, open, connected가 변경될 때만 실행
-      if (propsCveId && connected && socket && unsubscribe) {
-        logger.info('CVEDetail', `CVE 구독 해제: ${propsCveId}`);
-        unsubscribe();
+      if (propsCveId && connectedRef.current && socketRef.current && socketRef.current.id && unsubscribe) {
+        logger.info('CVEDetail', `CVE 구독 해제: ${propsCveId}`, {
+          socketId: socketRef.current.id
+        });
+        
+        try {
+          unsubscribe();
+        } catch (error) {
+          logger.error('CVEDetail', `CVE 구독 해제 중 오류 발생: ${error.message}`);
+        }
       }
-      
-      // 브라우저 이벤트 리스너 제거
-      window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [propsCveId, open, connected, socket, subscribe, unsubscribe]);
+  }, [propsCveId, open, subscribe, unsubscribe]);
 
   // 구독자 정보 업데이트
   useEffect(() => {
@@ -855,7 +815,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
   // 연결 상태 변경 시 알림
   useEffect(() => {
     if (open) {
-      if (!connected) {
+      if (!connectedRef.current) {
         logger.warn('CVEDetail', 'WebSocket 연결이 없습니다. 실시간 업데이트가 제한됩니다.');
         enqueueSnackbar('서버 연결 상태를 확인해주세요. 실시간 업데이트가 제한됩니다.', { 
           variant: 'warning',
@@ -864,7 +824,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
         });
       }
     }
-  }, [open, connected, enqueueSnackbar]);
+  }, [open, enqueueSnackbar]);
 
   // 로딩 상태 계산 - 수정
   const isLoading = useMemo(() => {
@@ -941,7 +901,6 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     // 여기에 필요한 권한 체크 로직 추가
     return true; // 현재는 항상 true 반환, 필요시 권한 로직 구현
   }, []);
-
 
   // Severity 옵션 정의
   const SEVERITY_OPTIONS = [
@@ -1020,10 +979,10 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
   // 자식 컴포넌트에 전달할 메시지 전송 함수
   const sendMessage = useCallback(async (type, data) => {
     // 소켓이 초기화되지 않았거나 연결되어 있지 않은 경우
-    if (!socket || !connected) {
+    if (!socketRef.current || !connectedRef.current) {
       logger.warn('CVEDetail', '소켓 연결이 없어 메시지를 보낼 수 없습니다', {
-        socketExists: !!socket,
-        connected,
+        socketExists: !!socketRef.current,
+        connected: connectedRef.current,
         messageType: type
       });
       
@@ -1056,7 +1015,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       
       try {
         // 실제 메시지 전송 (Socket.IO emit)
-        socket.emit(type, {
+        socketRef.current.emit(type, {
           cve_id: propsCveId,
           ...data
         });
@@ -1104,7 +1063,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       enqueueSnackbar('메시지 전송 실패', { variant: 'error' });
       throw error;
     }
-  }, [socket, connected, propsCveId, enqueueSnackbar, queryClient, loading, isQueryLoading]);
+  }, [socketRef, connectedRef, propsCveId, enqueueSnackbar, queryClient, loading, isQueryLoading]);
 
   // 에러 다이얼로그 렌더링
   const renderErrorDialog = () => {
@@ -1171,7 +1130,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
   // WebSocket 연결 상태가 변경될 때 캐시 무효화
   useEffect(() => {
     // Socket.IO가 연결되었을 때만 실행
-    if (connected && propsCveId && !loading && !isQueryLoading) {
+    if (connectedRef.current && propsCveId && !loading && !isQueryLoading) {
       logger.info('CVEDetail', 'Socket 연결됨, 데이터 갱신 검토');
       
       // 마지막 데이터 업데이트 시간 확인
@@ -1183,7 +1142,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
         queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(propsCveId) });
       }
     }
-  }, [connected, propsCveId, dataUpdatedAt, queryClient, loading, isQueryLoading]);
+  }, [connectedRef, propsCveId, dataUpdatedAt, queryClient, loading, isQueryLoading]);
 
   if (isLoading) {
     return (

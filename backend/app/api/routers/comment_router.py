@@ -3,9 +3,9 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from beanie import PydanticObjectId
 
-from app.models.user import User
+from app.models.user_model import User
 from app.core.auth import get_current_user
-from app.schemas.comment import CommentCreate, CommentUpdate, CommentResponse
+from app.schemas.comment_schemas import CommentCreate, CommentUpdate, CommentResponse
 from app.services.comment_service import CommentService
 from app.core.dependencies import get_notification_service
 from app.services.notification import NotificationService

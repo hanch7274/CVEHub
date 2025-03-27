@@ -8,7 +8,7 @@ from fastapi.security import OAuth2PasswordBearer
 from .config import get_settings
 import logging
 import secrets
-from app.models.user import User, RefreshToken, TokenData
+from app.models.user_model import User, RefreshToken, TokenData
 
 logger = logging.getLogger(__name__)
 settings = get_settings()

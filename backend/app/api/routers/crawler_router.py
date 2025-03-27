@@ -3,13 +3,12 @@ import logging
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.models.user import User
+from app.models.user_model import User
 from app.models.cve_model import CreateCVERequest
 from app.core.auth import get_current_admin_user, get_current_user
-from app.core.dependencies import get_cve_service, get_crawler_service
-from app.services.cve_service import CVEService
+from app.core.dependencies import get_crawler_service
 from app.services.crawler_service import CrawlerService
-from app.schemas.crawler import (
+from app.schemas.crawler_schemas import (
     CrawlerResponse, 
     DBStatusResponse, 
     CrawlerStatusResponse, 

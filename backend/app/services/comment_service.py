@@ -6,9 +6,9 @@ from zoneinfo import ZoneInfo
 from beanie import PydanticObjectId
 
 from app.models.cve_model import CVEModel, Comment
-from app.models.user import User
+from app.models.user_model import User
 from app.core.socketio_manager import socketio_manager, WSMessageType
-from app.models.notification import Notification
+from app.models.notification_model import Notification
 
 logger = logging.getLogger(__name__)
 

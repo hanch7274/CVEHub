@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Tuple
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from ..models.notification import Notification, NotificationType, NotificationStatus
+from ..models.notification_model import Notification, NotificationType, NotificationStatus
 from ..core.socketio_manager import socketio_manager, WSMessageType
 import logging
 

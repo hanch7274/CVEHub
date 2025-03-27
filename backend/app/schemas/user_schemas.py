@@ -43,7 +43,7 @@ class UserResponse(UserBase):
                 "created_at": "2023-01-01T00:00:00Z",
                 "last_modified_at": "2023-01-01T00:00:00Z"
             }
-        }
+    }
 
 class UserInDB(UserBase):
     """데이터베이스 사용자 정보 스키마 (내부용)"""

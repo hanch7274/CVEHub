@@ -5,9 +5,9 @@ from beanie import PydanticObjectId
 from pymongo import DESCENDING
 from ..repositories.cve_repository import CVERepository
 from ..models.cve_model import CVEModel, CreateCVERequest, PatchCVERequest, Comment, CommentCreate, CommentUpdate, PoC, SnortRule, ModificationHistory, ChangeItem
-from ..models.notification import Notification
-from ..models.user import User
-from ..core.socketio_manager import socketio_manager, WSMessageType, DateTimeEncoder
+from ..models.notification_model import Notification
+from ..models.user_model import User
+from ..core.socketio_manager import WSMessageType, DateTimeEncoder
 import logging
 import traceback
 from pydantic import ValidationError

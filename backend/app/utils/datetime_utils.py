@@ -30,16 +30,21 @@ def format_datetime(dt: datetime, timezone: str = "Asia/Seoul") -> str:
     # UTC 시간을 지정된 타임존으로 변환
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=ZoneInfo("UTC"))
-    else:
-        dt = dt.astimezone(ZoneInfo("UTC"))
     
-    # 지정된 타임존으로 변환
     local_dt = dt.astimezone(ZoneInfo(timezone))
-    
-    # 포맷팅
-    return local_dt.isoformat()
+    return local_dt.strftime("%Y-%m-%d %H:%M:%S")
 
-def get_current_time() -> str:
+def get_current_time() -> datetime:
+    """
+    현재 시간을 datetime 객체로 반환합니다 (KST 기준).
+    
+    Returns:
+        datetime: 현재 시간 (KST)
+    """
+    now_utc = get_utc_now()
+    return now_utc.astimezone(ZoneInfo("Asia/Seoul"))
+
+def get_formatted_current_time() -> str:
     """
     현재 시간을 포맷된 문자열로 반환합니다 (KST 기준).
     

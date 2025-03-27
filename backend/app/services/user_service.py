@@ -5,8 +5,8 @@ from jose import jwt
 import logging
 import json
 from beanie import PydanticObjectId
-from ..models.user import User, RefreshToken
-from ..schemas.user import UserCreate, UserUpdate, UserResponse, Token, TokenData
+from ..models.user_model import User, RefreshToken
+from ..schemas.user_schemas import UserCreate, UserUpdate, UserResponse, Token, TokenData
 from ..core.config import get_settings
 
 class UserService:
@@ -391,3 +391,98 @@ class UserService:
         except Exception as e:
             self.logger.error(f"리프레시 토큰 무효화 중 오류 발생: {str(e)}")
             raise
+    
+    async def get_user_by_session_id(self, sid: str) -> Optional[UserResponse]:
+        """Socket.IO 세션 ID로 사용자 조회
+        
+        Args:
+            sid: Socket.IO 세션 ID
+        
+        Returns:
+            해당 세션에 연결된 사용자 정보. 없으면 None 반환
+        """
+        from ..core.socketio_manager import socketio_manager
+        from bson import ObjectId
+        
+        self.logger.debug(f"Socket.IO 세션 ID로 사용자 조회: {sid}")
+        
+        try:
+            # socketio_manager에서 sid에 해당하는 user_id 조회
+            user_id = socketio_manager.sid_to_user.get(sid)
+            
+            if not user_id:
+                self.logger.info(f"Socket.IO 세션 ID({sid})에 해당하는 사용자 없음")
+                return None
+            
+            # user_id로 사용자 조회 (ObjectId로 변환)
+            self.logger.debug(f"Socket.IO 세션 {sid}에 해당하는 사용자 ID 발견: {user_id}")
+            
+            try:
+                # 문자열 형태의 user_id를 ObjectId로 변환
+                object_id = ObjectId(user_id)
+                user = await User.find_one({"_id": object_id})
+            except Exception as e:
+                self.logger.error(f"ObjectId 변환 실패: {str(e)}")
+                # 변환 실패 시 원래 방식으로 시도
+                user = await User.find_one({"_id": user_id})
+            
+            if not user:
+                self.logger.warning(f"찾은 user_id({user_id})에 해당하는 사용자 레코드 없음")
+                return None
+                
+            self.logger.info(f"Socket.IO 세션 ID로 사용자 조회 성공: {user.username}")
+            return UserResponse(
+                id=str(user.id),
+                username=user.username,
+                email=user.email,
+                is_admin=user.is_admin,
+                is_active=user.is_active,
+                created_at=user.created_at,
+                last_modified_at=user.last_modified_at
+            )
+        except Exception as e:
+            self.logger.error(f"Socket.IO 세션 ID로 사용자 조회 중 오류 발생: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            return None
+            
+    async def _get_user_by_id(self, user_id: str) -> Optional[UserResponse]:
+        """사용자 ID로 사용자 조회 (내부 메서드)
+        
+        Args:
+            user_id: 사용자 ID (문자열 또는 ObjectId)
+            
+        Returns:
+            사용자 정보. 없으면 None 반환
+        """
+        from bson import ObjectId
+        
+        self.logger.debug(f"사용자 ID로 사용자 조회: {user_id}")
+        
+        try:
+            # ObjectId 변환 시도
+            try:
+                object_id = ObjectId(user_id)
+                user = await User.find_one({"_id": object_id})
+            except Exception as e:
+                self.logger.error(f"ObjectId 변환 실패: {str(e)}")
+                # 변환 실패 시 원래 방식으로 시도
+                user = await User.find_one({"_id": user_id})
+                
+            if not user:
+                self.logger.warning(f"사용자 ID({user_id})에 해당하는 사용자 레코드 없음")
+                return None
+                
+            self.logger.debug(f"사용자 ID로 사용자 조회 성공: {user.username}")
+            return UserResponse(
+                id=str(user.id),
+                username=user.username,
+                email=user.email,
+                is_admin=user.is_admin,
+                is_active=user.is_active,
+                created_at=user.created_at,
+                last_modified_at=user.last_modified_at
+            )
+        except Exception as e:
+            self.logger.error(f"사용자 ID로 사용자 조회 중 오류 발생: {str(e)}")
+            self.logger.error(traceback.format_exc())
+            return None

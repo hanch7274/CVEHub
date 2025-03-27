@@ -7,7 +7,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from .crawler_manager import CrawlerManager
 from ..core.config import get_settings
-from ..models.system_config import SystemConfig
+from ..models.system_config_model import SystemConfig
 from ..core.socketio_manager import socketio_manager
 from ..models.cve_model import CVEModel
 from .crawler_base import LoggingMixin

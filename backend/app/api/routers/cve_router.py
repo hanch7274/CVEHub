@@ -9,7 +9,7 @@ import traceback
 import json
 from pydantic import ValidationError
 from app.models.cve_model import CVEModel
-from app.models.user import User
+from app.models.user_model import User
 from app.services.cve_service import CVEService
 from app.core.dependencies import get_cve_service
 from app.core.auth import get_current_user, get_current_admin_user

@@ -3,19 +3,15 @@
 """
 from fastapi import APIRouter, HTTPException, Depends, status, Body, Query, Response, Path
 from typing import List, Optional
-from app.models.notification import Notification, NotificationCreate, NotificationStatus
-from app.models.user import User
+from app.models.notification_model import Notification, NotificationCreate, NotificationStatus
+from app.models.user_model import User
 from app.core.auth import get_current_user
 from app.core.exceptions import NotFoundError, ValidationError, DatabaseError
 from app.core.schemas import APIResponse, PaginatedResponse, Metadata
-from datetime import datetime
-from zoneinfo import ZoneInfo
-import logging
-from beanie import PydanticObjectId
 from app.core.socketio_manager import socketio_manager
 from app.services.notification import NotificationService
 from app.core.dependencies import get_notification_service
-
+import logging
 router = APIRouter()
 logger = logging.getLogger(__name__)
 

@@ -11,17 +11,14 @@ from beanie import init_beanie
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 from zoneinfo import ZoneInfo
-import time
-import httpx
 
-from .models.user import User, RefreshToken
+from .models.user_model import User, RefreshToken
 from .models.cve_model import CVEModel
-from .models.notification import Notification
-from .models.comment import Comment
+from .models.notification_model import Notification
+from .models.comment_model import Comment
 from .core.config import get_settings
 from .api.api import api_router
-from .api.socketio_routes import router as socketio_router, sio_app
-from .core.socketio_manager import socketio_manager
+from .api.socketio_routes import router as socketio_router
 from .core.exceptions import CVEHubException
 from .core.error_handlers import (
     cvehub_exception_handler,
@@ -34,7 +31,7 @@ from pydantic import ValidationError
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
-from .models.system_config import SystemConfig
+from .models.system_config_model import SystemConfig
 from .database import init_db, get_database
 
 # 설정 초기화
@@ -81,15 +78,7 @@ app = FastAPI(
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "http://localhost:10683",
-        "http://127.0.0.1:10683",
-        "*"  # 모든 출처 허용 (개발 환경용)
-    ],  
+    allow_origins=settings.CORS_ORIGINS,  # config.py의 설정 사용
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -141,9 +130,6 @@ app.add_exception_handler(HTTPException, http_exception_handler)
 app.include_router(api_router)
 app.include_router(socketio_router)
 
-# Socket.IO 앱 마운트
-app.mount("/socket.io", sio_app)
-
 # 애플리케이션 시작 시 KST 타임존 설정
 os.environ['TZ'] = 'Asia/Seoul'
 
@@ -159,6 +145,30 @@ async def startup_event():
         db = get_database()
         await db.client.admin.command('ping')
         logger.info("Successfully connected to MongoDB")
+        
+        # SocketIOManager 초기화 - 명시적으로 UserService 주입
+        from .core.dependencies import initialize_socketio_manager, get_user_service
+        user_service = get_user_service()
+        socketio_manager = initialize_socketio_manager()
+        logger.info("SocketIOManager initialized successfully")
+        
+        # Socket.IO 앱 생성 및 마운트 - CORS 설정 명시적 적용
+        import socketio
+        from .core.config import get_settings
+        settings = get_settings()
+        
+        # 로그에 CORS 설정 출력
+        logger.info(f"Socket.IO CORS 설정: {settings.CORS_ORIGINS}")
+        
+        # Socket.IO 앱 생성 및 마운트 - 명시적 경로 설정
+        sio_app = socketio.ASGIApp(socketio_manager.sio)
+        socket_io_path = "/socket.io"
+        app.mount(socket_io_path, sio_app)
+        logger.info(f"Socket.IO app mounted successfully at path: {socket_io_path}")
+        
+        # 마운트된 경로 확인 로깅 
+        logger.info(f"Socket.IO 연결 URL: http://localhost:8000{socket_io_path}")
+        logger.info(f"Socket.IO WebSocket URL: ws://localhost:8000{socket_io_path}")
         
         # CVE 컬렉션 데이터 수 확인
         cve_count = await CVEModel.find().count()

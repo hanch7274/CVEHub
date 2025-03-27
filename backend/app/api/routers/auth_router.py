@@ -1,13 +1,12 @@
 """
 인증(Authentication) 관련 API 라우터
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from typing import Optional
-from app.schemas.user import UserCreate, Token, UserResponse, RefreshTokenRequest, LogoutRequest
-from app.services.user import UserService
+from app.schemas.user_schemas import Token, UserResponse, RefreshTokenRequest, LogoutRequest
+from app.services.user_service import UserService
 from app.core.dependencies import get_user_service
-from app.models.user import User
+from app.models.user_model import User, UserCreate
 from app.core.auth import get_current_user
 import logging
 

@@ -2,13 +2,12 @@
 업데이트 이력 관련 API 라우터
 """
 from fastapi import APIRouter, Depends, Query, HTTPException, status
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
-from app.models.user import User
+from typing import Optional
+from app.models.user_model import User
 from app.core.auth import get_current_user
 from app.core.dependencies import get_update_history_service
 from app.services.update_history_service import UpdateHistoryService
-from app.schemas.update_history import (
+from app.schemas.update_history_schemas import (
     RecentUpdatesResponse, 
     RecentUpdateEntry,
     UpdateStatisticsResponse,

@@ -1,8 +1,8 @@
 from datetime import datetime
 from typing import Optional, List
-from beanie import Document, Link, PydanticObjectId
+from beanie import Document, PydanticObjectId
 from pydantic import BaseModel, Field
-from .user import User
+from .user_model import User
 from zoneinfo import ZoneInfo
 
 class Comment(Document):

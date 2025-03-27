@@ -5,7 +5,7 @@ from datetime import datetime
 import asyncio
 
 from app.models.cve_model import CreateCVERequest
-from app.models.user import User
+from app.models.user_model import User
 from app.services.cve_service import CVEService
 from app.services.crawlers.nuclei_crawler import NucleiCrawlerService
 from app.services.crawler_manager import CrawlerManager

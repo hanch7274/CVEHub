@@ -5,12 +5,12 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from beanie import init_beanie
 from pymongo import IndexModel, ASCENDING, DESCENDING, TEXT
 from .models.cve_model import CVEModel
-from .models.user import User, RefreshToken
-from .models.notification import Notification
+from .models.user_model import User, RefreshToken
+from .models.notification_model import Notification
 from .core.config import get_settings
 from passlib.context import CryptContext
-from .models.comment import Comment
-from .models.system_config import SystemConfig
+from .models.comment_model import Comment
+from .models.system_config_model import SystemConfig
 
 # 비밀번호 해싱을 위한 context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

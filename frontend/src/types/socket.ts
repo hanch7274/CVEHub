@@ -6,6 +6,7 @@ import { Socket } from 'socket.io-client';
 import { User } from './auth';
 import { CVEDetail } from './cve';
 import { Comment } from './cve';
+import { SOCKET_EVENTS, SOCKET_STATE, WS_DIRECTION, WS_STATUS, WS_LOG_CONTEXT } from '../services/socketio/constants';
 
 /**
  * 로그 레벨 상수
@@ -36,24 +37,26 @@ export const SOCKET_CONFIG = {
 export const SOCKET_IO_PATH = '/socket.io';
 
 /**
- * 소켓 이벤트 타입 열거형
+ * 이벤트 핸들러 타입 정의
  */
-export enum SocketEventType {
-  CONNECT = 'connect',
-  DISCONNECT = 'disconnect',
-  ERROR = 'error',
-  RECONNECT = 'reconnect',
-  CVE_UPDATED = 'cve_updated',
-  CVE_CREATED = 'cve_created',
-  COMMENT_ADDED = 'comment_added',
-  COMMENT_UPDATED = 'comment_updated',
-  COMMENT_DELETED = 'comment_deleted',
-  USER_SUBSCRIBED = 'user_subscribed',
-  USER_UNSUBSCRIBED = 'user_unsubscribed',
+export type EventHandler<T = any> = (data: T) => void;
+
+/**
+ * 이벤트 핸들러 저장소 인터페이스
+ */
+export interface EventHandlers {
+  [key: string]: EventHandler[];
 }
 
 /**
- * 소켓 연결 상태 인터페이스
+ * 대기 중인 구독 인터페이스
+ */
+export interface PendingSubscriptions {
+  [key: string]: EventHandler[];
+}
+
+/**
+ * 웹소켓 연결 상태 인터페이스
  */
 export interface SocketConnectionState {
   connected: boolean;
@@ -97,11 +100,12 @@ export interface SocketOptions {
   autoConnect: boolean;
   auth: {
     token: string;
+    session_id?: string;
+    client_id?: string;
   };
   extraHeaders: {
     Authorization: string;
   };
-  [key: string]: any;
 }
 
 /**
@@ -109,12 +113,12 @@ export interface SocketOptions {
  */
 export interface CrawlerUpdateData {
   stage?: string;
+  stage_label?: string;
   percent?: number;
   message?: string;
   isRunning?: boolean;
   hasError?: boolean;
   updatedCves?: string[];
-  [key: string]: any;
 }
 
 /**
@@ -135,6 +139,9 @@ export interface ISocketIOService {
   getSocket(): Socket | null;
   getConnectionStatus(): boolean;
   handleAuthStateChange(isAuthenticated: boolean): void;
+  subscribeCVE(cveId: string): void;
+  unsubscribeCVE(cveId: string): void;
+  convertKeysRecursive(data: any, toCamelCase: boolean, options?: SocketCaseConverterOptions): any;
 }
 
 /**
@@ -148,9 +155,11 @@ export interface WebSocketLogData {
     message: string;
     [key: string]: any;
   };
+  message: string;
+  context: string;
   dataSummary?: string;
   origin?: string;
-  [key: string]: any;
+  timestamp?: string | number;
 }
 
 /**
@@ -163,10 +172,30 @@ export interface SocketMessage {
 }
 
 /**
+ * 연결 응답 메시지 인터페이스
+ */
+export interface ConnectionAckMessage {
+  user_id: string;
+  username: string;
+  connected_at: string;
+  session_id?: string;
+  client_id?: string;
+}
+
+/**
+ * 세션 정보 응답 메시지 인터페이스
+ */
+export interface SessionInfoAckMessage {
+  session_id: string;
+  subscribed_cves: string[];
+  last_activity?: string;
+}
+
+/**
  * CVE 업데이트 메시지 인터페이스
  */
 export interface CVEUpdateMessage extends SocketMessage {
-  type: SocketEventType.CVE_UPDATED;
+  type: typeof SOCKET_EVENTS.CVE_UPDATED;
   cveId: string;
   field_key?: string;
   updateId?: string | number;
@@ -175,10 +204,22 @@ export interface CVEUpdateMessage extends SocketMessage {
 }
 
 /**
+ * 구독 상태 메시지 인터페이스
+ */
+export interface SubscriptionStatusMessage {
+  cve_id: string;
+  subscribed: boolean;
+  subscriber_count: number;
+  user_id: string;
+  success: boolean;
+  error?: string;
+}
+
+/**
  * 댓글 추가 메시지 인터페이스
  */
 export interface CommentAddedMessage extends SocketMessage {
-  type: SocketEventType.COMMENT_ADDED;
+  type: typeof SOCKET_EVENTS.COMMENT_ADDED;
   cveId: string;
   commentId: string;
   comment: Comment;
@@ -189,7 +230,7 @@ export interface CommentAddedMessage extends SocketMessage {
  * 댓글 업데이트 메시지 인터페이스
  */
 export interface CommentUpdatedMessage extends SocketMessage {
-  type: SocketEventType.COMMENT_UPDATED;
+  type: typeof SOCKET_EVENTS.COMMENT_UPDATED;
   cveId: string;
   commentId: string;
   updatedContent: string;
@@ -200,7 +241,7 @@ export interface CommentUpdatedMessage extends SocketMessage {
  * 댓글 삭제 메시지 인터페이스
  */
 export interface CommentDeletedMessage extends SocketMessage {
-  type: SocketEventType.COMMENT_DELETED;
+  type: typeof SOCKET_EVENTS.COMMENT_DELETED;
   cveId: string;
   commentId: string;
 }
@@ -209,7 +250,7 @@ export interface CommentDeletedMessage extends SocketMessage {
  * 사용자 구독 메시지 인터페이스
  */
 export interface UserSubscribedMessage extends SocketMessage {
-  type: SocketEventType.USER_SUBSCRIBED;
+  type: typeof SOCKET_EVENTS.USER_ONLINE;
   cveId: string;
   user: Pick<User, 'id' | 'username' | 'displayName' | 'profileImage'>;
 }
@@ -218,9 +259,34 @@ export interface UserSubscribedMessage extends SocketMessage {
  * 사용자 구독 취소 메시지 인터페이스
  */
 export interface UserUnsubscribedMessage extends SocketMessage {
-  type: SocketEventType.USER_UNSUBSCRIBED;
+  type: typeof SOCKET_EVENTS.USER_OFFLINE;
   cveId: string;
   userId: string;
+}
+
+/**
+ * 알림 메시지 인터페이스
+ */
+export interface NotificationMessage extends SocketMessage {
+  type: typeof SOCKET_EVENTS.NOTIFICATION;
+  notification_id: string;
+  message: string;
+  related_id?: string;
+  related_type?: string;
+  user_id: string;
+  read: boolean;
+  created_at: string;
+}
+
+/**
+ * 시스템 메시지 인터페이스
+ */
+export interface SystemMessage extends SocketMessage {
+  type: typeof SOCKET_EVENTS.SYSTEM_MESSAGE;
+  message: string;
+  level: 'info' | 'warning' | 'error' | 'success';
+  action?: string;
+  data?: any;
 }
 
 /**
@@ -229,20 +295,20 @@ export interface UserUnsubscribedMessage extends SocketMessage {
 export interface SocketContextType {
   socket: Socket | null;
   connected: boolean;
+  isReady: boolean;
   error: Error | null;
   connecting: boolean;
   reconnectAttempts: number;
-  subscribeEvent: (event: string, handler: (data: any) => void) => (() => void);
+  connect: () => void;
+  disconnect: () => void;
+  subscribeEvent: <T = any>(event: string, handler: (data: T) => void) => () => void;
   unsubscribeEvent: (event: string, handler: (data: any) => void) => void;
-  subscribeCVEDetail?: (cveId: string) => boolean;
-  unsubscribeCVEDetail?: (cveId: string) => boolean;
-  isSubscribed?: (cveId: string) => boolean;
-  subscribers?: Array<Partial<User>>;
-  emit: (event: string, data?: any) => void;
-  lastConnected?: Date;
-  connect?: () => void;
-  disconnect?: () => void;
-  getActiveSubscriptions?: () => string[];
-  isReady?: boolean;
-  handleAuthStateChange: (isAuthenticated: boolean) => void;
+  isSubscribed: (event: string, handler: (data: any) => void) => boolean;
+  emit: <T = any>(event: string, data?: T, callback?: (response: any) => void) => boolean;
+  subscribeCVEDetail: (cveId: string) => boolean;
+  unsubscribeCVEDetail: (cveId: string) => boolean;
+  getActiveSubscriptions: () => Record<string, number>;
+  subscribeWhenReady: (event: string, handler: EventHandler) => boolean;
+  handleAuthStateChange: () => void;
+  publishInternalEvent: (event: string, data: any) => void; // 내부 이벤트 발행 함수
 }

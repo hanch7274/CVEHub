@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useEffect, useCallback, useMemo, useState } from 'react';
 import {
   AppBar,
   Toolbar,
@@ -10,8 +10,6 @@ import {
   Box,
   Tooltip,
   Divider,
-  Badge,
-  CircularProgress,
   Button,
   useTheme,
   alpha,
@@ -30,7 +28,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import WifiIcon from '@mui/icons-material/Wifi';
 import WifiOffIcon from '@mui/icons-material/WifiOff';
 import { SOCKET_EVENTS, SOCKET_STATE } from '../services/socketio/constants';
-import logger from '../utils/logging'; // logger 경로 수정
+import logger from '../utils/logging';
 
 interface HeaderProps {
   onOpenCVEDetail?: (cveId: string, commentId?: string) => void;
@@ -42,90 +40,55 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
   const { 
     connected,
     subscribeEvent, 
-    unsubscribeEvent
+    unsubscribeEvent,
+    connect,
+    isReady
   } = useSocketIO();
   const { enqueueSnackbar } = useSnackbar();
   const navigate = useNavigate();
   
-  // 연결 상태 관리 (단순화)
-  const [connectionState, setConnectionState] = useState<boolean>(connected);
-  const connectionStateRef = useRef<boolean>(connected);
-  
-  // 폴링 타이머
-  const pollingTimerRef = useRef<number | null>(null);
-  
-  // 소켓 상태 변화 핸들러
+  // 소켓 상태 변화 핸들러 - 간소화된 버전
   const handleSocketStateChange = useCallback((data: { state: string }) => {
-    const newState = data.state === SOCKET_STATE.CONNECTED;
-    
-    logger.info('Header', '소켓 상태 변경 이벤트 수신', {
+    logger.debug('Header', '소켓 상태 변경 이벤트 수신', {
       state: data.state,
-      newState,
-      currentState: connectionStateRef.current
+      connected: connected
     });
-    
-    // 상태가 변경되었을 때만 업데이트
-    if (newState !== connectionStateRef.current) {
-      connectionStateRef.current = newState;
-      setConnectionState(newState);
-    }
-  }, []);
-
-  // 상태 폴링 로직
-  const checkSocketStatus = useCallback(() => {
-    if (connectionStateRef.current !== connected) {
-      logger.info('Header', '폴링으로 소켓 상태 변경 감지', {
-        from: connectionStateRef.current,
-        to: connected
-      });
-      
-      connectionStateRef.current = connected;
-      setConnectionState(connected);
-    }
+    // 핸들러는 단순 로깅만 수행. 상태 업데이트는 SocketIOContext에서 이미 처리됨
   }, [connected]);
-
-  // 컴포넌트 마운트 시 초기화 및 이벤트 구독
+  
+  // 소켓 이벤트 구독 설정 - 마운트/언마운트 시에만 실행
   useEffect(() => {
-    // 초기 상태 설정
-    connectionStateRef.current = connected;
-    setConnectionState(connected);
+    logger.info('Header', '소켓 이벤트 구독 설정', { connected });
     
-    logger.info('Header', '소켓 이벤트 구독 및 폴링 시작', {
-      initialState: connected
-    });
-    
-    // 소켓 이벤트 구독 설정
+    // 소켓 이벤트 리스너 등록
     subscribeEvent(SOCKET_EVENTS.CONNECTION_STATE_CHANGE, handleSocketStateChange);
     
-    // 백업으로 상태 폴링 시작 (2초마다)
-    pollingTimerRef.current = window.setInterval(() => {
-      checkSocketStatus();
-    }, 2000);
-    
-    // 클린업 함수
     return () => {
-      logger.info('Header', '헤더 컴포넌트 언마운트 - 이벤트 구독 해제 및 폴링 중지');
-      
-      // 이벤트 구독 해제
+      logger.info('Header', '이벤트 구독 해제');
       unsubscribeEvent(SOCKET_EVENTS.CONNECTION_STATE_CHANGE, handleSocketStateChange);
-      
-      // 폴링 타이머 정리
-      if (pollingTimerRef.current) {
-        window.clearInterval(pollingTimerRef.current);
-        pollingTimerRef.current = null;
-      }
     };
-  }, [connected, subscribeEvent, unsubscribeEvent, handleSocketStateChange, checkSocketStatus]);
+  }, [subscribeEvent, unsubscribeEvent, handleSocketStateChange]);
   
-  // 상태 변화를 시각화하기 위한 아이콘 선택
+  // 재연결 핸들러 - 간소화된 버전
+  const handleReconnect = useCallback(() => {
+    if (!connected) {
+      logger.info('Header', '재연결 시도');
+      enqueueSnackbar('서버에 재연결 시도 중...', { variant: 'info' });
+      connect();
+    } else {
+      enqueueSnackbar('이미 서버에 연결되어 있습니다', { variant: 'info' });
+    }
+  }, [connect, enqueueSnackbar, connected]);
+  
+  // 연결 상태 아이콘 - connected 직접 사용
   const connectionIcon = useMemo(() => {
-    return connectionState ? (
+    return connected ? (
       <WifiIcon color="success" fontSize="small" />
     ) : (
       <WifiOffIcon color="error" fontSize="small" />
     );
-  }, [connectionState]);
-
+  }, [connected]);
+  
   // 메뉴 열기/닫기 핸들러
   const handleMenu = (event: React.MouseEvent<HTMLElement>) => {
     // setAnchorEl(event.currentTarget);
@@ -135,26 +98,11 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
     // setAnchorEl(null);
   };
 
-  // 재연결 핸들러
-  const handleReconnect = useCallback(() => {
-    // 이미 연결된 상태라면 불필요한 작업 방지
-    if (connectionState) return;
-    
-    enqueueSnackbar('서버에 다시 연결 중...', { 
-      variant: 'info',
-      anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-    });
-    
-    // 재연결 시도를 전역 이벤트로 발행
-    window.dispatchEvent(new CustomEvent('socket_reconnect_request'));
-  }, [connectionState, enqueueSnackbar]);
-
   // 로그아웃 처리
   const handleLogout = async () => {
     try {
       // 로그아웃 전에 소켓 이벤트 발생
       if (connected) {
-        // 커스텀 로그아웃 이벤트 대신 disconnect 호출
         logger.debug('Header', '로그아웃: 소켓 연결 종료 시도');
       }
       
@@ -224,11 +172,17 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
           </Box>
 
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <Tooltip title={connectionState ? "서버에 연결됨" : "서버 연결 끊김. 클릭하여 재연결"}>
+            <Tooltip title={connected ? "서버와 실시간 연결 됨" : "서버 연결 끊김 (클릭하여 재연결)"}>
               <IconButton
                 size="small"
                 onClick={handleReconnect}
-                sx={{ mr: 1 }}
+                sx={{ 
+                  mr: 1, 
+                  '&:hover': { 
+                    backgroundColor: alpha(theme.palette.primary.main, 0.1)
+                  }
+                }}
+                aria-label="서버 연결 상태"
               >
                 {connectionIcon}
               </IconButton>

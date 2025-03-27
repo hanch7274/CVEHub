@@ -71,9 +71,7 @@ class SocketIOService implements ISocketIOService {
   }
 
   // 설정 옵션 생성
-  private _createOptions(): SocketOptions | null {
-    const token = getAccessToken();
-    
+  private _createOptions(token?: string): SocketOptions | null {
     // 토큰이 비어있는지 확인하고 로그 출력
     if (!token || token.trim() === '') {
       logger.warn('SocketIOService', '인증 토큰이 없습니다. 웹소켓 연결이 실패할 수 있습니다.');
@@ -107,7 +105,7 @@ class SocketIOService implements ISocketIOService {
     const options: SocketOptions = {
       // Socket.IO 서버가 백엔드에서 SOCKET_IO_PATH 경로에 마운트됨
       path: SOCKET_IO_PATH,
-      transports: ['websocket'],  // 웹소켓만 사용 (폴링 사용 안함)
+      transports: ['websocket'],  // polling 및 websocket 모두 허용 (기본 동작)
       reconnection: SOCKET_CONFIG.RECONNECTION,
       reconnectionAttempts: SOCKET_CONFIG.RECONNECTION_ATTEMPTS,
       reconnectionDelay: SOCKET_CONFIG.RECONNECTION_DELAY,
@@ -145,56 +143,64 @@ class SocketIOService implements ISocketIOService {
   // 연결 초기화
   connect(url?: string): void {
     try {
-      // 토큰 확인
-      const token = getAccessToken();
-      if (!token || token.trim() === '') {
-        logger.warn('SocketIOService', '인증 토큰이 없어 연결을 시도하지 않습니다');
-        this._updateConnectionState(SOCKET_STATE.ERROR);
-        return;
-      }
-      
-      // 이미 연결된 경우 중복 연결 방지
-      if (this.socket && this.isConnected) {
-        logger.warn('SocketIOService', '이미 연결되어 있습니다');
+      // 연결 전 상태 확인 및 기록
+      if (this._connectionState === SOCKET_STATE.CONNECTING) {
+        logger.warn('SocketIOService', '이미 연결 시도 중입니다');
         return;
       }
 
-      // 기존 소켓이 있으면 정리
-      if (this.socket) {
-        logger.info('SocketIOService', '기존 소켓 정리 후 재연결 시도');
-        this.disconnect();
-      }
+      logger.info('SocketIOService', '웹소켓 연결 시작', { 
+        previousState: this._connectionState,
+        socketExists: !!this.socket,
+        tokenExists: !!getAccessToken()
+      });
       
       // 연결 상태 업데이트
       this._updateConnectionState(SOCKET_STATE.CONNECTING);
       
-      // 소켓 URL 결정 - 호스트만 포함된 URL (프로토콜 없음)
+      // 접속할 호스트 정보 가져오기
       const socketHost = url || getSocketIOURL();
       
-      // 디버깅을 위한 로그 추가
-      console.log('%c Socket.IO 연결 시도 중... ', 'background: #4CAF50; color: white; padding: 4px;', {
-        socketHost,
-        options: this.options,
-        token: token ? token.substring(0, 10) + '...' : 'No token'
-      });
+      // 인증 토큰 가져오기
+      const token = getAccessToken();
       
-      // 연결 시도 전 상세 로깅
-      logger.info('SocketIOService', '웹소켓 연결 시도', { 
-        host: socketHost,
-        path: this.options?.path || SOCKET_IO_PATH,
-        fullUrl: `${window.location.protocol === 'https:' ? 'https' : 'http'}://${socketHost}${this.options?.path || SOCKET_IO_PATH}`,
-        connectionState: this._connectionState
-      });
-      
-      // 토큰 재확인
       if (!token) {
         logger.error('SocketIOService', '연결 실패: 인증 토큰이 없습니다');
         this._updateConnectionState(SOCKET_STATE.ERROR);
         return;
       }
       
-      // 옵션 업데이트 (토큰이 변경되었을 수 있음)
-      this.options = this._createOptions();
+      // 소켓 인스턴스가 존재하는 경우 정리
+      if (this.socket) {
+        logger.info('SocketIOService', '기존 소켓 연결 정리');
+        try {
+          this.socket.disconnect();
+          this.socket.close();
+        } catch (e: any) {
+          logger.error('SocketIOService', '소켓 정리 중 오류', { error: e.message });
+        }
+        this.socket = null;
+      }
+      
+      // 디버깅을 위한 로그 추가
+      console.log('%c Socket.IO 연결 시도 중... ', 'background: #4CAF50; color: white; padding: 4px;', {
+        socketHost,
+        origin: window.location.origin,
+        protocol: window.location.protocol
+      });
+      
+      // 연결 시도 전 상세 로깅
+      logger.info('SocketIOService', '웹소켓 연결 시도', { 
+        host: socketHost,
+        path: SOCKET_IO_PATH,
+        fullUrl: `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${socketHost}${SOCKET_IO_PATH}`,
+        httpUrl: `${window.location.protocol === 'https:' ? 'https' : 'http'}://${socketHost}${SOCKET_IO_PATH}`,
+        origin: window.location.origin,
+        connectionState: this._connectionState
+      });
+      
+      // 옵션 업데이트
+      this.options = this._createOptions(token);
       
       // 연결 시도 전 옵션 로깅
       logger.debug('SocketIOService', '연결 옵션', {
@@ -208,15 +214,8 @@ class SocketIOService implements ISocketIOService {
       if (this.options) {
         this.socket = io(socketHost, {
           ...this.options,
-          path: SOCKET_IO_PATH, // path 옵션 명시적 설정
-          transports: ['websocket'], // 웹소켓만 사용 (폴링 사용 안함)
-          forceNew: true, // 강제로 새 연결 생성
-          timeout: 10000, // 타임아웃 증가 (10초)
-          autoConnect: true, // 자동 연결 활성화
-          reconnectionAttempts: 5, // 재연결 시도 횟수
-          reconnectionDelay: 1000, // 재연결 지연 시간 (1초)
-          reconnectionDelayMax: 5000, // 최대 재연결 지연 시간 (5초)
-          randomizationFactor: 0.5, // 지연 시간 랜덤화 계수
+          transports: ['websocket'], // Force WebSocket only, no polling
+          forceNew: true
         });
       } else {
         logger.error('SocketIOService', '연결 실패: 소켓 옵션이 없습니다');
@@ -224,26 +223,26 @@ class SocketIOService implements ISocketIOService {
         return;
       }
       
-      // 더 명확한 디버깅 로그
-      console.log('%c Socket.IO 연결 객체 생성됨 ', 'background: #2196F3; color: white; padding: 4px;', {
-        socketExists: !!this.socket,
-        socketId: this.socket?.id,
-        connected: this.socket?.connected,
-        url: socketHost,
-        path: SOCKET_IO_PATH,
-        origin: typeof window !== 'undefined' ? window.location.origin : 'unknown'
-      });
-      
-      logger.debug('SocketIOService', '소켓 객체 생성됨', {
-        socketExists: !!this.socket,
-        socketId: this.socket?.id,
-        connected: this.socket?.connected
-      });
-      
       // 원본 emit 메서드 저장 및 래핑된 emit 메서드로 교체
       if (this.socket) {
         this.originalEmit = this.socket.emit.bind(this.socket);
         this.socket.emit = this._wrappedEmit.bind(this) as any;
+        
+        // Engine.IO 레벨 에러 이벤트 캡처
+        (this.socket as any).io.engine.on('error', (err: any) => {
+          logger.error('SocketIOService', 'Engine.IO 에러 발생', { 
+            message: err.message, 
+            type: err.type,
+            description: err.description,
+            context: {
+              transport: (this.socket as any).io.engine.transport.name,
+              host: socketHost,
+              path: SOCKET_IO_PATH,
+              readyState: (this.socket as any).io.engine.readyState,
+              origin: window.location.origin
+            }
+          });
+        });
       }
       
       // 연결 이벤트 핸들러 설정
@@ -276,7 +275,39 @@ class SocketIOService implements ISocketIOService {
         },
         timestamp: new Date().toISOString()
       });
+      
+      // 연결 상태 업데이트
       this._updateConnectionState(SOCKET_STATE.CONNECTED);
+      
+      // 연결 성공 시 전역 이벤트 발행 (DOM 이벤트)
+      try {
+        const detail = {
+          connected: true,
+          socketId: this.socket?.id,
+          timestamp: new Date().toISOString(),
+          service: 'SocketIOService'
+        };
+        
+        const connectEvent = new CustomEvent('socket_initial_connected', { detail });
+        const stateChangeEvent = new CustomEvent('socket_connection_state_change', { 
+          detail: { 
+            state: SOCKET_STATE.CONNECTED,
+            socketId: this.socket?.id,
+            timestamp: new Date().toISOString(),
+            service: 'SocketIOService'
+          } 
+        });
+        
+        logger.debug('SocketIOService', '웹소켓 연결 성공 전역 이벤트 발행', { detail });
+        
+        // 전역 이벤트 발행 - 두 가지 이벤트를 모두 발행
+        window.dispatchEvent(connectEvent);
+        window.dispatchEvent(stateChangeEvent);
+      } catch (error) {
+        logger.error('SocketIOService', '전역 이벤트 발행 실패', { error });
+      }
+      
+      // 모든 리스너에게 연결 이벤트 알림
       this._notifyListeners(SOCKET_EVENTS.CONNECT);
       
       // 연결 성공 후 핑 타이머 시작
@@ -876,9 +907,52 @@ class SocketIOService implements ISocketIOService {
 
   // 소켓 인스턴스 반환
   getSocket(): Socket | null {
-    return this.socket;
+    if (this.socket && this.socket.connected) {
+      this.isConnected = true;
+      
+      // 소켓이 이미 연결되어 있을 때도 전역 이벤트 발행
+      try {
+        const event = new CustomEvent('socket_connection_state_change', { 
+          detail: { 
+            state: SOCKET_STATE.CONNECTED,
+            socketId: this.socket.id,
+            timestamp: new Date().toISOString(),
+            source: 'getSocket'
+          } 
+        });
+        
+        logger.debug('SocketIOService', 'getSocket 메서드에서 연결 상태 이벤트 발행', {
+          socketId: this.socket.id,
+          connected: this.socket.connected
+        });
+        
+        // 짧은 지연 후 이벤트 발행 (다른 컴포넌트가 로드된 후)
+        setTimeout(() => {
+          window.dispatchEvent(event);
+        }, 0);
+      } catch (error) {
+        logger.error('SocketIOService', 'getSocket 메서드에서 전역 이벤트 발행 실패', { error });
+      }
+      
+      return this.socket;
+    }
+    
+    // 토큰 확인
+    const token = getAccessToken();
+    if (!token || token.trim() === '') {
+      return null;
+    }
+    
+    // 소켓이 없거나 연결되지 않은 경우 새로 연결 시도
+    try {
+      this.connect();
+      return this.socket;
+    } catch (error) {
+      logger.error('SocketIOService', 'getSocket 메서드에서 연결 시도 실패', { error });
+      return null;
+    }
   }
-
+  
   // 연결 상태 확인
   getConnectionStatus(): boolean {
     return this.isConnected;
@@ -944,7 +1018,11 @@ class SocketIOService implements ISocketIOService {
         eventName,
         direction: direction === WS_DIRECTION.INCOMING ? 'INCOMING' : 'OUTGOING',
         status: status === WS_STATUS.SUCCESS ? 'SUCCESS' : 
-               status === WS_STATUS.FAILURE ? 'WARNING' : 'ERROR'
+               status === WS_STATUS.FAILURE ? 'WARNING' : 'ERROR',
+        message: eventName, // 추가된 message 속성
+        context: 'unknown', // 추가된 context 속성
+        timestamp: getUTCTimestamp(),
+        dataSummary: data ? JSON.stringify(data).substring(0, 100) : undefined
       };
       
       // 오류 정보 추가 (오류가 있을 때만)
@@ -981,10 +1059,58 @@ class SocketIOService implements ISocketIOService {
       } else {
         logger.debug('SocketIOService', `웹소켓 이벤트: ${eventName}`, logData);
       }
-    } catch (logError) {
+    } catch (logError: any) {
       // 로깅 자체에서 오류가 발생한 경우 기본 콘솔 로깅으로 폴백
       console.error('[SocketIOService] 웹소켓 이벤트 로깅 중 오류', logError);
     }
+  }
+
+  // 케이스 변환 유틸리티 메서드
+  convertKeysRecursive(data: any, toCamelCase: boolean, options?: SocketCaseConverterOptions): any {
+    try {
+      if (!data) return data;
+      
+      if (toCamelCase) {
+        return snakeToCamel(data, { excludeFields: EXCLUDED_FIELDS, ...(options || {}) });
+      } else {
+        return camelToSnake(data, { excludeFields: EXCLUDED_FIELDS, ...(options || {}) });
+      }
+    } catch (error: any) {
+      logger.error('SocketIOService', '케이스 변환 중 오류 발생', {
+        error: error.message,
+        stack: error.stack,
+        data: data
+      });
+      return data;
+    }
+  }
+
+  // CVE 구독 메서드
+  subscribeCVE(cveId: string): void {
+    if (!cveId) {
+      logger.warn('SocketIOService', 'CVE ID 없이 구독 시도');
+      return;
+    }
+    
+    logger.info('SocketIOService', `CVE 구독 시도: ${cveId}`);
+    
+    this.emit(SOCKET_EVENTS.SUBSCRIBE_CVE, {
+      cveId: cveId
+    });
+  }
+
+  // CVE 구독 해제 메서드
+  unsubscribeCVE(cveId: string): void {
+    if (!cveId) {
+      logger.warn('SocketIOService', 'CVE ID 없이 구독 해제 시도');
+      return;
+    }
+    
+    logger.info('SocketIOService', `CVE 구독 해제 시도: ${cveId}`);
+    
+    this.emit(SOCKET_EVENTS.UNSUBSCRIBE_CVE, {
+      cveId: cveId
+    });
   }
 }
 

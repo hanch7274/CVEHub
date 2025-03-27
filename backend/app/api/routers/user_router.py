@@ -2,8 +2,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from typing import List
-from app.models.user import User, UserCreate, UserUpdate
-from app.services.user import UserService
+from app.models.user_model import User, UserCreate, UserUpdate
+from app.services.user_service import UserService
 from app.core.auth import get_current_user
 import logging
 import traceback
