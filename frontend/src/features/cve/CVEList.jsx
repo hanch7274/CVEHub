@@ -520,7 +520,7 @@ const CVETable = React.memo(({
             ) : cves && cves.length > 0 ? (
               cves.map((cve) => (
                 <TableRow
-                  key={cve.cve_id}
+                  key={cve.cveId}
                   onClick={() => onCVEClick(cve)}
                   sx={{
                     cursor: 'pointer',
@@ -1127,27 +1127,7 @@ const CVEList = () => {
       )}
 
       {/* 다이얼로그 컴포넌트들 */}
-      <Dialog
-        open={createDialogOpen}
-        onClose={handleCreateDialogClose}
-        maxWidth="md"
-        fullWidth
-        PaperProps={{ elevation: 3, sx: { borderRadius: '8px', overflow: 'hidden' } }}
-      >
-        <DialogTitle
-          sx={{
-            p: 3,
-            borderBottom: 1,
-            borderColor: 'divider',
-            backgroundColor: theme.palette.background.default
-          }}
-        >
-          새 CVE 생성
-        </DialogTitle>
-        <DialogContent sx={{ p: 3 }}>
-          <CreateCVE open={createDialogOpen} onSuccess={handleCVECreated} onClose={handleCreateDialogClose} />
-        </DialogContent>
-      </Dialog>
+      <CreateCVE open={createDialogOpen} onSuccess={handleCVECreated} onClose={handleCreateDialogClose} />
 
       {/* 상세보기 모달 */}
       {selectedCVE && (

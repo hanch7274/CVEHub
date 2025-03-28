@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Drawer,
   List,
@@ -8,11 +8,12 @@ import {
   Typography,
   Box,
   ListItemButton,
-  IconButton
+  IconButton,
+  useMediaQuery,
+  alpha
 } from '@mui/material';
-import SecurityIcon from '@mui/icons-material/Security';
 import DashboardIcon from '@mui/icons-material/Dashboard';
-import ListAltIcon from '@mui/icons-material/ListAlt';
+import SecurityIcon from '@mui/icons-material/Security';
 import StorageIcon from '@mui/icons-material/Storage';
 import MenuIcon from '@mui/icons-material/Menu';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
@@ -24,7 +25,13 @@ const drawerWidth = 240;
 const Sidebar = () => {
   const theme = useTheme();
   const location = useLocation();
-  const [open, setOpen] = useState(true);
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const [open, setOpen] = useState(!isMobile);
+
+  // 화면 크기가 변경될 때 사이드바 상태 조정
+  useEffect(() => {
+    setOpen(!isMobile);
+  }, [isMobile]);
 
   const handleDrawerToggle = () => {
     setOpen(!open);
@@ -39,61 +46,96 @@ const Sidebar = () => {
         '& .MuiDrawer-paper': {
           width: open ? drawerWidth : 64,
           boxSizing: 'border-box',
-          backgroundColor: theme.palette.background.paper,
-          borderRight: `1px solid ${theme.palette.divider}`,
+          background: 'rgba(255, 255, 255, 0.2)',
+          backdropFilter: 'blur(10px)',
+          borderRight: `1px solid ${alpha(theme.palette.common.white, 0.2)}`,
           overflowX: 'hidden',
           transition: theme.transitions.create('width', {
             easing: theme.transitions.easing.sharp,
             duration: theme.transitions.duration.enteringScreen,
           }),
+          boxShadow: `4px 0 20px ${alpha('#000', 0.05)}`,
+          mt: '64px', // Header 높이만큼 여백 추가
+          height: 'calc(100% - 64px)', // Header 높이 제외
         },
       }}
     >
       <Box sx={{ 
-        p: 2, 
+        p: open ? 1.5 : 1, 
         display: 'flex', 
         alignItems: 'center',
-        justifyContent: 'space-between',
-        borderBottom: `1px solid ${theme.palette.divider}`
+        justifyContent: open ? 'flex-end' : 'center',
+        borderBottom: `1px solid ${alpha(theme.palette.common.white, 0.2)}`
       }}>
-        {open && (
-          <>
-            <Box sx={{ display: 'flex', alignItems: 'center' }}>
-              <SecurityIcon sx={{ mr: 1, color: theme.palette.primary.main }} />
-              <Typography variant="h6" component="div" sx={{ 
-                color: theme.palette.primary.main,
-                fontWeight: 600
-              }}>
-                CVE Hub
-              </Typography>
-            </Box>
-            <IconButton onClick={handleDrawerToggle}>
-              <ChevronLeftIcon />
-            </IconButton>
-          </>
-        )}
-        {!open && (
-          <IconButton onClick={handleDrawerToggle} sx={{ mx: 'auto' }}>
+        {open ? (
+          <IconButton 
+            onClick={handleDrawerToggle}
+            sx={{
+              color: theme.palette.mode === 'dark' ? '#fff' : '#333',
+              '&:hover': {
+                backgroundColor: alpha(theme.palette.common.white, 0.1)
+              },
+              transition: 'transform 0.2s ease',
+              '&:hover': {
+                transform: 'scale(1.1)',
+                backgroundColor: alpha(theme.palette.common.white, 0.1)
+              }
+            }}
+          >
+            <ChevronLeftIcon />
+          </IconButton>
+        ) : (
+          <IconButton 
+            onClick={handleDrawerToggle} 
+            sx={{ 
+              color: theme.palette.mode === 'dark' ? '#fff' : '#333',
+              '&:hover': {
+                backgroundColor: alpha(theme.palette.common.white, 0.1)
+              },
+              transition: 'transform 0.2s ease',
+              '&:hover': {
+                transform: 'scale(1.1)',
+                backgroundColor: alpha(theme.palette.common.white, 0.1)
+              }
+            }}
+          >
             <MenuIcon />
           </IconButton>
         )}
       </Box>
-      <List>
+      <List sx={{ mt: 2 }}>
         <ListItem disablePadding>
           <ListItemButton 
             component={Link} 
             to="/"
             selected={location.pathname === '/'}
+            sx={{
+              borderRadius: open ? '0 20px 20px 0' : '50%',
+              mx: open ? 1 : 'auto',
+              my: 0.5,
+              pl: open ? 2 : 1.5,
+              justifyContent: open ? 'flex-start' : 'center',
+              '&.Mui-selected': {
+                background: 'linear-gradient(90deg, rgba(58, 134, 255, 0.1) 0%, rgba(255, 0, 110, 0.1) 100%)',
+              },
+              '&:hover': {
+                background: 'linear-gradient(90deg, rgba(58, 134, 255, 0.05) 0%, rgba(255, 0, 110, 0.05) 100%)',
+              }
+            }}
           >
-            <ListItemIcon>
-              <DashboardIcon color={location.pathname === '/' ? "primary" : "inherit"} />
+            <ListItemIcon sx={{ 
+              minWidth: open ? 40 : 'auto',
+              color: location.pathname === '/' ? '#3a86ff' : alpha(theme.palette.text.primary, 0.7)
+            }}>
+              <DashboardIcon />
             </ListItemIcon>
             {open && (
               <ListItemText 
                 primary="Dashboard" 
                 primaryTypographyProps={{
-                  color: location.pathname === '/' ? theme.palette.primary.main : theme.palette.text.primary,
-                  fontWeight: location.pathname === '/' ? 500 : 400
+                  color: location.pathname === '/' ? '#3a86ff' : theme.palette.text.primary,
+                  fontWeight: location.pathname === '/' ? 500 : 400,
+                  fontSize: '0.95rem'
                 }}
               />
             )}
@@ -104,36 +146,33 @@ const Sidebar = () => {
             component={Link} 
             to="/cves"
             selected={location.pathname.startsWith('/cves')}
+            sx={{
+              borderRadius: open ? '0 20px 20px 0' : '50%',
+              mx: open ? 1 : 'auto',
+              my: 0.5,
+              pl: open ? 2 : 1.5,
+              justifyContent: open ? 'flex-start' : 'center',
+              '&.Mui-selected': {
+                background: 'linear-gradient(90deg, rgba(58, 134, 255, 0.1) 0%, rgba(255, 0, 110, 0.1) 100%)',
+              },
+              '&:hover': {
+                background: 'linear-gradient(90deg, rgba(58, 134, 255, 0.05) 0%, rgba(255, 0, 110, 0.05) 100%)',
+              }
+            }}
           >
-            <ListItemIcon>
-              <SecurityIcon color={location.pathname.startsWith('/cves') ? "primary" : "inherit"} />
+            <ListItemIcon sx={{ 
+              minWidth: open ? 40 : 'auto',
+              color: location.pathname.startsWith('/cves') ? '#3a86ff' : alpha(theme.palette.text.primary, 0.7)
+            }}>
+              <SecurityIcon />
             </ListItemIcon>
             {open && (
               <ListItemText 
                 primary="CVEs" 
                 primaryTypographyProps={{
-                  color: location.pathname.startsWith('/cves') ? theme.palette.primary.main : theme.palette.text.primary,
-                  fontWeight: location.pathname.startsWith('/cves') ? 500 : 400
-                }}
-              />
-            )}
-          </ListItemButton>
-        </ListItem>
-        <ListItem disablePadding>
-          <ListItemButton 
-            component={Link} 
-            to="/tasks"
-            selected={location.pathname.startsWith('/tasks')}
-          >
-            <ListItemIcon>
-              <ListAltIcon color={location.pathname.startsWith('/tasks') ? "primary" : "inherit"} />
-            </ListItemIcon>
-            {open && (
-              <ListItemText 
-                primary="My Tasks" 
-                primaryTypographyProps={{
-                  color: location.pathname.startsWith('/tasks') ? theme.palette.primary.main : theme.palette.text.primary,
-                  fontWeight: location.pathname.startsWith('/tasks') ? 500 : 400
+                  color: location.pathname.startsWith('/cves') ? '#3a86ff' : theme.palette.text.primary,
+                  fontWeight: location.pathname.startsWith('/cves') ? 500 : 400,
+                  fontSize: '0.95rem'
                 }}
               />
             )}
@@ -144,16 +183,36 @@ const Sidebar = () => {
             component={Link} 
             to="/cache"
             selected={location.pathname.startsWith('/cache')}
+            sx={{
+              borderRadius: open ? '0 20px 20px 0' : '50%',
+              mx: open ? 1 : 'auto',
+              my: 0.5,
+              pl: open ? 2 : 1.5,
+              justifyContent: open ? 'flex-start' : 'center',
+              '&.Mui-selected': {
+                background: 'linear-gradient(90deg, rgba(58, 134, 255, 0.1) 0%, rgba(255, 0, 110, 0.1) 100%)',
+              },
+              '&:hover': {
+                background: 'linear-gradient(90deg, rgba(58, 134, 255, 0.05) 0%, rgba(255, 0, 110, 0.05) 100%)',
+              }
+            }}
           >
-            <ListItemIcon>
-              <StorageIcon color={location.pathname.startsWith('/cache') ? "primary" : "inherit"} />
+            <ListItemIcon sx={{ 
+              minWidth: open ? 40 : 'auto',
+              color: location.pathname.startsWith('/cache') ? '#3a86ff' : alpha(theme.palette.text.primary, 0.7)
+            }}>
+              <StorageIcon />
             </ListItemIcon>
             {open && (
               <ListItemText 
                 primary="캐시 시각화" 
                 primaryTypographyProps={{
-                  color: location.pathname.startsWith('/cache') ? theme.palette.primary.main : theme.palette.text.primary,
-                  fontWeight: location.pathname.startsWith('/cache') ? 500 : 400
+                  color: location.pathname.startsWith('/cache') ? '#3a86ff' : theme.palette.text.primary,
+                  fontWeight: location.pathname.startsWith('/cache') ? 500 : 400,
+                  fontSize: '0.95rem',
+                  whiteSpace: 'nowrap', 
+                  overflow: 'hidden', 
+                  textOverflow: 'ellipsis' 
                 }}
               />
             )}

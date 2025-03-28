@@ -117,7 +117,6 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
             # 1. 정확히 일치하는 경우 먼저 시도
             cve = await self.collection.find_one({"cve_id": cve_id})
             if cve:
-                logger.info(f"정확히 일치하는 CVE 찾음: {cve_id}")
                 try:
                     return CVEModel(**cve)
                 except Exception as validation_error:
@@ -127,7 +126,6 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
                         logger.error(f"검증 오류 상세: {error}")
                 
             # 2. 대소문자 구분 없이 검색 (MongoDB $regex 사용)
-            logger.info(f"대소문자 구분 없는 정규식 검색 시도: ^{cve_id}$")
             cve = await self.collection.find_one({"cve_id": {"$regex": f"^{cve_id}$", "$options": "i"}})
             if cve:
                 logger.info(f"정규식으로 CVE 찾음: {cve.get('cve_id', 'unknown')}")
@@ -138,8 +136,6 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
                     # 오류 세부 정보 로깅
                     for error in getattr(validation_error, 'errors', []):
                         logger.error(f"검증 오류 상세: {error}")
-            
-            logger.warning(f"CVE를 찾을 수 없음: {cve_id}")
             return None
         except Exception as e:
             logger.error(f"CVE ID 조회 중 오류: {str(e)}")

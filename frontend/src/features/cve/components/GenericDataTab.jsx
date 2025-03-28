@@ -136,15 +136,16 @@ const GenericDataTab = memo(({
       setLoading(true);
       setError(null);
 
-      // KST 시간으로 생성
-      const kstTime = new Date();
-      kstTime.setHours(kstTime.getHours() + 9);  // UTC+9 (KST)
+      // UTC 시간 사용 (백엔드와 일관성 유지)
+      const utcTime = new Date();
       
       // 새로운 아이템 객체 생성
       const newItemWithMetadata = {
         ...newItem,
-        dateAdded: kstTime.toISOString(),  // KST 시간을 ISO 문자열로 변환
-        createdBy: currentUser?.username || 'anonymous'
+        created_at: utcTime.toISOString(),  // UTC 시간을 ISO 문자열로 변환
+        created_by: currentUser?.username || 'anonymous',
+        last_modified_at: null,
+        last_modified_by: null
       };
 
       // 추가적인 메타데이터 처리 (있다면)
@@ -266,9 +267,8 @@ const GenericDataTab = memo(({
       setLoading(true);
       setError(null);
 
-      // KST 시간으로 업데이트
-      const kstTime = new Date();
-      kstTime.setHours(kstTime.getHours() + 9);  // UTC+9 (KST)
+      // UTC 시간 사용 (백엔드와 일관성 유지)
+      const utcTime = new Date();
       
       // 업데이트할 아이템 준비 (기존 메타데이터 유지)
       const updatedItemData = { ...selectedItem };
@@ -276,7 +276,7 @@ const GenericDataTab = memo(({
       
       // 추가적인 메타데이터 처리 (있다면)
       const finalItem = tabConfig.prepareItemForSave ? 
-        tabConfig.prepareItemForSave(updatedItemData, true, kstTime) : 
+        tabConfig.prepareItemForSave(updatedItemData, true, utcTime) : 
         updatedItemData;
 
       const updatedItems = items.map((item, i) =>
@@ -348,7 +348,8 @@ const GenericDataTab = memo(({
     // eslint-disable-next-line no-unused-vars
     sendMessage 
   } = useWebSocketHook(
-    SOCKET_EVENTS.DATA_UPDATED,
+    // 이벤트 이름이 없는 경우 기본값 제공
+    SOCKET_EVENTS.DATA_UPDATED || 'data_updated',
     (data) => {
       // 이벤트 수신 시 처리 로직
       if (data?.cveId === cveData.cveId && data?.field === tabConfig.wsFieldName) {
@@ -479,13 +480,16 @@ const GenericDataTab = memo(({
                   mt: 0.5
                 }}>
                   <Typography variant="caption" color="text.secondary">
-                    Added by {item.createdBy}
+                    Added by {item.created_by}
+                    {
+                      console.log(item)
+                    }
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
                     •
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {new Date(item.dateAdded).toLocaleString('ko-KR', { 
+                    {new Date(item.created_at).toLocaleString('ko-KR', { 
                       timeZone: TIME_ZONES.DEFAULT
                     })}
                   </Typography>

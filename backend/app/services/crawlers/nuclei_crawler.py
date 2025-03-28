@@ -10,11 +10,11 @@ import glob
 from typing import Dict, List, Any, Optional, Union
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from app.models.cve_model import CVEModel
 from app.services.crawler_base import BaseCrawlerService
 from app.core.config import get_settings
 import re
-from zoneinfo import ZoneInfo
 from ...utils.datetime_utils import get_utc_now
 from ...utils.cve_utils import create_reference
 
@@ -53,8 +53,8 @@ class NucleiCrawlerService(BaseCrawlerService):
             # 초기 상태 메시지 (웹소켓 연결 필수)
             await self.report_progress("준비", 0, f"{self.crawler_id} 업데이트를 시작합니다.", require_websocket=True)
             
-            # 1. 준비 단계 (고정 진행률: 0-20%)
-            await self.report_progress("준비", 0, "Nuclei 템플릿 저장소 준비 중...(0%)")
+            # 1. 준비 단계 (0-20%)
+            await self.report_progress("준비", 0, "Nuclei 템플릿 저장소 준비 중...")
             
             # 2. 저장소 클론 또는 풀
             if not await self._clone_or_pull_repo():
@@ -66,11 +66,11 @@ class NucleiCrawlerService(BaseCrawlerService):
                     "message": error_msg
                 }
             
-            # 준비 단계 완료 메시지 (20%)
-            await self.report_progress("준비", 20, "준비 단계 완료")
+            # 준비 단계 완료 메시지
+            await self.report_progress("준비", 20, "저장소 준비 완료")
             
-            # 3. 데이터 수집 단계 (고정 진행률: 20-40%)
-            await self.report_progress("데이터 수집", 40, "데이터 수집 중...(40%)")
+            # 3. 데이터 수집 단계 (20-40%)
+            await self.report_progress("데이터 수집", 20, "템플릿 파일 수집 시작...")
             templates = await self.fetch_data()
             if not templates or len(templates) == 0:
                 error_msg = "템플릿 파일을 찾지 못했습니다."
@@ -81,9 +81,10 @@ class NucleiCrawlerService(BaseCrawlerService):
                     "message": error_msg
                 }
             self.log_info(f"총 {len(templates)}개의 템플릿 파일 발견")
+            await self.report_progress("데이터 수집", 40, f"템플릿 파일 {len(templates)}개 수집 완료")
             
-            # 4. 데이터 처리 단계 (고정 진행률: 40-60%)
-            await self.report_progress("데이터 처리", 60, "데이터 처리 중...(60%)", require_websocket=True)
+            # 4. 데이터 처리 단계 (40-60%)
+            await self.report_progress("데이터 처리", 40, f"{len(templates)}개 템플릿 파일 처리 시작...")
             processed_data = await self.parse_data(templates)
             if not processed_data or len(processed_data.get('items', [])) == 0:
                 error_msg = "템플릿 파일 처리 중 오류가 발생했습니다."
@@ -94,9 +95,10 @@ class NucleiCrawlerService(BaseCrawlerService):
                     "message": error_msg
                 }
             self.log_info(f"템플릿 처리 완료: {len(processed_data['items'])}개 처리됨")
+            await self.report_progress("데이터 처리", 60, f"템플릿 파일 {len(processed_data['items'])}개 처리 완료")
             
-            # 5. 데이터베이스 업데이트 단계 (고정 진행률: 60-80%)
-            await self.report_progress("데이터베이스 업데이트", 80, "데이터베이스 업데이트 중...(80%)", require_websocket=True)
+            # 5. 데이터베이스 업데이트 단계 (60-95%)
+            await self.report_progress("데이터베이스 업데이트", 60, f"{len(processed_data['items'])}개 항목 데이터베이스 업데이트 시작...")
             
             # _update_database 대신 process_data 호출
             process_result = await self.process_data(processed_data)
@@ -112,12 +114,12 @@ class NucleiCrawlerService(BaseCrawlerService):
             # 업데이트된 항목 수 가져오기
             updated_count = len(self.updated_cves) if hasattr(self, 'updated_cves') else 0
             
-            # 6. 완료 보고 (고정 진행률: 80-100%)
-            await self.report_progress("완료", 100, f"완료: {updated_count}개의 CVE가 업데이트되었습니다.", require_websocket=True)
+            # 6. 완료 보고 (95-100%)
+            await self.report_progress("완료", 95, f"완료: {updated_count}개의 CVE가 업데이트되었습니다.")
             
             # 최종 상태 확실히 전송 (100ms 후)
             await asyncio.sleep(0.1)
-            await self.report_progress("완료", 100, "업데이트가 완료되었습니다.", require_websocket=True)
+            await self.report_progress("완료", 100, "업데이트가 완료되었습니다.")
             
             return {
                 "stage": "success",
@@ -459,12 +461,15 @@ class NucleiCrawlerService(BaseCrawlerService):
         
         for idx, file_path in enumerate(template_files):
             try:
+                # 진행률 계산 (40% ~ 60% 사이에서 변화)
+                progress = 40 + int((idx / total) * 20) if total > 0 else 40
+                
                 # 진행 상황 보고 (25% 간격 또는 처음/마지막)
                 if idx in progress_points or idx == 0 or idx == total - 1:
                     await self.report_progress(
                         "데이터 처리", 
-                        60,  # 고정된 60% 진행률 유지
-                        f"데이터 처리 중 ({idx+1}/{total})"  # 현재/전체 형식으로 메시지 표시
+                        progress,  # 동적 진행률 적용
+                        f"데이터 처리 중 ({idx+1}/{total} 항목, {(idx+1)/total*100:.1f}%)"  # 현재/전체 형식으로 메시지 표시
                     )
                     
                 # 파일 경로 유효성 검사
@@ -541,6 +546,47 @@ class NucleiCrawlerService(BaseCrawlerService):
                 if isinstance(references, str):
                     references = [references]
                 
+                # Reference 객체 리스트로 변환
+                reference_objects = []
+                for ref_url in references:
+                    if ref_url:
+                        # 현재 시간을 ISO 형식으로 설정
+                        current_time = datetime.now(ZoneInfo("UTC")).isoformat()
+                        reference_objects.append({
+                            "url": ref_url,
+                            "type": "OTHER",
+                            "description": f"Nuclei Template Reference",
+                            "created_at": current_time,
+                            "created_by": "Nuclei-Crawler",
+                            "last_modified_at": current_time,
+                            "last_modified_by": "Nuclei-Crawler"
+                        })
+                
+                # PoC 정보 생성 (Nuclei 템플릿 자체를 PoC로 간주)
+                pocs = []
+                if content:  # 템플릿 내용이 있는 경우
+                    # CVE ID에서 연도 추출 (예: CVE-2024-1114 -> 2024)
+                    cve_year_match = re.match(r'CVE-(\d{4})-\d+', cve_id)
+                    cve_year = cve_year_match.group(1) if cve_year_match else "unknown"
+                    
+                    # 연도를 포함한 올바른 GitHub URL 생성
+                    github_url = f"https://github.com/projectdiscovery/nuclei-templates/blob/main/http/cves/{cve_year}/{cve_id}.yaml"
+                    
+                    # 현재 시간을 ISO 형식으로 설정
+                    current_time = datetime.now(ZoneInfo("UTC")).isoformat()
+                    pocs.append({
+                        "source": "Nuclei-Templates",
+                        "url": github_url,
+                        "description": f"Nuclei Template for {cve_id}",
+                        "created_at": current_time,
+                        "created_by": "Nuclei-Crawler",
+                        "last_modified_at": current_time,
+                        "last_modified_by": "Nuclei-Crawler"
+                    })
+                
+                # Snort Rules 정보 (Nuclei 템플릿에는 없으므로 빈 리스트)
+                snort_rules = []
+                
                 # 처리된 데이터 생성
                 processed_template = {
                     "cve_id": cve_id,
@@ -550,7 +596,9 @@ class NucleiCrawlerService(BaseCrawlerService):
                     "content": content,
                     "nuclei_hash": content_hash or "",
                     "source": "nuclei-templates",
-                    "reference_urls": references,
+                    "references": reference_objects,
+                    "pocs": pocs,
+                    "snort_rules": snort_rules,
                     "file_path": file_path
                 }
                 

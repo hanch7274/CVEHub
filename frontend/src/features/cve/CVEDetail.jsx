@@ -315,32 +315,66 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
 
   // 사용자가 로그인 후 처음 데이터를 로드하는지 확인하는 ref
   const isFirstLoadRef = useRef(true);
+  
+  // 구독 요청 디바운싱을 위한 타이머 ref
+  const subscriptionTimerRef = useRef(null);
+  
+  // 구독 상태 로컬 캐싱
+  const isSubscribedRef = useRef(isSubscribed);
+  
+  // 구독 상태 업데이트
+  useEffect(() => {
+    isSubscribedRef.current = isSubscribed;
+  }, [isSubscribed]);
+  
+  // 로컬 구독자 상태 업데이트
+  useEffect(() => {
+    if (Array.isArray(subscribers)) {
+      setLocalSubscribers(subscribers);
+    }
+  }, [subscribers]);
 
-  useLayoutEffect(() => {
-    // detailExpanded 상태가 바뀌면 지연 시간을 둔 후 높이 조정 (리사이징 무한 루프 방지)
-    let resizeTimer;
-    if (detailExpanded) {
-      resizeTimer = setTimeout(() => {
-        const descriptionContainer = document.querySelector('.description-container');
-        if (descriptionContainer) {
-          // expanded 상태에서는 내용에 맞게 높이 조정
-          descriptionContainer.style.height = 'auto';
-          descriptionContainer.style.maxHeight = '400px';
-        }
-      }, 50);
-    } else {
-      resizeTimer = setTimeout(() => {
-        const descriptionContainer = document.querySelector('.description-container');
-        if (descriptionContainer) {
-          // 축소 상태에서는 고정 높이
-          descriptionContainer.style.height = '60px';
-          descriptionContainer.style.maxHeight = '60px';
-        }
-      }, 50);
+  // 디바운스된 구독 함수
+  const debouncedSubscribe = useCallback(() => {
+    // 이미 타이머가 있다면 제거
+    if (subscriptionTimerRef.current) {
+      clearTimeout(subscriptionTimerRef.current);
     }
     
-    return () => clearTimeout(resizeTimer);
-  }, [detailExpanded]);
+    // 300ms 후에 구독 요청 실행
+    subscriptionTimerRef.current = setTimeout(() => {
+      // 이미 구독 중이 아니고, 소켓이 연결되어 있을 때만 구독
+      if (!isSubscribedRef.current && connectedRef.current && socketRef.current && propsCveId) {
+        logger.info('CVEDetail', `디바운스된 구독 요청 실행: ${propsCveId}`, {
+          isSubscribed: isSubscribedRef.current,
+          connected: connectedRef.current,
+          hasSocket: !!socketRef.current
+        });
+        subscribe();
+      }
+    }, 300);
+  }, [propsCveId, subscribe]);
+  
+  // 디바운스된 구독 해제 함수
+  const debouncedUnsubscribe = useCallback(() => {
+    // 이미 타이머가 있다면 제거
+    if (subscriptionTimerRef.current) {
+      clearTimeout(subscriptionTimerRef.current);
+    }
+    
+    // 300ms 후에 구독 해제 요청 실행
+    subscriptionTimerRef.current = setTimeout(() => {
+      // 구독 중이고, 소켓이 연결되어 있을 때만 구독 해제
+      if (isSubscribedRef.current && connectedRef.current && socketRef.current && propsCveId) {
+        logger.info('CVEDetail', `디바운스된 구독 해제 요청 실행: ${propsCveId}`, {
+          isSubscribed: isSubscribedRef.current,
+          connected: connectedRef.current,
+          hasSocket: !!socketRef.current
+        });
+        unsubscribe();
+      }
+    }, 300);
+  }, [propsCveId, unsubscribe]);
 
   // React Query를 사용한 CVE 상세 정보 조회
   const {
@@ -739,92 +773,69 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     };
   }, [propsCveId, open, handleCVEUpdated]);
 
-  // CVE 구독 처리
+  // 모달을 열 때 데이터 새로고침 및 구독 처리
   useEffect(() => {
-    if (!propsCveId || !open) return;
-    
-    // 소켓 연결 상태를 상세히 로깅
-    logger.info('CVEDetail', '소켓 연결 상태 확인', {
-      connected: connectedRef.current,
-      socketExists: !!socketRef.current,
-      socketId: socketRef.current?.id,
-      readyForSubscription: !!(connectedRef.current && socketRef.current && socketRef.current.id && subscribe)
-    });
-    
-    // 안전 체크: 소켓이 연결되고 소켓 객체가 유효할 때만 구독 시도
-    if (connectedRef.current && socketRef.current && socketRef.current.id && subscribe) {
-      logger.info('CVEDetail', `CVE 구독 시도: ${propsCveId}`, {
-        socketId: socketRef.current.id
-      });
+    // open 상태가 변경될 때만 실행
+    if (open && propsCveId) {
+      // 로딩 상태 설정
+      setLoading(true);
       
-      try {
-        const subscriptionResult = subscribe();
-        
-        if (!subscriptionResult) {
-          logger.warn('CVEDetail', `CVE ${propsCveId} 구독 요청 실패`);
-        } else {
-          logger.info('CVEDetail', `CVE ${propsCveId} 구독 성공`);
-        }
-        
-      } catch (error) {
-        logger.error('CVEDetail', `CVE 구독 중 오류 발생: ${error.message}`);
+      // 데이터 새로고침
+      refetchCveDetail()
+        .then(() => {
+          // 성공적으로 데이터를 가져온 경우 로딩 상태 해제
+          setLoading(false);
+          
+          // 모달이 열렸을 때 구독 요청 (소켓이 연결된 경우에만)
+          if (connectedRef.current && socketRef.current && !isSubscribedRef.current) {
+            logger.info('CVEDetail', `모달 열림, 구독 요청: ${propsCveId}`);
+            debouncedSubscribe();
+          }
+        })
+        .catch(err => {
+          logger.error('CVEDetail', '데이터 로딩 실패', { error: err.message });
+          setLoading(false);
+        });
+    } else if (!open) {
+      // 모달이 닫힐 때 구독 해제 및 로딩 상태 초기화
+      if (isSubscribedRef.current && connectedRef.current && socketRef.current && propsCveId) {
+        logger.info('CVEDetail', `모달 닫힘, 구독 해제 요청: ${propsCveId}`);
+        debouncedUnsubscribe();
       }
-    } else {
-      logger.warn('CVEDetail', '소켓이 준비되지 않아 CVE 구독을 건너뜁니다', {
-        connected: connectedRef.current,
-        hasSocket: !!socketRef.current,
-        socketId: socketRef.current?.id,
-        hasSubscribeFunction: !!subscribe
-      });
+      setLoading(false);
     }
     
-    // 클린업 함수
+    // 컴포넌트 언마운트 시 구독 해제
     return () => {
-      if (propsCveId && connectedRef.current && socketRef.current && socketRef.current.id && unsubscribe) {
-        logger.info('CVEDetail', `CVE 구독 해제: ${propsCveId}`, {
-          socketId: socketRef.current.id
-        });
-        
-        try {
-          unsubscribe();
-        } catch (error) {
-          logger.error('CVEDetail', `CVE 구독 해제 중 오류 발생: ${error.message}`);
-        }
+      if (open && isSubscribedRef.current && propsCveId) {
+        logger.info('CVEDetail', `컴포넌트 언마운트, 구독 해제 요청: ${propsCveId}`);
+        // 즉시 구독 해제 (디바운스 없이)
+        unsubscribe();
+      }
+      
+      // 타이머 정리
+      if (subscriptionTimerRef.current) {
+        clearTimeout(subscriptionTimerRef.current);
       }
     };
-  }, [propsCveId, open, subscribe, unsubscribe]);
+  }, [open, propsCveId, refetchCveDetail, debouncedSubscribe, debouncedUnsubscribe, unsubscribe]);
 
-  // 구독자 정보 업데이트
+  // 소켓 연결 상태 변경 시 구독 처리
   useEffect(() => {
-    if (subscribers && subscribers.length > 0) {
-      logger.info('CVEDetail', '구독자 정보 업데이트', { count: subscribers.length });
-      setLocalSubscribers(subscribers);
-    } else if (currentUser && localSubscribers.length === 0) {
-      // 구독자 목록이 비어있지만 현재 사용자 정보로 채움
-      const userInfo = {
-        id: currentUser.id,
-        username: currentUser.username,
-        displayName: currentUser.displayName || currentUser.username,
-        profileImage: currentUser.profileImage
-      };
-      logger.info('CVEDetail', '사용자 정보로 구독자 초기화', userInfo);
-      setLocalSubscribers([userInfo]);
-    }
-  }, [subscribers, currentUser, localSubscribers.length]);
-
-  // 연결 상태 변경 시 알림
-  useEffect(() => {
-    if (open) {
-      if (!connectedRef.current) {
-        logger.warn('CVEDetail', 'WebSocket 연결이 없습니다. 실시간 업데이트가 제한됩니다.');
-        enqueueSnackbar('서버 연결 상태를 확인해주세요. 실시간 업데이트가 제한됩니다.', { 
-          variant: 'warning',
-          anchorOrigin: { vertical: 'bottom', horizontal: 'center' },
-          autoHideDuration: 3000
-        });
+    // 모달이 열려있고, 소켓 연결 상태가 변경되었을 때만 처리
+    if (open && propsCveId) {
+      if (connected && socket && !isSubscribedRef.current) {
+        // 소켓이 연결되었고 아직 구독하지 않은 경우 구독
+        logger.info('CVEDetail', `소켓 연결됨, 구독 요청: ${propsCveId}`);
+        debouncedSubscribe();
+      } else if (!connected && isSubscribedRef.current) {
+        // 소켓 연결이 끊어졌고 구독 중인 경우 로컬 상태 업데이트
+        logger.info('CVEDetail', `소켓 연결 끊김, 구독 상태 업데이트: ${propsCveId}`);
+        // 연결이 끊어진 경우 서버에 구독 해제 요청을 보낼 수 없으므로 로컬 상태만 업데이트
+        setLocalSubscribers([]);
       }
     }
-  }, [open, enqueueSnackbar]);
+  }, [connected, socket, open, propsCveId, debouncedSubscribe]);
 
   // 로딩 상태 계산 - 수정
   const isLoading = useMemo(() => {
@@ -1103,46 +1114,6 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       </Dialog>
     );
   };
-
-  // 모달을 열 때 데이터 새로고침 
-  useEffect(() => {
-    // open 상태가 변경될 때만 실행
-    if (open && propsCveId) {
-      // 로딩 상태 설정
-      setLoading(true);
-      
-      // 데이터 새로고침
-      refetchCveDetail()
-        .then(() => {
-          // 성공적으로 데이터를 가져온 경우 로딩 상태 해제
-          setLoading(false);
-        })
-        .catch(err => {
-          logger.error('CVEDetail', '데이터 로딩 실패', { error: err.message });
-          setLoading(false);
-        });
-    } else if (!open) {
-      // 모달이 닫힐 때 로딩 상태 초기화
-      setLoading(false);
-    }
-  }, [open, propsCveId, refetchCveDetail]);
-
-  // WebSocket 연결 상태가 변경될 때 캐시 무효화
-  useEffect(() => {
-    // Socket.IO가 연결되었을 때만 실행
-    if (connectedRef.current && propsCveId && !loading && !isQueryLoading) {
-      logger.info('CVEDetail', 'Socket 연결됨, 데이터 갱신 검토');
-      
-      // 마지막 데이터 업데이트 시간 확인
-      const now = new Date().getTime();
-      
-      // 마지막 업데이트로부터 1분 이상 지났다면 캐시 무효화
-      if (dataUpdatedAt && (now - dataUpdatedAt) > 60000) {
-        logger.info('CVEDetail', '소켓 연결 후 오래된 데이터 감지됨, 캐시 무효화');
-        queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.detail(propsCveId) });
-      }
-    }
-  }, [connectedRef, propsCveId, dataUpdatedAt, queryClient, loading, isQueryLoading]);
 
   if (isLoading) {
     return (

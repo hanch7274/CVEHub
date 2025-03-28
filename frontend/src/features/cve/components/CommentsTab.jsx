@@ -8,7 +8,7 @@ import Comment from './Comment';
 import MentionInput from './MentionInput';
 import api from '../../../api/config/axios';
 import { useSnackbar } from 'notistack';
-import { useQueryClient, useMutation } from '@tanstack/react-query';
+import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query';
 import {
   ListHeader,
   EmptyState
@@ -88,7 +88,6 @@ const CommentsTab = React.memo(({
   const [editingCommentId, setEditingCommentId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [mentionInputKey, setMentionInputKey] = useState(0);
-  const [users, setUsers] = useState([]);
 
   // 최상위 댓글 입력값을 위한 ref - 객체로 올바르게 사용
   const commentInputRef = useRef(null);
@@ -103,17 +102,23 @@ const CommentsTab = React.memo(({
   }, []);
 
   // 사용자 목록 가져오기
-  useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        const response = await api.get('/users/search');
-        setUsers(response.data);
-      } catch (error) {
-        console.error('Failed to fetch users:', error);
-      }
-    };
-    fetchUsers();
-  }, []);
+  const { data: users = [], isLoading: isUsersLoading } = useQuery({
+    queryKey: QUERY_KEYS.USERS.search,
+    queryFn: async () => {
+      const response = await api.get('/users/search');
+      return response.data || [];
+    },
+    // 캐싱 옵션
+    gcTime: 10 * 60 * 1000, // 10분 (v5에서는 cacheTime이 gcTime으로 변경됨)
+    staleTime: 10 * 60 * 1000, // 10분
+    // 에러 처리
+    onError: (error) => {
+      console.error('Failed to fetch users:', error);
+      return [];
+    },
+    // 기본값 설정
+    initialData: []
+  });
 
   // 댓글 계층화
   const organizeComments = useCallback((commentsArray) => {

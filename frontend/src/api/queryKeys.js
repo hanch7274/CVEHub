@@ -22,6 +22,13 @@ export const QUERY_KEYS = {
   USER: 'user',
   USER_PROFILE: 'user-profile',
   
+  // 사용자 검색 관련 query keys
+  USERS: {
+    all: ['users'],
+    search: ['users', 'search'],
+    searchByQuery: (query) => ['users', 'search', query],
+  },
+  
   // 설정 관련 query keys
   SETTINGS: 'settings',
   

@@ -136,13 +136,14 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
         height: 'auto',
         minHeight: '64px',
         maxHeight: '64px',
-        backgroundColor: theme.palette.primary.main,
-        borderBottom: `1px solid ${alpha(theme.palette.common.white, 0.1)}`,
-        backdropFilter: 'blur(20px)',
-        zIndex: theme.zIndex.drawer + 1
+        background: 'rgba(255, 255, 255, 0.2)', 
+        backdropFilter: 'blur(10px)',
+        borderBottom: `1px solid ${alpha(theme.palette.common.white, 0.2)}`,
+        boxShadow: `0 4px 30px ${alpha('#000', 0.1)}`,
+        zIndex: theme.zIndex.drawer + 1,
       }}
     >
-      <Container maxWidth={false}>
+      <Container maxWidth={false} sx={{ px: { xs: 1, sm: 2 } }}>
         <Toolbar 
           disableGutters
           sx={{ 
@@ -153,22 +154,28 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <Typography
-              variant="h6"
-              component="div"
+            <Box
               sx={{
-                fontWeight: 700,
-                letterSpacing: '0.5px',
-                color: theme.palette.primary.contrastText,
                 display: 'flex',
                 alignItems: 'center',
-                cursor: 'pointer'
+                cursor: 'pointer',
+                transition: 'transform 0.2s ease',
+                '&:hover': {
+                  transform: 'scale(1.05)'
+                }
               }}
               onClick={() => navigate('/')}
             >
-              <SearchIcon sx={{ mr: 1, fontSize: '1.5rem' }} />
-              CVEHub
-            </Typography>
+              <Box 
+                component="img"
+                src="/cvehub_logo.png"
+                alt="CVEHub Logo"
+                sx={{
+                  height: '60px',
+                  mr: 1
+                }}
+              />
+            </Box>
           </Box>
 
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -177,9 +184,19 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
                 size="small"
                 onClick={handleReconnect}
                 sx={{ 
-                  mr: 1, 
+                  mr: 1,
+                  backgroundColor: connected 
+                    ? alpha(theme.palette.success.main, 0.1) 
+                    : alpha(theme.palette.error.main, 0.1),
+                  backdropFilter: 'blur(5px)',
+                  border: `1px solid ${alpha(
+                    connected ? theme.palette.success.main : theme.palette.error.main, 
+                    0.2
+                  )}`,
                   '&:hover': { 
-                    backgroundColor: alpha(theme.palette.primary.main, 0.1)
+                    backgroundColor: connected 
+                      ? alpha(theme.palette.success.main, 0.2) 
+                      : alpha(theme.palette.error.main, 0.2)
                   }
                 }}
                 aria-label="서버 연결 상태"
@@ -189,7 +206,20 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
             </Tooltip>
             
             {user && (
-              <NotificationBell />
+              <Box 
+                sx={{ 
+                  mx: 1,
+                  transition: 'all 0.3s ease',
+                  '& .MuiIconButton-root': {
+                    color: '#ff006e'
+                  },
+                  '& .MuiSvgIcon-root': {
+                    fontSize: '1.8rem'
+                  }
+                }}
+              >
+                <NotificationBell />
+              </Box>
             )}
             
             {user ? (
@@ -199,15 +229,19 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
                   sx={{ 
                     ml: 1,
                     transition: 'transform 0.2s',
-                    '&:hover': { transform: 'scale(1.05)' }
+                    '&:hover': { transform: 'scale(1.05)' },
+                    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                    backdropFilter: 'blur(5px)',
+                    border: `1px solid rgba(255, 255, 255, 0.3)`,
+                    padding: '4px'
                   }}
                 >
                   <Avatar 
                     sx={{ 
-                      bgcolor: alpha(theme.palette.primary.light, 0.8),
+                      background: 'linear-gradient(135deg, #3a86ff 0%, #ff006e 100%)',
                       color: theme.palette.common.white,
                       fontWeight: 'bold',
-                      boxShadow: `0 0 0 2px ${alpha(theme.palette.common.white, 0.2)}`
+                      boxShadow: `0 0 0 2px rgba(255, 255, 255, 0.3)`
                     }}
                   >
                     {animalEmoji}
@@ -222,10 +256,13 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
                 sx={{ 
                   borderRadius: '20px',
                   px: 2,
-                  borderColor: alpha(theme.palette.common.white, 0.5),
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                  backdropFilter: 'blur(5px)',
+                  borderColor: 'rgba(255, 255, 255, 0.3)',
+                  color: theme.palette.mode === 'dark' ? '#fff' : '#333',
                   '&:hover': { 
-                    borderColor: theme.palette.common.white,
-                    backgroundColor: alpha(theme.palette.common.white, 0.1)
+                    borderColor: 'rgba(255, 255, 255, 0.5)',
+                    backgroundColor: 'rgba(255, 255, 255, 0.2)'
                   }
                 }}
               >
@@ -241,12 +278,16 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
             onClose={handleClose}
             onClick={handleClose}
             PaperProps={{
-              elevation: 3,
+              elevation: 0,
               sx: {
                 mt: 1.5,
                 minWidth: 220,
                 overflow: 'visible',
-                filter: 'drop-shadow(0px 2px 8px rgba(0,0,0,0.15))',
+                background: 'rgba(255, 255, 255, 0.8)',
+                backdropFilter: 'blur(10px)',
+                border: `1px solid rgba(255, 255, 255, 0.3)`,
+                borderRadius: '12px',
+                boxShadow: `0 10px 30px ${alpha('#000', 0.15)}`,
                 '&:before': {
                   content: '""',
                   display: 'block',
@@ -255,19 +296,25 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
                   right: 14,
                   width: 10,
                   height: 10,
-                  bgcolor: 'background.paper',
+                  background: 'rgba(255, 255, 255, 0.8)',
+                  backdropFilter: 'blur(10px)',
                   transform: 'translateY(-50%) rotate(45deg)',
                   zIndex: 0,
+                  border: `1px solid rgba(255, 255, 255, 0.3)`,
+                  borderBottom: 'none',
+                  borderRight: 'none'
                 },
                 '& .MuiMenuItem-root': {
                   px: 2,
                   py: 1.5,
                   gap: 1.5,
-                  borderRadius: '4px',
+                  borderRadius: '8px',
                   mx: 0.5,
                   my: 0.2,
+                  transition: 'all 0.2s ease',
                   '&:hover': {
-                    backgroundColor: alpha(theme.palette.primary.main, 0.08)
+                    background: 'linear-gradient(90deg, rgba(58, 134, 255, 0.08) 0%, rgba(255, 0, 110, 0.08) 100%)',
+                    transform: 'translateX(5px)'
                   }
                 },
               },

@@ -55,9 +55,27 @@ const useWebSocketHook = <TData = any, TPayload = any>(
   
   // 이벤트 리스너 등록 및 해제
   useEffect(() => {
+    // 이벤트 이름이 없거나 빈 문자열인 경우 기본값 사용
+    const eventName = event || 'default_event';
+    
     if (!event) {
-      logger.warn('useWebSocketHook', '이벤트 이름이 제공되지 않았습니다.');
-      return;
+      // 개발 환경에서만 경고 메시지 표시
+      if (process.env.NODE_ENV === 'development') {
+        // 호출 스택 정보 가져오기
+        const stackTrace = new Error().stack || '';
+        const stackLines = stackTrace.split('\n');
+        
+        // 첫 번째 줄은 Error 객체 생성, 두 번째 줄은 현재 함수, 세 번째 줄부터 호출 스택
+        const callerInfo = stackLines.length > 2 ? stackLines[2].trim() : '알 수 없는 위치';
+        
+        logger.warn(
+          'useWebSocketHook', 
+          `이벤트 이름이 제공되지 않아 기본값을 사용합니다. 호출 위치: ${callerInfo}`
+        );
+        
+        // 콘솔에 더 자세한 스택 트레이스 출력
+        console.warn('useWebSocketHook 이벤트 이름 누락 - 호출 스택:', stackTrace);
+      }
     }
     
     // 이벤트 핸들러 함수
@@ -65,67 +83,54 @@ const useWebSocketHook = <TData = any, TPayload = any>(
       try {
         logger.debug(
           'useWebSocketHook', 
-          `이벤트 수신: ${event}, 데이터: ${JSON.stringify(data, null, 2)}`
+          `이벤트 수신: ${eventName}, 데이터: ${JSON.stringify(data, null, 2)}`
         );
         
         // 낙관적 업데이트 처리 (개선된 방식)
         if (optionsRef.current.optimisticUpdate && optionsRef.current.queryKey) {
-          logger.debug(
-            'useWebSocketHook',
-            `낙관적 업데이트 적용: ${JSON.stringify(optionsRef.current.queryKey)}`
-          );
-          
-          // 커스텀 업데이트 함수가 제공된 경우
-          if (optionsRef.current.updateDataFn && typeof optionsRef.current.updateDataFn === 'function') {
-            try {
-              // 현재 캐시된 데이터 가져오기
-              const cachedData = queryClient.getQueryData<TData>(optionsRef.current.queryKey);
-              
-              if (cachedData) {
-                // 업데이트 함수를 사용하여 데이터 업데이트
-                const updatedData = optionsRef.current.updateDataFn(cachedData, data);
-                
-                // 캐시 직접 업데이트
-                queryClient.setQueryData(optionsRef.current.queryKey, updatedData);
-                logger.debug('useWebSocketHook', '캐시 직접 업데이트 성공');
-                
-                // 업데이트 성공 시 쿼리 무효화 스킵
-                return;
+          try {
+            queryClient.setQueryData(
+              optionsRef.current.queryKey,
+              (oldData: TData) => {
+                if (optionsRef.current.updateDataFn) {
+                  return optionsRef.current.updateDataFn(oldData, data);
+                }
+                return data as unknown as TData;
               }
-            } catch (updateError) {
-              logger.error('useWebSocketHook', '캐시 업데이트 중 오류 발생', updateError);
-              // 오류 발생 시 기본 무효화 방식으로 폴백
+            );
+            
+            if (process.env.NODE_ENV === 'development') {
+              logger.debug('useWebSocketHook', '캐시 직접 업데이트 성공');
             }
+          } catch (updateError) {
+            logger.error('useWebSocketHook', '캐시 업데이트 중 오류 발생', updateError);
           }
-          
-          // 기본 쿼리 무효화 (캐시 업데이트 실패 또는 업데이트 함수 없음)
-          queryClient.invalidateQueries({
-            queryKey: optionsRef.current.queryKey, 
-            refetchType: 'active'
-          });
         }
         
-        // 최신 콜백 함수 호출
-        if (callbackRef.current) {
-          callbackRef.current(data);
-        }
+        // 콜백 호출
+        callbackRef.current(data);
       } catch (error) {
         logger.error(
           'useWebSocketHook', 
-          `이벤트 처리 중 오류 발생: ${event}`, 
+          `이벤트 처리 중 오류 발생: ${eventName}`, 
           error
         );
       }
     };
     
     // 이벤트 리스너 등록
-    logger.info('useWebSocketHook', `이벤트 리스너 등록: ${event}`);
-    socketIOService.on(event, handleEvent);
+    socketIOService.on(eventName, handleEvent);
+    
+    if (process.env.NODE_ENV === 'development') {
+      logger.info('useWebSocketHook', `이벤트 리스너 등록: ${eventName}`);
+    }
     
     // 컴포넌트 언마운트 시 이벤트 리스너 해제
     return () => {
-      logger.info('useWebSocketHook', `이벤트 리스너 해제: ${event}`);
-      socketIOService.off(event, handleEvent);
+      socketIOService.off(eventName, handleEvent);
+      if (process.env.NODE_ENV === 'development') {
+        logger.info('useWebSocketHook', `이벤트 리스너 해제: ${eventName}`);
+      }
     };
   }, [event, queryClient]);
   

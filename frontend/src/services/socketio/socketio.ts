@@ -149,10 +149,22 @@ class SocketIOService implements ISocketIOService {
         return;
       }
 
+      // 인증 토큰 가져오기
+      const token = getAccessToken();
+      
+      // 토큰이 없으면 연결 시도하지 않음
+      if (!token) {
+        logger.error('SocketIOService', '연결 실패: 인증 토큰이 없습니다');
+        this._updateConnectionState(SOCKET_STATE.ERROR);
+        // 토큰 없이 연결 시도하지 않고 종료
+        return;
+      }
+
       logger.info('SocketIOService', '웹소켓 연결 시작', { 
         previousState: this._connectionState,
         socketExists: !!this.socket,
-        tokenExists: !!getAccessToken()
+        tokenExists: !!token,
+        tokenLength: token.length
       });
       
       // 연결 상태 업데이트
@@ -161,19 +173,12 @@ class SocketIOService implements ISocketIOService {
       // 접속할 호스트 정보 가져오기
       const socketHost = url || getSocketIOURL();
       
-      // 인증 토큰 가져오기
-      const token = getAccessToken();
-      
-      if (!token) {
-        logger.error('SocketIOService', '연결 실패: 인증 토큰이 없습니다');
-        this._updateConnectionState(SOCKET_STATE.ERROR);
-        return;
-      }
-      
       // 소켓 인스턴스가 존재하는 경우 정리
       if (this.socket) {
         logger.info('SocketIOService', '기존 소켓 연결 정리');
         try {
+          // 이벤트 리스너 제거 후 연결 종료
+          this.socket.offAny();
           this.socket.disconnect();
           this.socket.close();
         } catch (e: any) {
@@ -183,11 +188,15 @@ class SocketIOService implements ISocketIOService {
       }
       
       // 디버깅을 위한 로그 추가
-      console.log('%c Socket.IO 연결 시도 중... ', 'background: #4CAF50; color: white; padding: 4px;', {
-        socketHost,
-        origin: window.location.origin,
-        protocol: window.location.protocol
-      });
+      if (process.env.NODE_ENV === 'development') {
+        console.log('%c Socket.IO 연결 시도 중... ', 'background: #4CAF50; color: white; padding: 4px;', {
+          socketHost,
+          origin: window.location.origin,
+          protocol: window.location.protocol,
+          tokenExists: !!token,
+          tokenLength: token.length
+        });
+      }
       
       // 연결 시도 전 상세 로깅
       logger.info('SocketIOService', '웹소켓 연결 시도', { 
@@ -196,7 +205,8 @@ class SocketIOService implements ISocketIOService {
         fullUrl: `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${socketHost}${SOCKET_IO_PATH}`,
         httpUrl: `${window.location.protocol === 'https:' ? 'https' : 'http'}://${socketHost}${SOCKET_IO_PATH}`,
         origin: window.location.origin,
-        connectionState: this._connectionState
+        connectionState: this._connectionState,
+        tokenExists: !!token
       });
       
       // 옵션 업데이트
@@ -493,24 +503,70 @@ class SocketIOService implements ISocketIOService {
   // 연결 종료
   disconnect(): void {
     try {
-      if (this.socket) {
-        logger.info('SocketIOService', '연결 종료 요청');
-        
-        // 핑 타이머 정리
-        this._clearPingTimer();
-        
-        // 핑 타임아웃 정리
-        this._clearPingTimeout();
-        
-        this.socket.disconnect();
-        this.socket = null;
-        this._updateConnectionState(SOCKET_STATE.DISCONNECTED);
-      }
-    } catch (error: any) {
-      logger.error('SocketIOService', '연결 종료 중 오류 발생', {
-        error: error.message,
-        stack: error.stack
+      logger.info('SocketIOService', '웹소켓 연결 종료 요청', {
+        connectionState: this._connectionState,
+        socketExists: !!this.socket,
+        socketConnected: this.socket?.connected || false,
+        socketId: this.socket?.id || 'none'
       });
+      
+      // 연결 중인 상태에서 종료 요청이 오면 무시
+      if (this._connectionState === SOCKET_STATE.CONNECTING) {
+        logger.warn('SocketIOService', '연결 중인 상태에서 연결 종료 요청이 왔습니다. 무시합니다.');
+        return;
+      }
+      
+      // 이미 연결이 끊어진 상태라면 추가 작업 없이 종료
+      if (this._connectionState === SOCKET_STATE.DISCONNECTED && !this.socket) {
+        logger.info('SocketIOService', '이미 연결이 끊어진 상태입니다.');
+        return;
+      }
+      
+      // 핑 타이머 정리
+      this._clearPingTimer();
+      this._clearPingTimeout();
+      
+      // 소켓이 존재하고 연결된 상태인 경우에만 연결 종료
+      if (this.socket) {
+        try {
+          // 모든 이벤트 리스너 제거
+          this.socket.offAny();
+          
+          // 연결 종료
+          if (this.socket.connected) {
+            this.socket.disconnect();
+          }
+          
+          // 소켓 인스턴스 정리
+          this.socket.close();
+          this.socket = null;
+          
+          // 연결 상태 업데이트
+          this._updateConnectionState(SOCKET_STATE.DISCONNECTED);
+          
+          // 연결 종료 이벤트 발생
+          this._notifyListeners(SOCKET_EVENTS.DISCONNECT);
+          
+          logger.info('SocketIOService', '웹소켓 연결 종료 완료');
+        } catch (e: any) {
+          logger.error('SocketIOService', '웹소켓 연결 종료 중 오류 발생', { 
+            error: e.message,
+            stack: e.stack
+          });
+        }
+      } else {
+        // 소켓이 없는 경우 상태만 업데이트
+        this._updateConnectionState(SOCKET_STATE.DISCONNECTED);
+        logger.info('SocketIOService', '소켓 인스턴스가 없어 상태만 업데이트');
+      }
+    } catch (e: any) {
+      logger.error('SocketIOService', '연결 종료 중 예외 발생', { 
+        error: e.message,
+        stack: e.stack
+      });
+      
+      // 오류가 발생해도 상태는 업데이트
+      this._updateConnectionState(SOCKET_STATE.DISCONNECTED);
     }
   }
 

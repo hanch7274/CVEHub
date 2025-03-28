@@ -132,7 +132,9 @@ export const RULE_TYPES = {
 export const DEFAULT_RULE = {
   type: 'Emerging-Threats',
   rule: '',
-  description: ''
+  description: '',
+  created_at: new Date().toISOString(),
+  created_by: 'anonymous'
 };
 
 export const snortRulesTabConfig = {
@@ -155,16 +157,16 @@ export const snortRulesTabConfig = {
     if (isUpdate) {
       return {
         ...item,
-        modifiedAt: kstTime?.toISOString() || new Date().toISOString(),
-        modifiedBy: item.currentUser?.username || 'anonymous'
+        last_modified_at: kstTime?.toISOString() || new Date().toISOString(),
+        last_modified_by: item.currentUser?.username || 'anonymous'
       };
     }
     return {
       ...item,
-      createdAt: item.dateAdded,
-      createdBy: item.createdBy,
-      modifiedAt: null,
-      modifiedBy: null
+      created_at: item.created_at,
+      created_by: item.created_by,
+      last_modified_at: null,
+      last_modified_by: null
     };
   },
   
@@ -252,8 +254,8 @@ export const DEFAULT_REFERENCE = {
   type: 'OTHER',
   url: '',
   description: '',
-  dateAdded: new Date().toISOString(),
-  createdBy: 'anonymous'
+  created_at: new Date().toISOString(),
+  created_by: 'anonymous'
 };
 
 export const referencesTabConfig = {

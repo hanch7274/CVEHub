@@ -7,10 +7,12 @@ import {
   ListItem,
   ListItemText,
   CircularProgress,
-  ClickAwayListener
+  Box
 } from '@mui/material';
-import { debounce } from 'lodash';
 import api from '../../../api/config/axios';
+import logger from '../../../utils/logging';
+import { useQueryClient } from '@tanstack/react-query';
+import { debounce } from 'lodash';
 
 // ResizeObserver 오류 방지 함수
 const preventResizeObserverError = () => {
@@ -38,84 +40,109 @@ const MentionInput = ({
   variant = "outlined",
   size = "small"
 }) => {
-  const [query, setQuery] = useState('');
-  const [anchorEl, setAnchorEl] = useState(null);
-  const [cursorPosition, setCursorPosition] = useState(0);
+  const [inputValue, setInputValue] = useState(value || '');
+  const [mentionState, setMentionState] = useState({ active: false, query: '', startPos: 0 });
   const [suggestions, setSuggestions] = useState([]);
-  const [mentionSearchActive, setMentionSearchActive] = useState(false);
-  const [popperWidth, setPopperWidth] = useState('auto');
+  const [anchorEl, setAnchorEl] = useState(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [searchLoading, setSearchLoading] = useState(false);
   const inputRef = useRef(null);
-  const searchTimeoutRef = useRef(null);
-  const popperRef = useRef(null);
+  const queryClient = useQueryClient();
+  const lastSearchRef = useRef('');
+
+  // 디바운스된 검색 함수 생성
+  const debouncedSearch = useRef(
+    debounce(async (query) => {
+      if (!query || query.length < 2 || query === lastSearchRef.current) {
+        return;
+      }
+      
+      lastSearchRef.current = query;
+      setSearchLoading(true);
+      
+      try {
+        // 캐시에서 검색 결과 확인
+        const cacheKey = ['users', 'search', query];
+        const cachedResults = queryClient.getQueryData(cacheKey);
+        
+        if (cachedResults) {
+          setSuggestions(cachedResults);
+          setSearchLoading(false);
+          return;
+        }
+        
+        const response = await api.get('/users/search', {
+          params: { query }
+        });
+        
+        // 개발 환경에서만 로그 출력
+        if (process.env.NODE_ENV === 'development') {
+          logger.debug('[MentionInput] Search query:', query);
+          logger.debug('[MentionInput] Search results:', response.data);
+        }
+        
+        // 응답 데이터 안전하게 처리
+        const responseData = response.data || [];
+        
+        if (Array.isArray(responseData)) {
+          setSuggestions(responseData);
+          // 결과를 캐시에 저장 (5분 동안 유효)
+          queryClient.setQueryData(cacheKey, responseData, {
+            cacheTime: 5 * 60 * 1000
+          });
+        } else {
+          logger.error('[MentionInput] Invalid response format:', response.data);
+          setSuggestions([]);
+        }
+      } catch (error) {
+        logger.error('[MentionInput] Search error:', error);
+        setSuggestions([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300) // 300ms 디바운스
+  ).current;
+
+  // 멘션 쿼리가 변경될 때 검색 실행
+  useEffect(() => {
+    if (mentionState.active && mentionState.query) {
+      const cleanQuery = mentionState.query.trim();
+      if (cleanQuery.length >= 2) {
+        debouncedSearch(cleanQuery);
+      } else if (cleanQuery.length === 0) {
+        setSuggestions([]);
+      }
+    }
+    
+    return () => {
+      debouncedSearch.cancel(); // 컴포넌트 언마운트 시 디바운스 취소
+    };
+  }, [mentionState.query, debouncedSearch]);
 
   // 컴포넌트 마운트 시 ResizeObserver 오류 방지 함수 실행
   useEffect(() => {
     preventResizeObserverError();
   }, []);
 
-  // 멘션 팝업 위치 설정을 위한 디바운스 함수
-  const debouncedSetAnchorEl = useCallback(
-    debounce((el) => {
-      if (el) {
-        setAnchorEl(el);
-      }
-    }, 150),
-    [setAnchorEl]
-  );
-
-  // 멘션 검색 디바운스 처리 (300ms)
-  const searchUsers = useCallback(
-    debounce(async (searchQuery) => {
-      try {
-        const cleanQuery = searchQuery.trim();
-        if (!cleanQuery) {
-          setSuggestions([]);
-          return;
-        }
-
-        const response = await api.get('/users/search', {
-          params: { query: cleanQuery }
-        });
-        
-        // 개발 환경에서만 로그 출력
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[MentionInput] Search query:', cleanQuery);
-          console.log('[MentionInput] Search results:', response.data);
-        }
-        
-        if (Array.isArray(response.data)) {
-          setSuggestions(response.data);
-        } else {
-          console.error('Invalid response format:', response.data);
-          setSuggestions([]);
-        }
-      } catch (error) {
-        console.error('Error searching users:', error);
-        setSuggestions([]);
-      }
-    }, 300),
-    [setSuggestions]
-  );
-
   // 입력 요소의 너비를 측정하여 Popper 너비 설정
   useLayoutEffect(() => {
-    if (inputRef.current && mentionSearchActive) {
+    if (inputRef.current && mentionState.active) {
       try {
         const width = inputRef.current.offsetWidth;
-        setPopperWidth(width > 0 ? width : 'auto');
+        setAnchorEl(inputRef.current);
       } catch (e) {
-        setPopperWidth('auto');
+        setAnchorEl(null);
       }
     }
-  }, [mentionSearchActive]);
+  }, [mentionState.active]);
 
   // 입력 처리
   const handleInputChange = useCallback((e) => {
     const newText = e.target.value;
     const cursorPos = e.target.selectionStart;
     
-    onChange(e);
-    setCursorPosition(cursorPos);
+    setInputValue(newText);
+    setMentionState((prev) => ({ ...prev, startPos: cursorPos }));
 
     // @ 문자 이후의 텍스트 추출
     const textBeforeCursor = newText.slice(0, cursorPos);
@@ -127,46 +154,39 @@ const MentionInput = ({
       const validSearchPattern = /^[가-힣a-zA-Z0-9\s]*$/;
       
       if (validSearchPattern.test(searchText)) {
-        setQuery(searchText);
-        setMentionSearchActive(true);
-        searchUsers(searchText);
-        
-        // requestAnimationFrame을 사용하여 브라우저 렌더링 사이클에 맞춰 실행
-        requestAnimationFrame(() => {
-          debouncedSetAnchorEl(inputRef.current);
-        });
+        setMentionState((prev) => ({ ...prev, active: true, query: searchText }));
       } else {
-        setMentionSearchActive(false);
+        setMentionState((prev) => ({ ...prev, active: false, query: '' }));
         setAnchorEl(null);
         setSuggestions([]);
       }
     } else {
-      setMentionSearchActive(false);
+      setMentionState((prev) => ({ ...prev, active: false, query: '' }));
       setAnchorEl(null);
       setSuggestions([]);
     }
-  }, [onChange, searchUsers, debouncedSetAnchorEl]);
+  }, []);
 
   // 멘션 클릭 처리
   const handleMentionClick = useCallback((username) => {
-    const textBeforeMention = value.slice(0, cursorPosition);
+    const textBeforeMention = inputValue.slice(0, mentionState.startPos);
     const lastAtSymbol = textBeforeMention.lastIndexOf('@');
-    const textAfterMention = value.slice(cursorPosition);
+    const textAfterMention = inputValue.slice(mentionState.startPos);
     
     const newText = 
       textBeforeMention.slice(0, lastAtSymbol) + 
       `@${username} ` + 
       textAfterMention;
     
-    onChange({ target: { value: newText } });
-    setMentionSearchActive(false);
+    setInputValue(newText);
+    setMentionState((prev) => ({ ...prev, active: false, query: '' }));
     setAnchorEl(null);
     setSuggestions([]);
-  }, [value, cursorPosition, onChange]);
+  }, [inputValue, mentionState.startPos]);
 
   // 포커스가 외부로 이동했을 때 팝업 닫기
   const handleClickAway = useCallback(() => {
-    setMentionSearchActive(false);
+    setMentionState((prev) => ({ ...prev, active: false, query: '' }));
     setAnchorEl(null);
     setSuggestions([]);
   }, []);
@@ -177,41 +197,35 @@ const MentionInput = ({
     // multiline이 false일 때는 Enter로 제출
     if (e.key === 'Enter' && !e.shiftKey && !multiline) {
       e.preventDefault();
-      if (onSubmit && value.trim()) {
-        onSubmit(value);
+      if (onSubmit && inputValue.trim()) {
+        onSubmit(inputValue);
       }
     }
     
     // ESC 키로 멘션 팝업 닫기
-    if (e.key === 'Escape' && mentionSearchActive) {
+    if (e.key === 'Escape' && mentionState.active) {
       e.preventDefault();
-      setMentionSearchActive(false);
+      setMentionState((prev) => ({ ...prev, active: false, query: '' }));
       setAnchorEl(null);
       setSuggestions([]);
     }
-  }, [onSubmit, value, multiline, mentionSearchActive]);
+  }, [onSubmit, inputValue, multiline, mentionState.active]);
 
   // 컴포넌트 언마운트 시 타이머 정리
   useEffect(() => {
     return () => {
-      // searchTimeoutRef.current를 로컬 변수에 저장하지 않고 직접 참조해도 됨
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
-      }
-      // 디바운스 함수 취소
-      debouncedSetAnchorEl.cancel();
-      searchUsers.cancel();
+      debouncedSearch.cancel(); // 컴포넌트 언마운트 시 디바운스 취소
     };
-  }, [debouncedSetAnchorEl, searchUsers]);
+  }, [debouncedSearch]);
 
   return (
-    <ClickAwayListener onClickAway={handleClickAway}>
+    <Box onClick={handleClickAway}>
       <div style={{ position: 'relative' }}>
         <TextField
           fullWidth={fullWidth}
           multiline={multiline}
           rows={rows}
-          value={value}
+          value={inputValue}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
@@ -220,36 +234,12 @@ const MentionInput = ({
           inputRef={inputRef}
           disabled={loading}
         />
-        {mentionSearchActive && Boolean(anchorEl) && suggestions.length > 0 && (
+        {mentionState.active && Boolean(anchorEl) && suggestions.length > 0 && (
           <Popper
             open={true}
             anchorEl={anchorEl}
             placement="bottom-start"
-            style={{ width: popperWidth, zIndex: 1300 }}
-            ref={popperRef}
-            modifiers={[
-              {
-                name: 'preventOverflow',
-                options: {
-                  boundary: document.body,
-                  altAxis: true
-                }
-              },
-              {
-                name: 'flip',
-                options: {
-                  fallbackPlacements: ['top-start', 'bottom-end', 'top-end']
-                }
-              },
-              {
-                name: 'offset',
-                options: {
-                  offset: [0, 2]
-                }
-              }
-            ]}
-            transition
-            disablePortal={false}
+            style={{ width: 'auto', zIndex: 1300 }}
           >
             <Paper 
               elevation={3}
@@ -260,7 +250,7 @@ const MentionInput = ({
               }}
             >
               <List>
-                {loading ? (
+                {searchLoading ? (
                   <ListItem>
                     <CircularProgress size={20} />
                   </ListItem>
@@ -302,7 +292,7 @@ const MentionInput = ({
           </Popper>
         )}
       </div>
-    </ClickAwayListener>
+    </Box>
   );
 };
 

@@ -478,6 +478,13 @@ export const useCVESubscription = (cveId: string) => {
   const [error, setError] = useState<string | null>(null);
 
   const timeoutIdRef = useRef<number | null>(null);
+  
+  // 마지막 구독/구독 해제 요청 시간 추적
+  const lastSubscribeRequestRef = useRef<number>(0);
+  const lastUnsubscribeRequestRef = useRef<number>(0);
+  
+  // 구독 요청 중복 방지를 위한 플래그
+  const subscriptionPendingRef = useRef<boolean>(false);
 
   useEffect(() => {
     socketRef.current = socket;
@@ -493,14 +500,17 @@ export const useCVESubscription = (cveId: string) => {
 
   const handleSubscriptionUpdated = useCallback((data: any) => {
     if (!data || !data.cveId || data.cveId !== cveId) return;
-    logger.info(`구독자 목록 업데이트: ${data.cveId}`, data);
+    logger.info(`구독자 목록 업데이트: ${cveId}`, data);
     setSubscribers(data.subscribers || []);
 
     const currentUserId = localStorage.getItem('userId');
     const isCurrentUserSubscribed = data.subscribers?.some((sub: any) =>
       sub.id === currentUserId || sub.userId === currentUserId
     );
+    
+    // 구독 상태 업데이트 및 플래그 초기화
     setIsSubscribed(isCurrentUserSubscribed);
+    subscriptionPendingRef.current = false;
   }, [cveId]);
 
   const subscribe = useCallback(() => {
@@ -523,6 +533,28 @@ export const useCVESubscription = (cveId: string) => {
       setError('웹소켓 연결이 활성화되지 않았습니다. 잠시 후 다시 시도해주세요.');
       return false;
     }
+    
+    // 이미 구독 중이거나 구독 요청 중인 경우 중복 요청 방지
+    if (isSubscribed || subscriptionPendingRef.current) {
+      logger.info(`이미 구독 중이거나 구독 요청 중입니다: ${cveId}`, {
+        isSubscribed,
+        isPending: subscriptionPendingRef.current
+      });
+      return true;
+    }
+    
+    // 마지막 요청 시간 확인 (1초 내 중복 요청 방지)
+    const now = Date.now();
+    if (now - lastSubscribeRequestRef.current < 1000) {
+      logger.info(`구독 요청 너무 빠름, 무시: ${cveId}`, {
+        timeSinceLastRequest: now - lastSubscribeRequestRef.current
+      });
+      return true;
+    }
+    
+    // 요청 시간 및 플래그 업데이트
+    lastSubscribeRequestRef.current = now;
+    subscriptionPendingRef.current = true;
 
     setIsLoading(true);
     setError(null);
@@ -533,13 +565,6 @@ export const useCVESubscription = (cveId: string) => {
         connected: isConnected,
         timestamp: new Date().toISOString()
       });
-
-      if (!SOCKET_EVENTS.SUBSCRIBE_CVE) {
-        logger.error('SUBSCRIBE_CVE 이벤트 상수가 정의되지 않았습니다.');
-        setError('내부 오류가 발생했습니다. 관리자에게 문의하세요.');
-        setIsLoading(false);
-        return false;
-      }
 
       logger.debug('소켓 이벤트 발생', {
         eventName: SOCKET_EVENTS.SUBSCRIBE_CVE,
@@ -558,6 +583,7 @@ export const useCVESubscription = (cveId: string) => {
           logger.warn(`구독 요청 타임아웃: ${cveId}`);
           setIsLoading(false);
           setError('구독 요청 시간이 초과되었습니다. 네트워크 연결을 확인하고 다시 시도해주세요.');
+          subscriptionPendingRef.current = false;
         }
       }, 5000);
 
@@ -566,9 +592,10 @@ export const useCVESubscription = (cveId: string) => {
       logger.error('구독 요청 오류:', err);
       setIsLoading(false);
       setError(`구독 요청 오류: ${err.message || '알 수 없는 오류'}`);
+      subscriptionPendingRef.current = false;
       return false;
     }
-  }, [cveId, isLoading]);
+  }, [cveId, isLoading, isSubscribed]);
 
   const unsubscribe = useCallback(() => {
     if (!cveId) {
@@ -588,6 +615,28 @@ export const useCVESubscription = (cveId: string) => {
       });
       return false;
     }
+    
+    // 이미 구독 해제되었거나 구독 해제 요청 중인 경우 중복 요청 방지
+    if (!isSubscribed || subscriptionPendingRef.current) {
+      logger.info(`이미 구독 해제되었거나 구독 해제 요청 중입니다: ${cveId}`, {
+        isSubscribed,
+        isPending: subscriptionPendingRef.current
+      });
+      return true;
+    }
+    
+    // 마지막 요청 시간 확인 (1초 내 중복 요청 방지)
+    const now = Date.now();
+    if (now - lastUnsubscribeRequestRef.current < 1000) {
+      logger.info(`구독 해제 요청 너무 빠름, 무시: ${cveId}`, {
+        timeSinceLastRequest: now - lastUnsubscribeRequestRef.current
+      });
+      return true;
+    }
+    
+    // 요청 시간 및 플래그 업데이트
+    lastUnsubscribeRequestRef.current = now;
+    subscriptionPendingRef.current = true;
 
     setIsLoading(true);
     setError(null);
@@ -615,6 +664,7 @@ export const useCVESubscription = (cveId: string) => {
         if (isLoading) {
           logger.warn(`구독 해제 요청 타임아웃: ${cveId}`);
           setIsLoading(false);
+          subscriptionPendingRef.current = false;
         }
       }, 5000);
 
@@ -622,9 +672,10 @@ export const useCVESubscription = (cveId: string) => {
     } catch (err: any) {
       logger.error('구독 해제 요청 오류:', err);
       setIsLoading(false);
+      subscriptionPendingRef.current = false;
       return false;
     }
-  }, [cveId, isLoading]);
+  }, [cveId, isLoading, isSubscribed]);
 
   useEffect(() => {
     if (!socket || !connected || !cveId) return;
@@ -636,6 +687,7 @@ export const useCVESubscription = (cveId: string) => {
       setIsLoading(false);
       setIsSubscribed(true);
       setSubscribers(data.subscribers || []);
+      subscriptionPendingRef.current = false;
 
       if (timeoutIdRef.current) {
         clearTimeout(timeoutIdRef.current);
@@ -651,6 +703,7 @@ export const useCVESubscription = (cveId: string) => {
       logger.error(`구독 실패: ${cveId}`, data);
       setIsLoading(false);
       setError(data.message || '구독 요청이 실패했습니다.');
+      subscriptionPendingRef.current = false;
 
       if (timeoutIdRef.current) {
         clearTimeout(timeoutIdRef.current);
@@ -665,6 +718,7 @@ export const useCVESubscription = (cveId: string) => {
       setIsLoading(false);
       setIsSubscribed(false);
       setSubscribers(data.subscribers || []);
+      subscriptionPendingRef.current = false;
 
       if (timeoutIdRef.current) {
         clearTimeout(timeoutIdRef.current);
@@ -680,6 +734,7 @@ export const useCVESubscription = (cveId: string) => {
       logger.error(`구독 해제 실패: ${cveId}`, data);
       setIsLoading(false);
       setError(data.message || '구독 해제 요청이 실패했습니다.');
+      subscriptionPendingRef.current = false;
 
       if (timeoutIdRef.current) {
         clearTimeout(timeoutIdRef.current);
@@ -688,54 +743,88 @@ export const useCVESubscription = (cveId: string) => {
     };
 
     const handleSubscribersUpdated = (data: any) => {
-      handleSubscriptionUpdated(data);
+      if (!data || data.cveId !== cveId) return;
+
+      logger.info(`구독자 목록 업데이트: ${cveId}`, data);
+      
+      // 구독자 수 업데이트
+      setSubscribers(data.subscribers || []);
+      
+      // 현재 사용자의 구독 상태 확인
+      const currentUserId = localStorage.getItem('userId');
+      const isCurrentUserSubscribed = data.subscribers?.some((sub: any) =>
+        sub.id === currentUserId || sub.userId === currentUserId
+      );
+      
+      // 구독 상태 업데이트
+      setIsSubscribed(isCurrentUserSubscribed);
     };
 
-    socket.on(SOCKET_EVENTS.SUBSCRIBE_CVE_SUCCESS, handleSubscribeSuccess);
-    socket.on(SUBSCRIPTION_EVENTS.SUBSCRIPTION_ERROR, handleSubscribeError);
-    socket.on(SOCKET_EVENTS.UNSUBSCRIBE_CVE_SUCCESS, handleUnsubscribeSuccess);
-    socket.on(SUBSCRIPTION_EVENTS.UNSUBSCRIPTION_ERROR, handleUnsubscribeError);
-    socket.on(SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED, handleSubscribersUpdated);
-
+    // 이벤트 리스너 등록
     logger.debug('소켓 이벤트 발생', {
-      eventName: SOCKET_EVENTS.GET_CVE_SUBSCRIBERS,
-      data: { cveId },
-      socketId: socket.id
+      action: '이벤트 리스너 등록',
+      socketId: socket.id,
+      cveId
     });
-
-    socket.emit(SOCKET_EVENTS.GET_CVE_SUBSCRIBERS, { cveId });
 
     logger.info('소켓 이벤트 리스너 등록 완료', {
-      cveId,
-      socketId: socket.id
+      socketId: socket.id,
+      events: [
+        SOCKET_EVENTS.SUBSCRIPTION_STATUS,
+        SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED
+      ]
     });
 
-    return () => {
-      socket.off(SOCKET_EVENTS.SUBSCRIBE_CVE_SUCCESS, handleSubscribeSuccess);
-      socket.off(SUBSCRIPTION_EVENTS.SUBSCRIPTION_ERROR, handleSubscribeError);
-      socket.off(SOCKET_EVENTS.UNSUBSCRIBE_CVE_SUCCESS, handleUnsubscribeSuccess);
-      socket.off(SUBSCRIPTION_EVENTS.UNSUBSCRIPTION_ERROR, handleUnsubscribeError);
-      socket.off(SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED, handleSubscribersUpdated);
+    socket.on(SOCKET_EVENTS.SUBSCRIPTION_STATUS, (data: any) => {
+      if (!data || !data.data) return;
+      const { status, cve_id, success } = data.data;
+      
+      if (cve_id !== cveId) return;
+      
+      if (status === 'subscribed' && success) {
+        handleSubscribeSuccess(data.data);
+      } else if (status === 'subscribed' && !success) {
+        handleSubscribeError(data.data);
+      } else if (status === 'unsubscribed' && success) {
+        handleUnsubscribeSuccess(data.data);
+      } else if (status === 'unsubscribed' && !success) {
+        handleUnsubscribeError(data.data);
+      }
+    });
 
+    socket.on(SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED, (data: any) => {
+      if (!data || !data.data) return;
+      handleSubscribersUpdated(data.data);
+    });
+
+    // 컴포넌트 언마운트 시 이벤트 리스너 제거
+    return () => {
+      logger.info('소켓 이벤트 리스너 제거 완료', {
+        socketId: socket.id,
+        events: [
+          SOCKET_EVENTS.SUBSCRIPTION_STATUS,
+          SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED
+        ]
+      });
+
+      socket.off(SOCKET_EVENTS.SUBSCRIPTION_STATUS);
+      socket.off(SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED);
+      
+      // 타이머 정리
       if (timeoutIdRef.current) {
         clearTimeout(timeoutIdRef.current);
         timeoutIdRef.current = null;
       }
-
-      logger.info('소켓 이벤트 리스너 제거 완료', {
-        cveId,
-        socketId: socket.id
-      });
     };
-  }, [socket, connected, cveId, queryClient, handleSubscriptionUpdated]);
+  }, [socket, connected, cveId, queryClient]);
 
   return {
-    isSubscribed,
-    isLoading,
-    error,
-    subscribers,
     subscribe,
-    unsubscribe
+    unsubscribe,
+    isSubscribed,
+    subscribers,
+    isLoading,
+    error
   };
 };
 

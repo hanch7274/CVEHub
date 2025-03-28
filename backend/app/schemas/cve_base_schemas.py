@@ -10,14 +10,23 @@ from zoneinfo import ZoneInfo
 
 class Reference(BaseModel):
     """참조 정보 모델"""
-    name: str
     url: str
+    type: str = Field(default="OTHER", description="참조 타입")
+    description: Optional[str] = None
+    created_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    last_modified_at: Optional[datetime] = None
+    last_modified_by: Optional[str] = None
     
 class PoCBase(BaseModel):
     """PoC(Proof of Concept) 기본 모델"""
     source: str
     url: str
     description: Optional[str] = None
+    created_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    last_modified_at: Optional[datetime] = None
+    last_modified_by: Optional[str] = None
     
 class SnortRuleBase(BaseModel):
     """Snort 룰 기본 모델"""
