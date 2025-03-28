@@ -191,6 +191,14 @@ async def get_cve_detail(
         result = await cve_service.get_cve_detail(cve_id, include_details=True)
         print(f"##### cve_service.get_cve_detail({cve_id}) 호출 완료, 결과 있음: {result is not None} #####")
         
+        # 결과가 None인 경우 404 오류 반환
+        if result is None:
+            logger.warning(f"CVE '{cve_id}' 정보를 찾을 수 없음")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"CVE ID '{cve_id}'를 찾을 수 없습니다."
+            )
+        
         # 결과 캐싱
         await cache_cve_detail(cve_id, result)
         
@@ -252,13 +260,23 @@ async def create_cve(
 ):
     """새로운 CVE를 생성합니다."""
     try:
-        # 이미 존재하는 CVE인지 확인
-        existing_cve = await cve_service.get_cve_detail(cve_data.cve_id, include_details=True)
-        if existing_cve:
-            raise HTTPException(
-                status_code=409,
-                detail=f"CVE ID {cve_data.cve_id}는 이미 존재합니다."
-            )
+        logger.info(f"CVE 생성 요청: cve_id={cve_data.cve_id}, 사용자={current_user.username}")
+        
+        # 이미 존재하는 CVE인지 확인 (try-except 블록으로 감싸서 오류 처리)
+        try:
+            # 대소문자 구분 없이 정확히 일치하는 CVE 검색
+            existing_cve = await cve_service.repository.find_by_cve_id(cve_data.cve_id)
+            
+            if existing_cve:
+                logger.warning(f"중복 CVE 생성 시도: {cve_data.cve_id} (이미 존재함: {existing_cve.cve_id})")
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"CVE ID {cve_data.cve_id}는 이미 존재합니다."
+                )
+        except Exception as e:
+            if not isinstance(e, HTTPException):
+                logger.error(f"중복 CVE 확인 중 오류 발생: {str(e)}")
+                # 중복 확인 중 오류가 발생했지만 계속 진행 (생성 시 DB 레벨에서 다시 검증됨)
         
         # 현재 사용자 정보 추가
         creator = current_user.username

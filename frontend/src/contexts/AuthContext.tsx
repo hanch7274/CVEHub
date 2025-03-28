@@ -1,10 +1,14 @@
-import React, { createContext, useContext, useEffect, useState, useRef, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, ReactNode, useCallback, useMemo } from 'react';
 import { getAccessToken, getRefreshToken } from '../utils/storage/tokenStorage';
 import logger from '../utils/logging';
 import socketIOService from '../services/socketio/socketio';
 import { useAuthQuery } from '../api/hooks/useAuthQuery';
 import { TOKEN_REFRESH_THRESHOLD } from '../config';
 import { User, LoginRequest, LoginResponse, RefreshTokenResponse, AuthContextType } from '../types/auth';
+import debounce from 'lodash/debounce';
+import throttle from 'lodash/throttle';
+import isEqual from 'lodash/isEqual';
+import memoize from 'lodash/memoize';
 
 // Provider Props 인터페이스
 interface AuthProviderProps {
@@ -39,6 +43,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [loading, setLoading] = useState<boolean>(true);
   const [accessToken, setAccessToken] = useState<string | null>(getAccessToken());
   const initRef = useRef<boolean>(false);
+  const prevUserRef = useRef<User | null>(null);
+
+  // JWT 토큰 디코딩 함수 메모이제이션
+  const decodeToken = useMemo(() => memoize((token: string) => {
+    try {
+      return JSON.parse(atob(token.split('.')[1]));
+    } catch (e) {
+      logger.error('AuthContext', '토큰 디코딩 실패', e);
+      return null;
+    }
+  }), []);
 
   // 초기 인증 상태 확인
   useEffect(() => {
@@ -74,6 +89,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     checkInitialAuth();
   }, [isLoading, isAuthenticated]);
 
+  // 디바운스된 토큰 상태 업데이트 함수
+  const debouncedSetAccessToken = useCallback(
+    debounce((newToken: string | null) => {
+      setAccessToken(newToken);
+    }, 300),
+    []
+  );
+
   // 토큰 상태 정기 확인 (1초마다)
   useEffect(() => {
     if (initRef.current) return;
@@ -86,14 +109,27 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const currentAccessToken = getAccessToken();
       if (currentAccessToken !== accessToken) {
         logger.info('AuthContext', '토큰 상태 변경 감지', {});
-        setAccessToken(currentAccessToken);
+        debouncedSetAccessToken(currentAccessToken);
       }
     }, 1000);
     
     return () => {
       clearInterval(tokenCheckInterval);
     };
-  }, [accessToken]);
+  }, [accessToken, debouncedSetAccessToken]);
+
+  // 스로틀된 토큰 갱신 함수
+  const throttledRefreshToken = useCallback(
+    throttle(async () => {
+      try {
+        logger.info('AuthContext', '토큰 갱신 시도 (스로틀)', {});
+        await refreshTokenAsyncMutation();
+      } catch (error) {
+        logger.error('AuthContext', '토큰 갱신 중 오류 발생', error);
+      }
+    }, 10000, { leading: true, trailing: false }),
+    [refreshTokenAsyncMutation]
+  );
 
   // 토큰 자동 갱신 설정
   useEffect(() => {
@@ -107,8 +143,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         const token = getAccessToken();
         if (!token) return;
         
-        // JWT 토큰에서 만료 시간 추출
-        const tokenData = JSON.parse(atob(token.split('.')[1]));
+        // JWT 토큰에서 만료 시간 추출 (메모이제이션 활용)
+        const tokenData = decodeToken(token);
+        if (!tokenData) return;
+        
         const expirationTime = tokenData.exp * 1000; // 초 -> 밀리초
         const currentTime = Date.now();
         const timeUntilExpiration = expirationTime - currentTime;
@@ -118,7 +156,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           logger.info('AuthContext', '토큰 만료 임박, 갱신 시도', {
             expiresIn: Math.floor(timeUntilExpiration / 1000)
           });
-          await refreshTokenAsyncMutation();
+          throttledRefreshToken();
         }
       } catch (error) {
         logger.error('AuthContext', '토큰 갱신 중 오류 발생', error);
@@ -132,21 +170,26 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     return () => {
       clearInterval(refreshInterval);
     };
-  }, [isAuthenticated, refreshTokenAsyncMutation]);
+  }, [isAuthenticated, throttledRefreshToken, decodeToken]);
 
-  // Socket.IO 연결 관리
+  // Socket.IO 연결 관리 (사용자 변경 시에만 재연결)
   useEffect(() => {
-    if (isAuthenticated && user) {
-      logger.info('AuthContext', 'Socket.IO 연결 요청', {});
-      // 직접 연결하지 않고 SocketIOContext에 인증 상태 변경을 알림
-      if (socketIOService && socketIOService.handleAuthStateChange) {
-        socketIOService.handleAuthStateChange(true);
-      }
-    } else {
-      logger.info('AuthContext', 'Socket.IO 연결 해제 요청', {});
-      // 직접 연결 해제하지 않고 SocketIOContext에 인증 상태 변경을 알림
-      if (socketIOService && socketIOService.handleAuthStateChange) {
-        socketIOService.handleAuthStateChange(false);
+    // isEqual을 사용하여 깊은 비교 수행
+    if (!isEqual(prevUserRef.current, user)) {
+      prevUserRef.current = user;
+      
+      if (isAuthenticated && user) {
+        logger.info('AuthContext', 'Socket.IO 연결 요청', {});
+        // 직접 연결하지 않고 SocketIOContext에 인증 상태 변경을 알림
+        if (socketIOService && socketIOService.handleAuthStateChange) {
+          socketIOService.handleAuthStateChange(true);
+        }
+      } else {
+        logger.info('AuthContext', 'Socket.IO 연결 해제 요청', {});
+        // 직접 연결 해제하지 않고 SocketIOContext에 인증 상태 변경을 알림
+        if (socketIOService && socketIOService.handleAuthStateChange) {
+          socketIOService.handleAuthStateChange(false);
+        }
       }
     }
     
@@ -158,8 +201,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
   }, [isAuthenticated, user]);
 
-  // 로그인 핸들러
-  const handleLogin = async (credentials: LoginRequest): Promise<LoginResponse> => {
+  // 로그인 핸들러 (useCallback으로 메모이제이션)
+  const handleLogin = useCallback(async (credentials: LoginRequest): Promise<LoginResponse> => {
     setLoading(true);
     try {
       const result = await loginAsync(credentials);
@@ -171,10 +214,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [loginAsync]);
 
-  // 로그아웃 핸들러
-  const handleLogout = async (): Promise<void> => {
+  // 로그아웃 핸들러 (useCallback으로 메모이제이션)
+  const handleLogout = useCallback(async (): Promise<void> => {
     setLoading(true);
     try {
       await logoutAsync();
@@ -184,10 +227,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [logoutAsync]);
 
-  // refreshToken 래퍼 함수
-  const handleRefreshToken = async (refreshToken?: string): Promise<void> => {
+  // refreshToken 래퍼 함수 (useCallback으로 메모이제이션)
+  const handleRefreshToken = useCallback(async (refreshToken?: string): Promise<void> => {
     try {
       // refreshTokenMutation은 매개변수를 사용하지 않지만, 인터페이스 일관성을 위해 래퍼 함수 제공
       await refreshTokenMutation();
@@ -195,10 +238,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       logger.error('AuthContext', '토큰 갱신 실패', error);
       throw error;
     }
-  };
+  }, [refreshTokenMutation]);
 
-  // refreshTokenAsync 래퍼 함수
-  const handleRefreshTokenAsync = async (refreshToken?: string): Promise<void> => {
+  // refreshTokenAsync 래퍼 함수 (useCallback으로 메모이제이션)
+  const handleRefreshTokenAsync = useCallback(async (refreshToken?: string): Promise<void> => {
     try {
       // refreshTokenAsyncMutation은 매개변수를 사용하지 않지만, 인터페이스 일관성을 위해 래퍼 함수 제공
       await refreshTokenAsyncMutation();
@@ -206,10 +249,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       logger.error('AuthContext', '토큰 갱신 실패', error);
       throw error;
     }
-  };
+  }, [refreshTokenAsyncMutation]);
 
-  // Context 값
-  const value: AuthContextType = {
+  // Context 값 (useMemo로 메모이제이션)
+  const value = useMemo<AuthContextType>(() => ({
     user: user || null,
     isAuthenticated,
     loading: loading || isLoading,
@@ -221,7 +264,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     logoutAsync,
     refreshToken: handleRefreshToken,
     refreshTokenAsync: handleRefreshTokenAsync
-  };
+  }), [
+    user, 
+    isAuthenticated, 
+    loading, 
+    isLoading, 
+    error, 
+    handleLogin, 
+    handleLogout, 
+    loginAsync, 
+    logoutAsync, 
+    handleRefreshToken, 
+    handleRefreshTokenAsync
+  ]);
 
   return (
     <AuthContext.Provider value={value}>

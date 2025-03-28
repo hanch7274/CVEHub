@@ -35,7 +35,7 @@ import {
   useTheme,
   alpha
 } from '@mui/material';
-import { TIME_ZONES, formatDate } from '../../utils/dateUtils';
+import { TIME_ZONES, formatDateTime } from '../../utils/dateUtils';
 import SearchIcon from '@mui/icons-material/Search';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -573,10 +573,10 @@ const CVETable = React.memo(({
                     />
                   </TableCell>
                   <TableCell sx={tableCellBaseStyle}>
-                    {formatDate(cve.createdAt || cve.created_at, undefined, TIME_ZONES.KST)}
+                    {formatDateTime(cve.createdAt || cve.created_at, undefined, TIME_ZONES.KST)}
                   </TableCell>
                   <TableCell sx={tableCellBaseStyle}>
-                    {formatDate(cve.lastModifiedAt || cve.last_modified_at, undefined, TIME_ZONES.KST)}
+                    {formatDateTime(cve.lastModifiedAt || cve.last_modified_at, undefined, TIME_ZONES.KST)}
                   </TableCell>
                   <TableCell sx={tableCellBaseStyle}>
                     <Box sx={{ display: 'flex', gap: 1 }}>

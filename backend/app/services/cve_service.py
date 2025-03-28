@@ -145,9 +145,9 @@ class CVEService:
             raise
     
     async def get_cve_detail(
-        self, 
-        cve_id: str, 
-        as_model: bool = False, 
+        self,
+        cve_id: str,
+        as_model: bool = False,
         include_details: bool = False
     ) -> Union[Optional[CVEModel], Optional[Dict[str, Any]]]:
         """
@@ -160,9 +160,13 @@ class CVEService:
             
         Returns:
             CVEModel 또는 Dict (없으면 None)
+            
+        Raises:
+            Exception: 데이터 조회 중 오류가 발생한 경우
         """
         try:
             # 대소문자 구분 없이 CVE ID로 조회
+            logger.info(f"CVE ID 조회 시작: {cve_id}")
             cve = await self.repository.find_by_cve_id(cve_id)
             
             if not cve:
@@ -193,9 +197,11 @@ class CVEService:
             return cve_dict
             
         except Exception as e:
-            logger.error(f"CVE '{cve_id}' 정보 조회 중 오류 발생: {str(e)}")
+            error_msg = f"CVE '{cve_id}' 정보 조회 중 오류 발생: {str(e)}"
+            logger.error(error_msg)
             logger.error(traceback.format_exc())
-            return None
+            # None을 반환하는 대신 예외를 발생시켜 호출자가 명시적으로 처리하도록 함
+            raise Exception(error_msg)
 
     async def create_cve(self, cve_data: Union[dict, CreateCVERequest], username: str, is_crawler: bool = False, crawler_name: Optional[str] = None) -> Optional[CVEModel]:
         """

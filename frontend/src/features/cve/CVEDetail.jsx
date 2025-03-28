@@ -67,7 +67,7 @@ import { useUpdateCVEField } from '../../api/hooks/useCVEMutation';
 import { useAuth } from '../../contexts/AuthContext';
 import { useQueryClient } from '@tanstack/react-query';
 import { QUERY_KEYS } from '../../api/queryKeys';
-import { formatDate, timeAgo, TIME_ZONES } from '../../utils/dateUtils';
+import { formatDateTime, timeAgo, TIME_ZONES } from '../../utils/dateUtils';
 
 // 활성 댓글 개수 계산
 const countActiveComments = (comments) => {
@@ -279,11 +279,14 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       lastUpdated: Date.now()
     });
     
-    logger.info('CVEDetail', '소켓 참조 업데이트됨', {
-      socketId: socket?.id,
-      connected,
-      hasSocket: !!socket
-    });
+    // 소켓 연결 상태가 변경될 때마다 불필요한 로깅 방지
+    if (process.env.NODE_ENV === 'development') {
+      logger.info('CVEDetail', '소켓 참조 업데이트됨', {
+        socketId: socket?.id,
+        connected,
+        hasSocket: !!socket
+      });
+    }
   }, [socket, connected]);
 
   // 불필요한 타이머 관련 ref 제거
@@ -386,6 +389,10 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
   } = useCVEDetail(propsCveId, {
     // enabled 옵션 단순화: 모달이 열려있고 propsCveId가 있을 때만 자동으로 쿼리 실행
     enabled: !!propsCveId && open,
+    // 캐시 활용 최적화: 이전 데이터가 있으면 로딩 상태 표시하지 않음
+    keepPreviousData: true,
+    // 소켓 연결 상태 변경 시 자동 리페치 방지
+    refetchOnReconnect: false,
     onSuccess: (data) => {
       logger.info('CVEDetail', '데이터 로딩 성공', { dataReceived: !!data });
       
@@ -780,22 +787,34 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       // 로딩 상태 설정
       setLoading(true);
       
-      // 데이터 새로고침
-      refetchCveDetail()
-        .then(() => {
-          // 성공적으로 데이터를 가져온 경우 로딩 상태 해제
-          setLoading(false);
-          
-          // 모달이 열렸을 때 구독 요청 (소켓이 연결된 경우에만)
-          if (connectedRef.current && socketRef.current && !isSubscribedRef.current) {
-            logger.info('CVEDetail', `모달 열림, 구독 요청: ${propsCveId}`);
-            debouncedSubscribe();
-          }
-        })
-        .catch(err => {
-          logger.error('CVEDetail', '데이터 로딩 실패', { error: err.message });
-          setLoading(false);
-        });
+      // 이미 데이터가 있는 경우 추가 요청 방지 (첫 로딩 시에만 요청)
+      if (!cveData) {
+        // 데이터 새로고침
+        refetchCveDetail()
+          .then(() => {
+            // 성공적으로 데이터를 가져온 경우 로딩 상태 해제
+            setLoading(false);
+            
+            // 모달이 열렸을 때 구독 요청 (소켓이 연결된 경우에만)
+            if (connectedRef.current && socketRef.current && !isSubscribedRef.current) {
+              logger.info('CVEDetail', `모달 열림, 구독 요청: ${propsCveId}`);
+              debouncedSubscribe();
+            }
+          })
+          .catch(err => {
+            logger.error('CVEDetail', '데이터 로딩 실패', { error: err.message });
+            setLoading(false);
+          });
+      } else {
+        // 이미 데이터가 있는 경우 로딩 상태만 해제
+        setLoading(false);
+        
+        // 구독 요청 처리
+        if (connectedRef.current && socketRef.current && !isSubscribedRef.current) {
+          logger.info('CVEDetail', `모달 열림, 구독 요청 (기존 데이터 있음): ${propsCveId}`);
+          debouncedSubscribe();
+        }
+      }
     } else if (!open) {
       // 모달이 닫힐 때 구독 해제 및 로딩 상태 초기화
       if (isSubscribedRef.current && connectedRef.current && socketRef.current && propsCveId) {
@@ -805,37 +824,41 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       setLoading(false);
     }
     
-    // 컴포넌트 언마운트 시 구독 해제
+    // 첫 마운트 시 실행 여부를 추적하기 위한 ref
+    const isFirstMount = isFirstLoadRef.current;
+    isFirstLoadRef.current = false;
+    
     return () => {
-      if (open && isSubscribedRef.current && propsCveId) {
-        logger.info('CVEDetail', `컴포넌트 언마운트, 구독 해제 요청: ${propsCveId}`);
-        // 즉시 구독 해제 (디바운스 없이)
-        unsubscribe();
-      }
-      
-      // 타이머 정리
-      if (subscriptionTimerRef.current) {
-        clearTimeout(subscriptionTimerRef.current);
+      // 컴포넌트 언마운트 시 첫 마운트 플래그 초기화
+      if (!open) {
+        isFirstLoadRef.current = true;
       }
     };
-  }, [open, propsCveId, refetchCveDetail, debouncedSubscribe, debouncedUnsubscribe, unsubscribe]);
+  }, [open, propsCveId, cveData, refetchCveDetail, debouncedSubscribe, debouncedUnsubscribe]);
 
   // 소켓 연결 상태 변경 시 구독 처리
   useEffect(() => {
-    // 모달이 열려있고, 소켓 연결 상태가 변경되었을 때만 처리
-    if (open && propsCveId) {
-      if (connected && socket && !isSubscribedRef.current) {
-        // 소켓이 연결되었고 아직 구독하지 않은 경우 구독
-        logger.info('CVEDetail', `소켓 연결됨, 구독 요청: ${propsCveId}`);
+    // 컴포넌트가 마운트되고 모달이 열려있을 때만 구독 요청
+    if (open && propsCveId && connectedRef.current && socketRef.current) {
+      // 이미 구독 중이 아닐 때만 구독 요청
+      if (!isSubscribedRef.current) {
+        // 디바운스된 구독 함수 호출
         debouncedSubscribe();
-      } else if (!connected && isSubscribedRef.current) {
-        // 소켓 연결이 끊어졌고 구독 중인 경우 로컬 상태 업데이트
-        logger.info('CVEDetail', `소켓 연결 끊김, 구독 상태 업데이트: ${propsCveId}`);
-        // 연결이 끊어진 경우 서버에 구독 해제 요청을 보낼 수 없으므로 로컬 상태만 업데이트
-        setLocalSubscribers([]);
       }
     }
-  }, [connected, socket, open, propsCveId, debouncedSubscribe]);
+    
+    // 컴포넌트 언마운트 시 구독 해제
+    return () => {
+      if (subscriptionTimerRef.current) {
+        clearTimeout(subscriptionTimerRef.current);
+      }
+      
+      // 구독 중이었다면 구독 해제
+      if (isSubscribedRef.current && propsCveId) {
+        debouncedUnsubscribe();
+      }
+    };
+  }, [propsCveId, open, debouncedSubscribe, debouncedUnsubscribe]);
 
   // 로딩 상태 계산 - 수정
   const isLoading = useMemo(() => {
@@ -1161,7 +1184,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
               <Chip
                 size="small"
                 icon={<HistoryIcon fontSize="small" />}
-                label={`생성: ${formatDate(cveData?.createdAt || cveData?.created_at, undefined, TIME_ZONES.KST)}`}
+                label={`생성: ${formatDateTime(cveData?.createdAt || cveData?.created_at, undefined, TIME_ZONES.KST)}`}
                 variant="outlined"
                 sx={{ fontSize: '0.7rem', height: 24 }}
               />
@@ -1170,7 +1193,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
               <Chip
                 size="small"
                 icon={<HistoryIcon fontSize="small" />}
-                label={`수정: ${formatDate(cveData?.lastModifiedAt || cveData?.last_modified_at, undefined, TIME_ZONES.KST)}`}
+                label={`수정: ${formatDateTime(cveData?.lastModifiedAt || cveData?.last_modified_at, undefined, TIME_ZONES.KST)}`}
                 variant="outlined"
                 sx={{ fontSize: '0.7rem', height: 24 }}
               />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Button,
@@ -35,6 +35,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { QUERY_KEYS } from '../../api/queryKeys';
 import { getUser } from '../../utils/storage/tokenStorage';
+import { getUtcTimestamp, formatDateTime, DATE_FORMATS } from '../../utils/dateUtils';
 
 // 상수 정의는 그대로 유지
 const POC_SOURCES = { Etc: "Etc", Metasploit: "Metasploit", "Nuclei-Templates": "Nuclei-Templates" };
@@ -198,7 +199,7 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
   const handleAddReference = () => {
     if (!newReference.trim()) return;
     // UTC 시간 사용 (백엔드와 일관성 유지)
-    const utcTime = new Date().toISOString();
+    const utcTime = getUtcTimestamp();
     setReferences(prev => [...prev, { url: newReference.trim(), id: `ref-${Date.now()}`, created_at: utcTime, created_by: username, last_modified_at: null, last_modified_by: username }]);
     setNewReference('');
   };
@@ -218,7 +219,7 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
      setError(null);
     // setLoading(true); // isLoading 사용
 
-    const currentTime = new Date().toISOString();
+    const currentTime = getUtcTimestamp();
     const cveData = {
       ...formData, // cveId, title, description, status, severity, tags (array), exploitStatus
       pocs: pocs.map(({ id, ...rest }) => rest),
@@ -484,7 +485,7 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
           variant="contained" // 주요 액션 버튼
           color="primary" // MUI 프라이머리 색상 사용
           onClick={handleSubmit}
-          disabled={isLoading || !formData.cveId.trim() || !formData.title.trim()}
+          disabled={isLoading || !formData.cveId.trim()}
           startIcon={isLoading ? <CircularProgress size={20} color="inherit" /> : null}
           sx={{
             borderRadius: antdBorderRadius,

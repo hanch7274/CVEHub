@@ -3,8 +3,8 @@ import { getAccessToken, clearAuthStorage } from '../../utils/storage/tokenStora
 import { camelToSnake, snakeToCamel } from '../../utils/caseConverter';
 import { refreshToken as refreshAuthToken } from '../../services/authService';
 import { 
-  prepareDataForAPI, 
-  processApiDates
+  normalizeDateFieldsForApi, 
+  normalizeDateFieldsFromApi
 } from '../../utils/dateUtils';
 import { 
   API_BASE_URL, 
@@ -235,7 +235,7 @@ api.interceptors.request.use(
         // URLSearchParams 객체는 변환하지 않음
         if (!(config.data instanceof URLSearchParams)) {
           // 날짜 필드 처리 (ISO 형식으로 변환)
-          config.data = prepareDataForAPI(config.data);
+          config.data = normalizeDateFieldsForApi(config.data);
           
           // 카멜 케이스를 스네이크 케이스로 변환
           config.data = camelToSnake(config.data, {
@@ -308,7 +308,7 @@ api.interceptors.response.use(
     if (response.data && 
         typeof response.data === 'object' && 
         shouldProcessDates(response.config.url)) {
-      response.data = processApiDates(response.data);
+      response.data = normalizeDateFieldsFromApi(response.data);
     }
     
     // 스네이크 케이스를 카멜 케이스로 변환

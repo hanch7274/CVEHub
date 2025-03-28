@@ -154,7 +154,7 @@ class CrawlerScheduler(LoggingMixin):
     async def _load_last_updates(self):
         """시스템 설정에서 마지막 업데이트 시간 로드"""
         try:
-            from ..models.system_config import SystemConfig
+            from ..models.system_config_model import SystemConfig
             
             # SystemConfig 모델이 초기화되었는지 확인
             try:

@@ -2,12 +2,14 @@
 CVE 관련 응답 스키마 정의
 """
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from bson import ObjectId
+from enum import Enum
 
 from .cve_base_schemas import Reference, PoCBase, SnortRuleBase, ModificationHistory
+from app.utils.datetime_utils import serialize_datetime
 
 # ----- 응답 모델 -----
 
@@ -22,7 +24,7 @@ class CVEListItem(BaseModel):
     severity: Optional[str] = None
     class Config:
         json_encoders = {
-            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat() if v else None,
+            datetime: serialize_datetime,
             ObjectId: lambda v: str(v)
         }
 
@@ -51,7 +53,7 @@ class CVEDetailResponse(BaseModel):
     last_modified_by: Optional[str] = None
     class Config:
         json_encoders = {
-            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat() if v else None,
+            datetime: serialize_datetime,
             ObjectId: lambda v: str(v)
         }
     

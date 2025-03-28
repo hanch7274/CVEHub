@@ -376,17 +376,19 @@ class SocketIOManager:
             'timestamp': get_current_time().isoformat(),
             'client_id': data.get('client_id', sid),
         }
-        # 핑퐁 로그는 설정에 따라 조건부 출력
-        if logger.isEnabledFor(logging.DEBUG) and get_settings().LOG_PING_PONG:
-            user_id = self.sid_to_user.get(sid, 'unknown')
-            logger.debug(f"Ping 수신 - 사용자: {user_id}, SID: {sid}, 데이터: {data}")
+        
+        # 핑퐁 메시지는 로깅하지 않음 (성능 최적화)
+        # 디버깅이 필요한 경우에만 주석 해제
+        # if logger.isEnabledFor(logging.DEBUG) and get_settings().LOG_PING_PONG:
+        #     user_id = self.sid_to_user.get(sid, 'unknown')
+        #     logger.debug(f"Ping 수신 - 사용자: {user_id}, SID: {sid}, 데이터: {data}")
 
         # emit_message를 사용하여 pong 전송
         await self.emit_message(WSMessageType.PONG, pong_data, target_sid=sid)
 
-        if logger.isEnabledFor(logging.DEBUG) and get_settings().LOG_PING_PONG:
-            user_id = self.sid_to_user.get(sid, 'unknown')
-            logger.debug(f"Pong 전송 - 사용자: {user_id}, SID: {sid}, 데이터: {pong_data}")
+        # if logger.isEnabledFor(logging.DEBUG) and get_settings().LOG_PING_PONG:
+        #     user_id = self.sid_to_user.get(sid, 'unknown')
+        #     logger.debug(f"Pong 전송 - 사용자: {user_id}, SID: {sid}, 데이터: {pong_data}")
 
 
     async def _handle_cve_subscribe(self, sid: str, data: Dict[str, Any]) -> None:

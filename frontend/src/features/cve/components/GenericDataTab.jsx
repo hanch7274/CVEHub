@@ -28,7 +28,7 @@ import  api from '../../../api/config/axios';
 import { useSnackbar } from 'notistack';
 import { SOCKET_EVENTS } from '../../../services/socketio/constants';
 import useWebSocketHook from '../../../api/hooks/useWebSocketHook';
-import { TIME_ZONES } from '../../../utils/dateUtils';
+import { TIME_ZONES, formatDateTime, DATE_FORMATS } from '../../../utils/dateUtils';
 
 /**
  * 재사용 가능한 데이터 탭 컴포넌트
@@ -489,9 +489,7 @@ const GenericDataTab = memo(({
                     •
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
-                    {new Date(item.created_at).toLocaleString('ko-KR', { 
-                      timeZone: TIME_ZONES.DEFAULT
-                    })}
+                    {formatDateTime(new Date(item.created_at))}
                   </Typography>
                 </Box>
               </Box>

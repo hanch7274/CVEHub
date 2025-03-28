@@ -17,6 +17,9 @@ const DATE_FIELDS = [
   'timestamp', 'date'
 ];
 
+// 진행 중인 요청을 추적하기 위한 맵
+const pendingRequests = new Map();
+
 /**
  * CVE 데이터를 관리하는 서비스 클래스
  * 백엔드 API와 통신하여 CVE 데이터의 CRUD 작업을 처리
@@ -118,6 +121,18 @@ class CVEService {
     }
     
     try {
+      // 동일한 CVE ID에 대한 진행 중인 요청이 있는지 확인
+      const requestKey = `cve_${cveId}_${options.bypassCache ? 'bypass' : 'normal'}`;
+      
+      // 이미 진행 중인 요청이 있으면 해당 Promise 반환
+      if (pendingRequests.has(requestKey)) {
+        logger.info('cveService', '진행 중인 요청 재사용', { 
+          cveId,
+          bypassCache: !!options.bypassCache
+        });
+        return pendingRequests.get(requestKey);
+      }
+      
       // 캐시 우회 옵션 추가
       const headers = options.bypassCache ? {
         'Cache-Control': 'no-cache',
@@ -130,17 +145,29 @@ class CVEService {
         bypassCache: !!options.bypassCache
       });
       
-      const response = await api.get(`/cves/${cveId}`, { headers });
+      // 새로운 요청 생성 및 추적
+      const requestPromise = api.get(`/cves/${cveId}`, { headers })
+        .then(response => {
+          // 요청 완료 후 맵에서 제거
+          pendingRequests.delete(requestKey);
+          
+          logger.info('cveService', 'CVE 상세 정보 응답', {
+            cveId,
+            status: response.status
+          });
+          
+          return response.data;
+        })
+        .catch(error => {
+          // 오류 발생 시에도 맵에서 제거
+          pendingRequests.delete(requestKey);
+          throw error;
+        });
       
-      logger.info('cveService', 'CVE 상세 정보 응답', {
-        cveId,
-        status: response.status
-      });
+      // 진행 중인 요청 맵에 추가
+      pendingRequests.set(requestKey, requestPromise);
       
-      // 데이터는 이미 axios 인터셉터에서 처리됨
-      const processedData = response.data;
-      
-      return processedData;
+      return requestPromise;
     } catch (error) {
       logger.error('cveService', 'CVE 상세 정보 조회 실패', { 
         cveId, 

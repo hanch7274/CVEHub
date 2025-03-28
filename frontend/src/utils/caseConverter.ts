@@ -3,7 +3,7 @@
  * humps 라이브러리를 사용하여 camelCase와 snake_case 간 변환을 처리합니다.
  */
 import { camelizeKeys, decamelizeKeys } from 'humps';
-import { processApiDates } from './dateUtils';
+import { normalizeDateFieldsFromApi } from './dateUtils';
 
 /**
  * 스네이크 케이스에서 카멜 케이스로 변환 옵션 인터페이스
@@ -49,8 +49,8 @@ export const snakeToCamel = (data: any, options: CaseConverterOptions = {}): any
     
     // 2. 날짜 필드 자동 타입 변환 처리 (processDate 옵션이 true인 경우)
     if (processDate) {
-      // dateUtils.js의 processApiDates 함수 활용
-      camelizedData = processApiDates(camelizedData, requestUrl);
+      // dateUtils.js의 normalizeDateFieldsFromApi 함수 활용
+      camelizedData = normalizeDateFieldsFromApi(camelizedData, requestUrl);
     }
     
     return camelizedData;

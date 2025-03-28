@@ -19,6 +19,8 @@ import {
   LoginResponse, 
   RefreshTokenResponse 
 } from '../../types/auth';
+import debounce from 'lodash/debounce';
+import { useCallback, useEffect, useRef } from 'react';
 
 /**
  * 인증 관련 React Query 훅
@@ -81,6 +83,52 @@ export const useAuthQuery = () => {
     }
   });
 
+  // 토큰 갱신 요청 중인지 추적하는 플래그
+  const isRefreshingRef = useRef(false);
+
+  // 디바운스된 토큰 갱신 함수 (300ms)
+  const debouncedRefreshToken = useCallback(
+    debounce((callback?: () => void) => {
+      // 이미 갱신 중이면 중복 요청 방지
+      if (isRefreshingRef.current) {
+        logger.info('AuthQuery', '토큰 갱신 이미 진행 중, 요청 무시');
+        return;
+      }
+
+      isRefreshingRef.current = true;
+      logger.info('AuthQuery', '디바운스된 토큰 갱신 요청 실행');
+      
+      refreshTokenMutation.mutate(undefined, {
+        onSuccess: (data) => {
+          isRefreshingRef.current = false;
+          if (callback) callback();
+        },
+        onError: () => {
+          isRefreshingRef.current = false;
+        }
+      });
+    }, 300),
+    [refreshTokenMutation]
+  );
+  
+  // 디바운스된 사용자 정보 다시 가져오기 (200ms)
+  const debouncedRefetchUser = useCallback(
+    debounce(() => {
+      logger.info('AuthQuery', '디바운스된 사용자 정보 갱신 요청 실행');
+      queryClient.invalidateQueries({ queryKey: ['auth', 'user'] });
+    }, 200),
+    [queryClient]
+  );
+  
+  // 컴포넌트 언마운트 시 디바운스 함수 취소
+  useEffect(() => {
+    return () => {
+      // @ts-ignore - TypeScript에서 cancel 메서드를 인식하지 못할 수 있음
+      debouncedRefreshToken.cancel && debouncedRefreshToken.cancel();
+      debouncedRefetchUser.cancel && debouncedRefetchUser.cancel();
+    };
+  }, [debouncedRefreshToken, debouncedRefetchUser]);
+
   // 인증 상태 확인
   const isAuthenticated = !!getAccessToken() && !!userQuery.data;
   
@@ -100,8 +148,9 @@ export const useAuthQuery = () => {
     loginAsync: loginMutation.mutateAsync,
     logout: logoutMutation.mutate,
     logoutAsync: logoutMutation.mutateAsync,
-    refreshToken: refreshTokenMutation.mutate,
-    refreshTokenAsync: refreshTokenMutation.mutateAsync,
-    refetchUser: () => queryClient.invalidateQueries({ queryKey: ['auth', 'user'] })
+    refreshToken: debouncedRefreshToken,
+    refreshTokenAsync: refreshTokenMutation.mutateAsync, // 비동기 버전은 그대로 유지
+    refetchUser: debouncedRefetchUser,
+    isRefreshingToken: isRefreshingRef.current
   } as const;
 };

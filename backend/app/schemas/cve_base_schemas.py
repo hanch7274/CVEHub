@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from app.utils.datetime_utils import serialize_datetime
 
 # ----- 기본 모델 -----
 
@@ -18,6 +19,11 @@ class Reference(BaseModel):
     last_modified_at: Optional[datetime] = None
     last_modified_by: Optional[str] = None
     
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+    
 class PoCBase(BaseModel):
     """PoC(Proof of Concept) 기본 모델"""
     source: str
@@ -27,6 +33,11 @@ class PoCBase(BaseModel):
     created_by: Optional[str] = None
     last_modified_at: Optional[datetime] = None
     last_modified_by: Optional[str] = None
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
     
 class SnortRuleBase(BaseModel):
     """Snort 룰 기본 모델"""
@@ -38,6 +49,11 @@ class SnortRuleBase(BaseModel):
     last_modified_at: Optional[datetime] = None
     last_modified_by: Optional[str] = None
     
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+    
 class ChangeItem(BaseModel):
     """변경 사항 항목 모델"""
     field: str
@@ -47,8 +63,18 @@ class ChangeItem(BaseModel):
     old_value: Optional[Any] = None
     new_value: Optional[Any] = None
     
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+    
 class ModificationHistory(BaseModel):
     """변경 이력 모델"""
     username: str
     modified_at: datetime
     changes: List[ChangeItem]
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }

@@ -186,7 +186,6 @@ class CVEModel(Document):
             "created_by",
             "is_locked",  # 락 상태 인덱스 추가
             "locked_by",
-            [("cve_id", 1)], # 고유 인덱스
             [("last_modified_at", -1)], # 내림차순 인덱스
             [("created_at", -1)], # 내림차순 인덱스
             [("status", 1), ("last_modified_at", -1)], # 복합 인덱스
@@ -195,6 +194,9 @@ class CVEModel(Document):
                 ("title", "text"), 
                 ("description", "text")
             ] # 텍스트 검색 인덱스
+        ]
+        unique_indexes = [
+            [("cve_id", 1)]  # cve_id 필드에 고유 인덱스 설정
         ]
 
     class Config:

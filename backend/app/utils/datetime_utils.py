@@ -49,13 +49,36 @@ def format_datetime(dt: datetime, timezone: Optional[str] = "Asia/Seoul",
 # 이전 버전과의 호환성을 위해 get_current_time 함수 유지
 def get_current_time() -> datetime:
     """
-    현재 KST(한국 표준시) 시간을 datetime 객체로 반환합니다.
-    get_kst_now()와 동일한 기능을 제공합니다.
+    이전 버전과의 호환성을 위한 함수
+    현재 UTC 시간을 반환합니다.
     
     Returns:
-        datetime: 현재 KST 시간 (tzinfo=Asia/Seoul)
+        datetime: 현재 UTC 시간
     """
-    return get_kst_now()
+    return get_utc_now()
+
+def serialize_datetime(dt: datetime) -> str:
+    """
+    datetime 객체를 ISO 8601 형식의 문자열로 직렬화합니다.
+    모든 API 응답에서 이 함수를 사용하여 일관성을 유지합니다.
+    
+    Args:
+        dt (datetime): 변환할 datetime 객체
+        
+    Returns:
+        str: ISO 8601 형식의 문자열 (예: "2025-03-28T06:34:01.123Z")
+    """
+    if dt is None:
+        return None
+        
+    # UTC 시간으로 변환
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("UTC"))
+    else:
+        dt = dt.astimezone(ZoneInfo("UTC"))
+        
+    # ISO 8601 형식으로 직렬화
+    return dt.isoformat().replace('+00:00', 'Z')
 
 def normalize_datetime_fields(data: Dict[str, Any], 
                              fields: List[str] = ["created_at", "last_modified_at"]) -> Dict[str, Any]:
