@@ -1,11 +1,9 @@
 import React, { useEffect, useRef, useMemo, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useSocketIO } from './SocketIOContext';
+import { useSocket } from '../api/hooks/useSocket';
 import { QUERY_KEYS } from '../api/queryKeys';
 import logger from '../utils/logging';
-import { SOCKET_EVENTS } from '../services/socketio/constants';
-import socketIOService from '../services/socketio/socketio';
-import { Socket } from 'socket.io-client';
+import { SOCKET_EVENTS, SOCKET_STATE } from '../services/socketio/constants';
 import _ from 'lodash';
 
 // 이벤트-쿼리 매핑 정의 (선언적 방식)
@@ -18,13 +16,21 @@ interface EventQueryMapping {
 /**
  * Socket.IO와 React Query를 연결하는 브릿지 컴포넌트
  * 소켓 이벤트를 수신하여 적절한 쿼리 캐시를 무효화합니다.
+ * RxJS 기반 웹소켓 구독을 사용하여 안정적인 이벤트 처리를 제공합니다.
  */
 const WebSocketQueryBridge: React.FC = () => {
-  const socketIO = useSocketIO();
+  // useSocket 훅 사용 - 첫 번째 인자는 이벤트 이름(없으면 undefined), 네 번째 인자가 옵션
+  const socket = useSocket(undefined, undefined, [], {
+    componentId: 'websocket-query-bridge',
+    useRxJS: true
+  });
+  const { connected, on } = socket;
+  
   const queryClient = useQueryClient();
   const initAttemptRef = useRef(0);
   const maxInitAttempts = 5;
   const eventHandlersSetupRef = useRef(false);
+  const subscriptionsRef = useRef<Array<() => void>>([]);
   
   // 이벤트-쿼리 매핑 정의 (메모이제이션)
   const eventQueryMapping = useMemo<EventQueryMapping[]>(() => [
@@ -49,129 +55,109 @@ const WebSocketQueryBridge: React.FC = () => {
     },
     // 다른 이벤트-쿼리 매핑을 여기에 추가...
   ], []);
-  
-  // 쿼리 무효화 함수 (쓰로틀링 적용)
-  const invalidateQueries = useCallback(_.throttle((queryKey: string[]) => {
-    queryClient.invalidateQueries({ queryKey });
-  }, 300, { leading: true, trailing: true }), [queryClient]);
-  
-  // 쿼리 제거 함수 (쓰로틀링 적용)
-  const removeQueries = useCallback(_.throttle((queryKey: string[]) => {
-    queryClient.removeQueries({ queryKey });
-  }, 300, { leading: true, trailing: true }), [queryClient]);
-  
-  // 이벤트 핸들러 생성 함수
+
+  // 이벤트 핸들러 팩토리 함수 (메모이제이션)
   const createEventHandler = useCallback((mapping: EventQueryMapping) => {
-    return _.throttle((data: any) => {
-      logger.info('WebSocketQueryBridge', `${mapping.event} 이벤트 수신`, data);
-      
-      // 공통 쿼리 무효화
-      mapping.queries.forEach(queryKey => {
-        invalidateQueries(queryKey);
+    // 실제 이벤트 처리 함수
+    return (data: any) => {
+      logger.info('WebSocketQueryBridge', `소켓 이벤트 수신: ${mapping.event}`, {
+        event: mapping.event,
+        dataType: typeof data,
+        data: _.isObject(data) ? data : null,
       });
-      
-      // 상세 쿼리 처리 (있는 경우)
-      if (mapping.getDetailQuery) {
-        const detailQueryKey = mapping.getDetailQuery(data);
-        if (detailQueryKey) {
-          if (mapping.event === SOCKET_EVENTS.CVE_DELETED) {
-            removeQueries(detailQueryKey);
-          } else {
-            invalidateQueries(detailQueryKey);
+
+      try {
+        // 기본 쿼리 무효화 처리
+        if (mapping.queries && mapping.queries.length > 0) {
+          mapping.queries.forEach(queryKey => {
+            queryClient.invalidateQueries({ queryKey });
+            logger.debug('WebSocketQueryBridge', `쿼리 무효화: ${queryKey.join('.')}`, {
+              queryKey
+            });
+          });
+        }
+
+        // 상세 쿼리 무효화 처리 (있는 경우)
+        if (mapping.getDetailQuery && data) {
+          const detailQueryKey = mapping.getDetailQuery(data);
+          if (detailQueryKey) {
+            queryClient.invalidateQueries({ queryKey: detailQueryKey });
+            logger.debug('WebSocketQueryBridge', `상세 쿼리 무효화: ${detailQueryKey.join('.')}`, {
+              detailQueryKey
+            });
           }
         }
-      }
-    }, 300, { leading: true, trailing: true });
-  }, [invalidateQueries, removeQueries]);
-
-  useEffect(() => {
-    // 디바운스된 로깅 함수 (동일한 메시지가 빠르게 여러 번 로깅되는 것 방지)
-    const logWarning = _.debounce((message: string) => {
-      if (initAttemptRef.current < maxInitAttempts) {
-        logger.warn('WebSocketQueryBridge', message);
-        initAttemptRef.current += 1;
-      }
-    }, 1000, { leading: true, trailing: false });
-
-    // 컨텍스트에서 소켓 정보 가져오기
-    const { socket, connected } = socketIO;
-
-    // 컨텍스트에서 소켓을 가져오지 못한 경우 서비스에서 직접 가져오기 시도
-    const activeSocket: Socket | null = socket || socketIOService.getSocket();
-    const isConnected: boolean = connected || socketIOService.isConnected;
-
-    // 소켓이 없는 경우 핸들링
-    if (!activeSocket) {
-      logWarning('Socket.IO 인스턴스를 찾을 수 없음');
-      return;
-    }
-
-    if (!isConnected) {
-      logWarning('Socket.IO 연결되지 않음, 이벤트 리스너 설정 지연');
-      return;
-    }
-
-    // 이미 이벤트 리스너가 설정되어 있다면 중복 설정 방지
-    if (eventHandlersSetupRef.current) {
-      return;
-    }
-
-    // 연결 성공 시 초기화 카운터 리셋
-    initAttemptRef.current = 0;
-    logger.info('WebSocketQueryBridge', '소켓 이벤트 리스너 설정');
-
-    // 이벤트 핸들러와 클린업 함수 배열
-    const cleanupFunctions: (() => void)[] = [];
-    
-    try {
-      // 선언적으로 정의된 매핑을 기반으로 이벤트 핸들러 등록
-      eventQueryMapping.forEach(mapping => {
-        const handler = createEventHandler(mapping);
-        
-        // 이벤트 리스너 등록
-        activeSocket.on(mapping.event, handler);
-        
-        // 클린업 함수 저장
-        cleanupFunctions.push(() => {
-          activeSocket.off(mapping.event, handler);
-          // 쓰로틀된 함수 취소
-          handler.cancel();
-        });
-      });
-      
-      // 이벤트 핸들러 설정 완료 표시
-      eventHandlersSetupRef.current = true;
-      
-      logger.info('WebSocketQueryBridge', '이벤트 리스너 등록 완료');
-    } catch (error) {
-      logger.error('WebSocketQueryBridge', '이벤트 리스너 등록 오류', error);
-    }
-
-    // 클린업 함수
-    return () => {
-      // 컴포넌트가 언마운트될 때 모든 이벤트 리스너 해제
-      logger.info('WebSocketQueryBridge', '소켓 이벤트 리스너 해제');
-      
-      try {
-        if (activeSocket) {
-          // 모든 클린업 함수 실행
-          cleanupFunctions.forEach(cleanup => cleanup());
-          
-          // 이벤트 핸들러 제거 표시
-          eventHandlersSetupRef.current = false;
-        }
       } catch (error) {
-        logger.error('WebSocketQueryBridge', '이벤트 리스너 해제 오류', error);
+        logger.error('WebSocketQueryBridge', `이벤트 처리 중 오류 발생: ${mapping.event}`, error);
       }
-      
-      // 디바운스된 함수 취소
-      logWarning.cancel();
-      invalidateQueries.cancel();
-      removeQueries.cancel();
     };
-  }, [socketIO, queryClient, eventQueryMapping, createEventHandler, invalidateQueries, removeQueries]);
+  }, [queryClient]);
 
-  return null; // 이 컴포넌트는 UI를 렌더링하지 않습니다
+  // 소켓 연결 설정 - useEffect 안에서 이벤트 리스너 등록
+  useEffect(() => {
+    // 연결 상태 확인
+    if (!connected) {
+      if (initAttemptRef.current < maxInitAttempts) {
+        logger.warn('WebSocketQueryBridge', '소켓 연결 대기 중...', {
+          attempt: initAttemptRef.current + 1,
+          maxAttempts: maxInitAttempts,
+          connectedFlag: connected,
+        });
+        initAttemptRef.current++;
+        return;
+      } else if (!eventHandlersSetupRef.current) {
+        logger.error('WebSocketQueryBridge', '최대 시도 횟수 초과: 소켓 연결 불가능');
+        return;
+      }
+    }
+
+    if (!eventHandlersSetupRef.current) {
+      logger.info('WebSocketQueryBridge', '이벤트 리스너 등록 시작');
+
+      // 기존 구독 정리
+      subscriptionsRef.current.forEach(unsubscribe => unsubscribe());
+      subscriptionsRef.current = [];
+
+      // 각 이벤트-쿼리 매핑에 대해 이벤트 리스너 설정
+      eventQueryMapping.forEach(mapping => {
+        try {
+          const handler = createEventHandler(mapping);
+          
+          // 새로운 useSocket의 on 메서드를 사용하여 이벤트 구독
+          const unsubscribe = on(mapping.event, handler);
+          
+          // 구독 해제 함수 저장 (정리에 사용)
+          subscriptionsRef.current.push(unsubscribe);
+          
+          logger.debug('WebSocketQueryBridge', `이벤트 "${mapping.event}" 구독 완료`);
+        } catch (error) {
+          logger.error('WebSocketQueryBridge', `이벤트 "${mapping.event}" 구독 중 오류 발생`, error);
+        }
+      });
+
+      eventHandlersSetupRef.current = true;
+      logger.info('WebSocketQueryBridge', '모든 이벤트 리스너 등록 완료');
+    }
+
+    // 컴포넌트 언마운트 시 정리
+    return () => {
+      logger.info('WebSocketQueryBridge', '이벤트 리스너 정리');
+      subscriptionsRef.current.forEach(unsubscribe => unsubscribe());
+      subscriptionsRef.current = [];
+    };
+  }, [connected, eventQueryMapping, createEventHandler, on]);
+
+  // 소켓 연결 상태 모니터링 및 이벤트 핸들러 재설정
+  useEffect(() => {
+    // 연결 상태가 변경되어 연결되었을 때, 이벤트 핸들러가 설정되지 않았다면 재시도
+    if (connected && !eventHandlersSetupRef.current) {
+      logger.info('WebSocketQueryBridge', '소켓이 연결되어 이벤트 핸들러 설정 재시도');
+      initAttemptRef.current = 0; // 시도 횟수 초기화
+    }
+  }, [connected]);
+
+  // 브릿지 컴포넌트는 UI를 렌더링하지 않음
+  return null;
 };
 
 export default WebSocketQueryBridge;

@@ -118,11 +118,33 @@ export const SOCKET_EVENTS = {
 };
 
 // WebSocket 연결 상태에 대한 상수
+/**
+ * 소켓 연결 상태를 나타내는 상수 집합
+ * 
+ * @property DISCONNECTED - 소켓 연결이 끊어진 상태
+ * @property CONNECTING - 소켓 연결을 시도하는 중인 상태
+ * @property CONNECTED - 소켓이 성공적으로 연결된 상태
+ * @property ERROR - 일반적인 오류 상태
+ * @property RECONNECTING - 재연결을 시도하는 중인 상태
+ * @property TRANSPORT_CLOSED - 전송 계층이 닫힌 상태 (서버 종료, 네트워크 문제 등)
+ * @property PING_TIMEOUT - 핑 요청에 대한 응답이 타임아웃된 상태
+ * @property TRANSPORT_ERROR - 전송 계층에서 오류가 발생한 상태
+ * @property AUTH_ERROR - 인증 관련 오류가 발생한 상태
+ * @property TIMEOUT - 일반적인 타임아웃 오류가 발생한 상태
+ * @property NETWORK_ERROR - 네트워크 연결 문제가 발생한 상태
+ */
 export const SOCKET_STATE = {
   DISCONNECTED: 'disconnected',
   CONNECTING: 'connecting',
   CONNECTED: 'connected',
-  ERROR: 'error'
+  ERROR: 'error',
+  RECONNECTING: 'reconnecting',
+  TRANSPORT_CLOSED: 'transport_closed',
+  PING_TIMEOUT: 'ping_timeout',
+  TRANSPORT_ERROR: 'transport_error',
+  AUTH_ERROR: 'auth_error',
+  TIMEOUT: 'timeout',
+  NETWORK_ERROR: 'network_error'
 };
 
 // 웹소켓 로그 문맥

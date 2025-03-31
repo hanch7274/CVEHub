@@ -24,11 +24,11 @@ import {
   EmptyState
 } from './CommonStyles';
 import { useQueryClient } from '@tanstack/react-query';
-import  api from '../../../api/config/axios';
+import api from '../../../api/config/axios';
 import { useSnackbar } from 'notistack';
 import { SOCKET_EVENTS } from '../../../services/socketio/constants';
-import useWebSocketHook from '../../../api/hooks/useWebSocketHook';
-import { TIME_ZONES, formatDateTime, DATE_FORMATS } from '../../../utils/dateUtils';
+import { useSocket } from '../../../api/hooks/useSocket';
+import { TIME_ZONES, formatDateTime } from '../../../utils/dateUtils';
 
 /**
  * 재사용 가능한 데이터 탭 컴포넌트
@@ -54,6 +54,9 @@ const GenericDataTab = memo(({
   const [newItem, setNewItem] = useState(tabConfig.defaultItem);
   const [cveData, setCve] = useState(cve);
 
+  // 새로운 useSocket 훅 사용
+  const { socket, emit, on, off } = useSocket();
+
   // 데이터 배열 참조
   const items = cveData[tabConfig.dataField] || [];
 
@@ -77,6 +80,30 @@ const GenericDataTab = memo(({
   useEffect(() => {
     onCountChange?.(items.length);
   }, [items.length, onCountChange]);
+
+  // 웹소켓 이벤트 리스너 설정
+  useEffect(() => {
+    if (!socket || !cveData?.cveId) return;
+
+    // 데이터 업데이트 이벤트 핸들러
+    const handleDataUpdated = (data) => {
+      if (data?.cveId === cveData.cveId && data?.field === tabConfig.wsFieldName) {
+        console.debug('GenericDataTab', `${tabConfig.itemName} 데이터 업데이트 이벤트 수신`, {
+          cveId: data.cveId,
+          field: data.field
+        });
+        // 필요시 여기서 추가 처리
+      }
+    };
+
+    // 이벤트 리스너 등록
+    on(SOCKET_EVENTS.DATA_UPDATED, handleDataUpdated);
+
+    // 컴포넌트 언마운트 시 이벤트 리스너 해제
+    return () => {
+      off(SOCKET_EVENTS.DATA_UPDATED, handleDataUpdated);
+    };
+  }, [socket, cveData?.cveId, tabConfig.wsFieldName, tabConfig.itemName, on, off]);
 
   // URL 유효성 검사 함수 (tabConfig에서 유효성 검사 함수를 제공하지 않으면 기본값 사용)
   const isItemValid = (item) => {
@@ -119,6 +146,17 @@ const GenericDataTab = memo(({
       setSelectedItem(null);
       setNewItem(tabConfig.defaultItem);
     }, 0);
+  };
+
+  // 데이터 업데이트 이벤트 전송
+  const sendDataUpdatedEvent = (responseData) => {
+    if (!socket) return;
+    
+    emit(SOCKET_EVENTS.DATA_UPDATED, {
+      cveId: cveData.cveId,
+      field: tabConfig.wsFieldName,
+      cve: responseData
+    });
   };
 
   // 아이템 추가 핸들러
@@ -169,16 +207,8 @@ const GenericDataTab = memo(({
             [tabConfig.dataField]: updatedItems
           }));
           
-          // WebSocket 메시지 전송 - 필드 정보 추가
-          await parentSendMessage(
-            SOCKET_EVENTS.DATA_UPDATED,
-            {
-              cveId: cveData.cveId,
-              field: tabConfig.wsFieldName,
-              cve: response.data
-            },
-            null
-          );
+          // 새로운 방식으로 WebSocket 메시지 전송
+          sendDataUpdatedEvent(response.data);
           
           // 포커스 해제 후 상태 업데이트
           document.activeElement?.blur();
@@ -225,16 +255,8 @@ const GenericDataTab = memo(({
             [tabConfig.dataField]: updatedItems
           }));
           
-          // WebSocket 메시지 전송 - 필드 정보 추가
-          await parentSendMessage(
-            SOCKET_EVENTS.DATA_UPDATED,
-            {
-              cveId: cveData.cveId,
-              field: tabConfig.wsFieldName,
-              cve: response.data
-            },
-            null
-          );
+          // 새로운 방식으로 WebSocket 메시지 전송
+          sendDataUpdatedEvent(response.data);
           
           enqueueSnackbar(`${tabConfig.itemName}이(가) 삭제되었습니다.`, { variant: 'success' });
         }
@@ -297,16 +319,8 @@ const GenericDataTab = memo(({
             [tabConfig.dataField]: updatedItems
           }));
           
-          // WebSocket 메시지 전송 - 필드 정보 추가
-          await parentSendMessage(
-            SOCKET_EVENTS.DATA_UPDATED,
-            {
-              cveId: cveData.cveId,
-              field: tabConfig.wsFieldName,
-              cve: response.data
-            },
-            null
-          );
+          // 새로운 방식으로 WebSocket 메시지 전송
+          sendDataUpdatedEvent(response.data);
           
           // 포커스 해제 후 상태 업데이트
           document.activeElement?.blur();
@@ -342,28 +356,6 @@ const GenericDataTab = memo(({
       }
     }, 0);
   };
-
-  // 웹소켓 훅 사용
-  const { 
-    // eslint-disable-next-line no-unused-vars
-    sendMessage 
-  } = useWebSocketHook(
-    // 이벤트 이름이 없는 경우 기본값 제공
-    SOCKET_EVENTS.DATA_UPDATED || 'data_updated',
-    (data) => {
-      // 이벤트 수신 시 처리 로직
-      if (data?.cveId === cveData.cveId && data?.field === tabConfig.wsFieldName) {
-        console.debug('GenericDataTab', `${tabConfig.itemName} 데이터 업데이트 이벤트 수신`, {
-          cveId: data.cveId,
-          field: data.field
-        });
-      }
-    },
-    {
-      optimisticUpdate: true,
-      queryKey: ['cve', cveData.cveId]
-    }
-  );
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -481,9 +473,6 @@ const GenericDataTab = memo(({
                 }}>
                   <Typography variant="caption" color="text.secondary">
                     Added by {item.created_by}
-                    {
-                      console.log(item)
-                    }
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
                     •
@@ -555,4 +544,4 @@ const GenericDataTab = memo(({
          prevProps.currentUser?.id === nextProps.currentUser?.id;
 });
 
-export default GenericDataTab; 
+export default GenericDataTab;

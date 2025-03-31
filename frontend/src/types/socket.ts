@@ -6,7 +6,7 @@ import { Socket } from 'socket.io-client';
 import { User } from './auth';
 import { CVEDetail } from './cve';
 import { Comment } from './cve';
-import { SOCKET_EVENTS, SOCKET_STATE, WS_DIRECTION, WS_STATUS, WS_LOG_CONTEXT } from '../services/socketio/constants';
+import { SOCKET_EVENTS } from '../services/socketio/constants';
 
 /**
  * 로그 레벨 상수

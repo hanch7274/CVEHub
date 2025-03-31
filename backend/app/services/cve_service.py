@@ -166,14 +166,11 @@ class CVEService:
         """
         try:
             # 대소문자 구분 없이 CVE ID로 조회
-            logger.info(f"CVE ID 조회 시작: {cve_id}")
             cve = await self.repository.find_by_cve_id(cve_id)
             
             if not cve:
                 logger.info(f"CVE를 찾을 수 없음: {cve_id}")
                 return None
-                
-            logger.info(f"CVE 찾음: {cve.cve_id}")
                 
             # 모델 그대로 반환 요청시
             if as_model:

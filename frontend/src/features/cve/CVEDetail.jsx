@@ -8,7 +8,9 @@ import React, {
   memo,
   useLayoutEffect 
 } from 'react';
-import { useSocketIO } from '../../contexts/SocketIOContext';
+import { useSocket } from '../../api/hooks/useSocket';
+import { useAuth } from '../../contexts/AuthContext';
+import { useQueryClient } from '@tanstack/react-query';
 import { useSnackbar } from 'notistack';
 import {
   Dialog,
@@ -33,21 +35,17 @@ import {
   Chip,
   Button
 } from '@mui/material';
-import {
-  Close as CloseIcon,
-  Circle as CircleIcon,
-  Science as ScienceIcon,
-  Shield as ShieldIcon,
-  Link as LinkIcon,
-  Comment as CommentIcon,
-  History as HistoryIcon,
-  Refresh as RefreshIcon,
-  ExpandMore as ExpandMoreIcon,
-  ExpandLess as ExpandLessIcon,
-  Visibility as VisibilityIcon,
-  AccessTimeIcon,
-  UpdateIcon
-} from '@mui/icons-material';
+import CloseIcon from '@mui/icons-material/Close';
+import CircleIcon from '@mui/icons-material/Circle';
+import ScienceIcon from '@mui/icons-material/Science';
+import ShieldIcon from '@mui/icons-material/Shield';
+import LinkIcon from '@mui/icons-material/Link';
+import CommentIcon from '@mui/icons-material/Comment';
+import HistoryIcon from '@mui/icons-material/History';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import GenericDataTab from './components/GenericDataTab';
 import {
   pocTabConfig,
@@ -64,8 +62,6 @@ import {
   useCVESubscription
 } from '../../api/hooks/useCVEQuery';
 import { useUpdateCVEField } from '../../api/hooks/useCVEMutation';
-import { useAuth } from '../../contexts/AuthContext';
-import { useQueryClient } from '@tanstack/react-query';
 import { QUERY_KEYS } from '../../api/queryKeys';
 import { formatDateTime, timeAgo, TIME_ZONES } from '../../utils/dateUtils';
 
@@ -153,7 +149,9 @@ const tabConfig = [
 ];
 
 const SubscriberCount = memo(({ subscribers = [] }) => {
-  const hasSubscribers = Array.isArray(subscribers) && subscribers.length > 0;
+  // 배열이 아니거나 비어있는 경우를 명시적으로 체크
+  const validSubscribers = Array.isArray(subscribers) ? subscribers.filter(Boolean) : [];
+  const hasSubscribers = validSubscribers.length > 0;
   
   return (
     <Box 
@@ -175,7 +173,7 @@ const SubscriberCount = memo(({ subscribers = [] }) => {
           }} 
         />
         <Typography variant="body2" color="text.secondary">
-          {hasSubscribers ? `${subscribers.length}명이 보는 중` : '보는 중'}
+          {hasSubscribers ? `${validSubscribers.length}명이 보는 중` : '보는 중'}
         </Typography>
       </Box>
       {hasSubscribers && (
@@ -196,29 +194,40 @@ const SubscriberCount = memo(({ subscribers = [] }) => {
             }
           }}
         >
-          {subscribers.map((subscriber) => (
-            <Tooltip
-              key={subscriber.id || subscriber.userId || Math.random().toString()}
-              title={subscriber.displayName || subscriber.username || '사용자'}
-              placement="bottom"
-              arrow
-              enterDelay={200}
-              leaveDelay={0}
-            >
-              <Avatar
-                alt={subscriber.username || '사용자'}
-                src={subscriber.profile_image || subscriber.profileImage}
-                sx={{
-                  bgcolor: !subscriber.profile_image && !subscriber.profileImage ? 
-                    `hsl(${(subscriber.username || 'User').length * 30}, 70%, 50%)` : 
-                    undefined
-                }}
+          {validSubscribers.map((subscriber, index) => {
+            // subscriber가 유효한 객체인지 확인
+            if (!subscriber || typeof subscriber !== 'object') {
+              return null;
+            }
+            
+            // 고유 키 안전하게 생성
+            const key = subscriber.id || subscriber.userId || `subscriber-${index}`;
+            const username = subscriber.displayName || subscriber.username || '사용자';
+            const profileImage = subscriber.profile_image || subscriber.profileImage;
+            
+            return (
+              <Tooltip
+                key={key}
+                title={username}
+                placement="bottom"
+                arrow
+                enterDelay={200}
+                leaveDelay={0}
               >
-                {(!subscriber.profile_image && !subscriber.profileImage) && 
-                  (subscriber.username || 'U').charAt(0).toUpperCase()}
-              </Avatar>
-            </Tooltip>
-          ))}
+                <Avatar
+                  alt={username}
+                  src={profileImage}
+                  sx={{
+                    bgcolor: !profileImage ? 
+                      `hsl(${(username).length * 30}, 70%, 50%)` : 
+                      undefined
+                  }}
+                >
+                  {!profileImage && (username.charAt(0) || 'U').toUpperCase()}
+                </Avatar>
+              </Tooltip>
+            );
+          })}
         </AvatarGroup>
       )}
     </Box>
@@ -229,9 +238,9 @@ SubscriberCount.propTypes = {
   subscribers: PropTypes.array
 };
 
-const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
+const CVEDetail = ({ cveId: propsCveId, open = false, onClose, highlightCommentId = null }) => {
   const { enqueueSnackbar, closeSnackbar } = useSnackbar();
-  const { socket, connected } = useSocketIO();
+  const { socket, connected } = useSocket();
   const { user: currentUser } = useAuth();
   const queryClient = useQueryClient();
 
@@ -289,6 +298,14 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     }
   }, [socket, connected]);
 
+  // 소켓 디버깅 정보
+  const [socketDebugInfo, setSocketDebugInfo] = useState({
+    hasSocket: false,
+    socketId: null,
+    connected: false,
+    lastUpdated: Date.now()
+  });
+
   // 불필요한 타이머 관련 ref 제거
   const snackbarShown = useRef(false);
   const refreshTriggersRef = useRef(refreshTriggers);
@@ -299,14 +316,6 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
   useEffect(() => {
     currentUserRef.current = currentUser;
   }, [currentUser]);
-
-  // 소켓 디버깅 상태
-  const [socketDebugInfo, setSocketDebugInfo] = useState({
-    hasSocket: false,
-    socketId: undefined,
-    connected: false,
-    lastUpdated: Date.now()
-  });
 
   // 구독 기능 (Socket.IO)
   const { 
@@ -1150,13 +1159,12 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
     );
   }
 
-  if (error) {
+
+  // 오류 발생 시 에러 다이얼로그 렌더링
+  if (error || errorDialogOpen) {
     return renderErrorDialog();
   }
 
-  if (errorDialogOpen) {
-    return renderErrorDialog();
-  }
 
   return (
     <Dialog
@@ -1174,6 +1182,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
       }}
     >
       <DialogTitle>
+        {/* 타이틀 및 구독자 카운트 영역 */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <Typography variant="h6">{cveData.cveId} 상세 정보</Typography>
@@ -1542,6 +1551,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
                     refreshTrigger={refreshTriggers.comments}
                     onCountChange={(count) => setTabCounts(prev => ({ ...prev, comments: count }))}
                     parentSendMessage={sendMessage}
+                    highlightCommentId={highlightCommentId}
                   />
                 </Box>
                 <Box 
@@ -1596,7 +1606,8 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose }) => {
 CVEDetail.propTypes = {
   cveId: PropTypes.string,
   open: PropTypes.bool,
-  onClose: PropTypes.func.isRequired
+  onClose: PropTypes.func.isRequired,
+  highlightCommentId: PropTypes.string
 };
 
 export default React.memo(CVEDetail);

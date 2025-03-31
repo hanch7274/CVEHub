@@ -11,7 +11,6 @@ import Login from './features/auth/Login.tsx';
 import PrivateRoute from './features/auth/PrivateRoute';
 import AuthRoute from './features/auth/AuthRoute';
 import { AuthProvider } from './contexts/AuthContext';
-import { SocketIOProvider } from './contexts/SocketIOContext';
 import { SnackbarProvider } from 'notistack';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
@@ -22,7 +21,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import WebSocketQueryBridge from './contexts/WebSocketQueryBridge';
 import { getAccessToken } from './utils/storage/tokenStorage';
-import socketIOService from './services/socketio/socketio';  // Socket.IO 서비스 임포트
+import socketIOWithStore from './services/socketio/socketioWithStore';  // Socket.IO 서비스 임포트
 
 // CVEDetail 컴포넌트를 lazy 로딩으로 가져옵니다
 const CVEDetail = lazy(() => import('./features/cve/CVEDetail'));
@@ -82,23 +81,23 @@ const MainLayout = React.memo(({ children }) => {
   }, []);
 
   return (
-    <Box sx={{ display: 'flex' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <Header onOpenCVEDetail={handleOpenCVEDetail} />
-      <Sidebar />
-      <Box
-        component="main"
-        sx={{
-          flexGrow: 1,
-          p: { xs: 2, md: 4 },
-          mt: '64px',
-          pt: { xs: 2, md: 3 },
-          backgroundColor: '#F8F9FA',
-          minHeight: 'calc(100vh - 64px)',
-          width: '100%',
-          overflow: 'auto'
-        }}
-      >
-        {React.cloneElement(children, { selectedCVE, setSelectedCVE })}
+      <Box sx={{ display: 'flex', flexGrow: 1, height: 'calc(100vh - 64px)', mt: '64px' }}>
+        <Sidebar />
+        <Box
+          component="main"
+          sx={{
+            flexGrow: 1,
+            p: { xs: 2, md: 4 },
+            backgroundColor: '#F8F9FA',
+            overflow: 'auto',
+            position: 'relative',
+            zIndex: 0
+          }}
+        >
+          {React.cloneElement(children, { selectedCVE, setSelectedCVE })}
+        </Box>
       </Box>
       <Snackbar
         open={snackbar.open}
@@ -254,7 +253,7 @@ const queryClient = new QueryClient({
 injectQueryClient(queryClient);
 
 // Socket.IO 디버깅을 위한 전역 객체 노출
-window._socketDebug = socketIOService;
+window._socketDebug = socketIOWithStore;
 
 const App = () => {
   const [selectedCVE, setSelectedCVE] = useState(null);
@@ -270,13 +269,11 @@ const App = () => {
           <AuthProvider>
             <Router>
               <ErrorProvider>
-                <SocketIOProvider>
-                  <ErrorHandlerSetup>
-                    <CssBaseline />
-                    <WebSocketQueryBridge />
-                    <MainRoutes setSelectedCVE={setSelectedCVE} selectedCVE={selectedCVE} />
-                  </ErrorHandlerSetup>
-                </SocketIOProvider>
+                <ErrorHandlerSetup>
+                  <CssBaseline />
+                  <WebSocketQueryBridge />
+                  <MainRoutes setSelectedCVE={setSelectedCVE} selectedCVE={selectedCVE} />
+                </ErrorHandlerSetup>
               </ErrorProvider>
             </Router>
           </AuthProvider>

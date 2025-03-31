@@ -3,14 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { Container, Grid, Paper, TextField, Button, Typography, Box, CircularProgress } from '@mui/material';
 import { useAuth } from '../../contexts/AuthContext';
 import { AuthContextType, LoginRequest } from '../../types/auth';
-import { useSocketIO } from '../../contexts/SocketIOContext';
+import { useSocket } from '../../api/hooks/useSocket';
 import logger from '../../utils/logging';
 
-// SocketIO 인터페이스 정의 (임시)
-// interface SocketIO {
-//   connected: boolean;
-//   connect: () => void;
-// }
 
 interface LoginFormProps {
   username: string;
@@ -27,7 +22,8 @@ const LoginForm: React.FC<LoginFormProps> = ({
 }) => {
   const navigate = useNavigate();
   const auth: AuthContextType = useAuth();
-  const socketIO = useSocketIO();
+  const socket = useSocket();
+  const { connected } = socket;
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
@@ -44,10 +40,10 @@ const LoginForm: React.FC<LoginFormProps> = ({
       await auth.loginAsync(loginRequest);
       logger.info('Auth', '로그인 성공', { username });
       
-      // 소켓 연결 상태 확인 - 소켓은 자동으로 연결됨
-      if (!socketIO.connected) {
+      // 소켓 연결 상태 확인 - RxJS 기반 소켓은 자동으로 연결됨
+      if (!connected) {
         logger.info('Auth', '소켓 연결 대기 중', {});
-        // SocketContextType에는 connect 메서드가 없으므로 제거
+        // 소켓 연결은 자동으로 이루어지므로 별도 연결 요청 불필요
       }
       
       // 로그인 성공 후 대시보드로 이동

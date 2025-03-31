@@ -43,14 +43,13 @@ import AddIcon from '@mui/icons-material/Add';
 import SearchOffIcon from '@mui/icons-material/SearchOff';
 import { useAuth } from '../../contexts/AuthContext';
 import { useQueryClient } from '@tanstack/react-query'; 
-import { useSocketIO } from '../../contexts/SocketIOContext';
+import { useSocket } from '../../api/hooks/useSocket';
 import { QUERY_KEYS } from '../../api/queryKeys';
 
 // 기존 import 대신 새로운 통합 서비스 사용
 import { 
   useCVEList, 
   useCVEDetail,
-  useCVEListUpdates,
   useTotalCVECount,
   useCVEStats
 } from '../../api/hooks/useCVEQuery';
@@ -58,6 +57,8 @@ import {
   useDeleteCVE,
   useCreateCVE
 } from '../../api/hooks/useCVEMutation';
+// 새로 만든 웹소켓 이벤트 훅 import
+import { useCVEListUpdates } from '../../api/hooks/useCVEQuery';
 
 import CVEDetail from './CVEDetail';
 import CrawlerUpdateButton from './components/CrawlerUpdateButton';
@@ -518,86 +519,106 @@ const CVETable = React.memo(({
                 <TableSkeletonRow key={`skeleton-${index}`} />
               ))
             ) : cves && cves.length > 0 ? (
-              cves.map((cve) => (
-                <TableRow
-                  key={cve.cveId}
-                  onClick={() => onCVEClick(cve)}
-                  sx={{
-                    cursor: 'pointer',
-                    transition: 'background-color 0.2s',
-                    '&:hover': {
-                      backgroundColor: alpha(theme.palette.primary.main, 0.04)
-                    }
-                  }}
-                >
-                  <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'medium', color: theme.palette.primary.main }}>
-                    {cve.cveId}
-                  </TableCell>
-                  <TableCell sx={tableCellBaseStyle}>
-                    <Tooltip title={cve.title || ''} placement="top">
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          maxWidth: 400,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap'
-                        }}
-                      >
-                        {cve.title || '-'}
-                      </Typography>
-                    </Tooltip>
-                  </TableCell>
-                  <TableCell sx={tableCellBaseStyle}>
-                    <Chip
-                      label={cve.severity ? cve.severity.toUpperCase() : '미정'}
-                      size="small"
+              cves.map((cve, index) => {
+                console.log(`CVE 항목 렌더링 시작 [${index}]:`, {
+                  cveId: cve.cveId,
+                  title: cve.title,
+                  status: cve.status,
+                  severity: cve.severity
+                });
+                
+                try {
+                  return (
+                    <TableRow
+                      key={cve.cveId || `cve-${index}`}
+                      onClick={() => onCVEClick(cve)}
                       sx={{
-                        backgroundColor: alpha(getSeverityColor(cve.severity, theme), 0.1),
-                        color: getSeverityColor(cve.severity, theme),
-                        fontWeight: 'medium',
-                        borderRadius: '4px'
+                        cursor: 'pointer',
+                        transition: 'background-color 0.2s',
+                        '&:hover': {
+                          backgroundColor: alpha(theme.palette.primary.main, 0.04)
+                        }
                       }}
-                    />
-                  </TableCell>
-                  <TableCell sx={tableCellBaseStyle}>
-                    <Chip
-                      label={cve.status}
-                      size="small"
-                      sx={{
-                        backgroundColor: alpha(getStatusColor(cve.status, theme), 0.1),
-                        color: getStatusColor(cve.status, theme),
-                        fontWeight: 'medium',
-                        borderRadius: '4px'
-                      }}
-                    />
-                  </TableCell>
-                  <TableCell sx={tableCellBaseStyle}>
-                    {formatDateTime(cve.createdAt || cve.created_at, undefined, TIME_ZONES.KST)}
-                  </TableCell>
-                  <TableCell sx={tableCellBaseStyle}>
-                    {formatDateTime(cve.lastModifiedAt || cve.last_modified_at, undefined, TIME_ZONES.KST)}
-                  </TableCell>
-                  <TableCell sx={tableCellBaseStyle}>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <Tooltip title="삭제">
-                        <IconButton
+                    >
+                      <TableCell sx={{ ...tableCellBaseStyle, fontWeight: 'medium', color: theme.palette.primary.main }}>
+                        {cve.cveId || '-'}
+                      </TableCell>
+                      <TableCell sx={tableCellBaseStyle}>
+                        <Tooltip title={cve.title || ''} placement="top">
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              maxWidth: 400,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            {cve.title || '-'}
+                          </Typography>
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell sx={tableCellBaseStyle}>
+                        <Chip
+                          label={cve.severity ? cve.severity.toUpperCase() : '미정'}
                           size="small"
-                          color="error"
-                          onClick={(e) => onDeleteClick(e, cve)}
                           sx={{
-                            '&:hover': {
-                              backgroundColor: alpha(theme.palette.error.main, 0.1),
-                            }
+                            backgroundColor: alpha(getSeverityColor(cve.severity, theme), 0.1),
+                            color: getSeverityColor(cve.severity, theme),
+                            fontWeight: 'medium',
+                            borderRadius: '4px'
                           }}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              ))
+                        />
+                      </TableCell>
+                      <TableCell sx={tableCellBaseStyle}>
+                        <Chip
+                          label={cve.status || '미정'}
+                          size="small"
+                          sx={{
+                            backgroundColor: alpha(getStatusColor(cve.status, theme), 0.1),
+                            color: getStatusColor(cve.status, theme),
+                            fontWeight: 'medium',
+                            borderRadius: '4px'
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell sx={tableCellBaseStyle}>
+                        {formatDateTime(cve.createdAt || cve.created_at, undefined, TIME_ZONES.KST)}
+                      </TableCell>
+                      <TableCell sx={tableCellBaseStyle}>
+                        {formatDateTime(cve.lastModifiedAt || cve.last_modified_at, undefined, TIME_ZONES.KST)}
+                      </TableCell>
+                      <TableCell sx={tableCellBaseStyle}>
+                        <Box sx={{ display: 'flex', gap: 1 }}>
+                          <Tooltip title="삭제">
+                            <IconButton
+                              size="small"
+                              color="error"
+                              onClick={(e) => onDeleteClick(e, cve)}
+                              sx={{
+                                '&:hover': {
+                                  backgroundColor: alpha(theme.palette.error.main, 0.1),
+                                }
+                              }}
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  );
+                } catch (error) {
+                  console.error(`CVE 항목 렌더링 중 오류 [${index}]:`, error);
+                  return (
+                    <TableRow key={`error-${index}`}>
+                      <TableCell colSpan={7} sx={{ ...tableCellBaseStyle, textAlign: 'center', py: 4 }}>
+                        <Typography variant="body2" color="error">오류가 발생했습니다.</Typography>
+                      </TableCell>
+                    </TableRow>
+                  );
+                }
+              })
             ) : (
               <NoDataRow 
                 colSpan={7} 
@@ -777,11 +798,11 @@ const CVEList = () => {
   const navigate = useNavigate();
   const { currentUser: user } = useAuth();
   const { enqueueSnackbar } = useSnackbar();
-  const { socket } = useSocketIO();
+  const { emit } = useSocket();
   const queryClient = useQueryClient(); 
 
   // 실시간 업데이트 구독
-  useCVEListUpdates();
+  useCVEListUpdates(queryClient);
 
   // 전체 CVE 개수 조회
   const { data: totalCVECount = 0, isLoading: isTotalCountLoading } = useTotalCVECount();
@@ -844,13 +865,11 @@ const CVEList = () => {
     error: queryError, 
     refetch: refetchCVEList 
   } = useCVEList({ 
-    page: page,
+    page, 
     rowsPerPage, 
-    filters: { 
-      status: statusFilter,
-      severity: severityFilter,
-      search: searchQuery
-    },
+    search: searchQuery,
+    status: statusFilter,
+    severity: severityFilter,
     sortBy: sortOption === 'newest' ? 'createdAt' : sortOption === 'severity' ? 'severity' : 'status',
     sortOrder: sortOption === 'newest' ? 'desc' : (sortOption === 'severity' ? 'desc' : 'asc')
   });
@@ -875,6 +894,20 @@ const CVEList = () => {
       sort_by: sortOption === 'newest' ? 'createdAt' : sortOption === 'severity' ? 'severity' : 'status',
       sort_order: sortOption === 'newest' ? 'desc' : (sortOption === 'severity' ? 'desc' : 'asc')
     });
+    
+    // 첫 번째 아이템 디버깅 로깅
+    if (queryData?.items && queryData.items.length > 0) {
+      console.log('첫 번째 CVE 아이템 데이터:', queryData.items[0]);
+      console.log('필드 확인:', {
+        id: queryData.items[0].id,
+        cveId: queryData.items[0].cveId,
+        title: queryData.items[0].title,
+        status: queryData.items[0].status,
+        severity: queryData.items[0].severity,
+        createdAt: queryData.items[0].createdAt,
+        lastModifiedAt: queryData.items[0].lastModifiedAt
+      });
+    }
   }, [queryData, page, rowsPerPage, statusFilter, severityFilter, searchQuery, sortOption]);
   
   const cves = useMemo(() => queryData?.items || [], [queryData]);

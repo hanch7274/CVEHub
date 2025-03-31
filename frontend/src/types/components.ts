@@ -34,6 +34,7 @@ export interface CVEDetailProps {
   cveId: string;
   open?: boolean;
   onClose: () => void;
+  highlightCommentId?: string | null;
 }
 
 // CVE 목록 컴포넌트 프롭스
@@ -121,6 +122,7 @@ export interface MentionInputProps {
 export interface NotificationBellProps extends CommonComponentProps {
   count?: number;
   onClick?: () => void;
+  onOpenCVEDetail?: (cveId: string, commentId?: string) => void;
 }
 
 /**

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef, ReactNode, useCallback, useMemo } from 'react';
 import { getAccessToken, getRefreshToken } from '../utils/storage/tokenStorage';
 import logger from '../utils/logging';
-import socketIOService from '../services/socketio/socketio';
+import socketIOWithStore from '../services/socketio/socketioWithStore';
 import { useAuthQuery } from '../api/hooks/useAuthQuery';
 import { TOKEN_REFRESH_THRESHOLD } from '../config';
 import { User, LoginRequest, LoginResponse, RefreshTokenResponse, AuthContextType } from '../types/auth';
@@ -181,22 +181,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (isAuthenticated && user) {
         logger.info('AuthContext', 'Socket.IO 연결 요청', {});
         // 직접 연결하지 않고 SocketIOContext에 인증 상태 변경을 알림
-        if (socketIOService && socketIOService.handleAuthStateChange) {
-          socketIOService.handleAuthStateChange(true);
+        if (socketIOWithStore && socketIOWithStore.handleAuthStateChange) {
+          socketIOWithStore.handleAuthStateChange(true);
         }
       } else {
         logger.info('AuthContext', 'Socket.IO 연결 해제 요청', {});
         // 직접 연결 해제하지 않고 SocketIOContext에 인증 상태 변경을 알림
-        if (socketIOService && socketIOService.handleAuthStateChange) {
-          socketIOService.handleAuthStateChange(false);
+        if (socketIOWithStore && socketIOWithStore.handleAuthStateChange) {
+          socketIOWithStore.handleAuthStateChange(false);
         }
       }
     }
     
     return () => {
       // 컴포넌트 언마운트 시 연결 해제 요청
-      if (socketIOService && socketIOService.handleAuthStateChange) {
-        socketIOService.handleAuthStateChange(false);
+      if (socketIOWithStore && socketIOWithStore.handleAuthStateChange) {
+        socketIOWithStore.handleAuthStateChange(false);
       }
     };
   }, [isAuthenticated, user]);

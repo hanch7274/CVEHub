@@ -17,16 +17,15 @@ import {
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { useSocketIO } from '../contexts/SocketIOContext';
+import { useSocket } from '../api/hooks/useSocket';
 import { useSnackbar } from 'notistack';
 import PersonIcon from '@mui/icons-material/Person';
 import SettingsIcon from '@mui/icons-material/Settings';
 import LogoutIcon from '@mui/icons-material/Logout';
-import NotificationBell from '../features/notification/NotificationBell';
-import { getAnimalEmoji } from '../utils/avatarUtils';
-import SearchIcon from '@mui/icons-material/Search';
 import WifiIcon from '@mui/icons-material/Wifi';
 import WifiOffIcon from '@mui/icons-material/WifiOff';
+import NotificationBell from '../features/notification/NotificationBell';
+import { getAnimalEmoji } from '../utils/avatarUtils';
 import { SOCKET_EVENTS, SOCKET_STATE } from '../services/socketio/constants';
 import logger from '../utils/logging';
 
@@ -37,13 +36,11 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
   const theme = useTheme();
   const { user, logout } = useAuth();
-  const { 
-    connected,
-    subscribeEvent, 
-    unsubscribeEvent,
-    connect,
-    isReady
-  } = useSocketIO();
+  
+  // 새로운 useSocket 훅 사용
+  const socket = useSocket();
+  const { connected } = socket;
+
   const { enqueueSnackbar } = useSnackbar();
   const navigate = useNavigate();
   
@@ -53,32 +50,79 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
       state: data.state,
       connected: connected
     });
-    // 핸들러는 단순 로깅만 수행. 상태 업데이트는 SocketIOContext에서 이미 처리됨
+    // 핸들러는 단순 로깅만 수행. 상태 업데이트는 내부적으로 이미 처리됨
   }, [connected]);
-  
-  // 소켓 이벤트 구독 설정 - 마운트/언마운트 시에만 실행
+
+  // 기존 useSocketEventListener 대신에 useEffect와 socket.on 사용
   useEffect(() => {
-    logger.info('Header', '소켓 이벤트 구독 설정', { connected });
+    // 이벤트 구독 설정
+    const unsubscribe = socket.on(SOCKET_EVENTS.CONNECTION_STATE_CHANGE, handleSocketStateChange);
     
-    // 소켓 이벤트 리스너 등록
-    subscribeEvent(SOCKET_EVENTS.CONNECTION_STATE_CHANGE, handleSocketStateChange);
-    
+    // 컴포넌트 언마운트 시 구독 해제
     return () => {
-      logger.info('Header', '이벤트 구독 해제');
-      unsubscribeEvent(SOCKET_EVENTS.CONNECTION_STATE_CHANGE, handleSocketStateChange);
+      unsubscribe();
     };
-  }, [subscribeEvent, unsubscribeEvent, handleSocketStateChange]);
+  }, [handleSocketStateChange]);
   
-  // 재연결 핸들러 - 간소화된 버전
+
+  // 재연결 핸들러 - useSocket 사용 방식으로 업데이트
   const handleReconnect = useCallback(() => {
     if (!connected) {
       logger.info('Header', '재연결 시도');
       enqueueSnackbar('서버에 재연결 시도 중...', { variant: 'info' });
-      connect();
-    } else {
-      enqueueSnackbar('이미 서버에 연결되어 있습니다', { variant: 'info' });
+      
+      // 토큰 새로 받아서 재연결 시도 
+      const token = localStorage.getItem('token');
+      if (token) {
+        // 새로고침으로 연결 재시도
+        window.location.reload();
+      } else {
+        enqueueSnackbar('인증 정보가 없어 재연결할 수 없습니다. 다시 로그인해주세요.', {
+          variant: 'warning'
+        });
+        navigate('/login');
+      }
     }
-  }, [connect, enqueueSnackbar, connected]);
+  }, [connected, navigate, enqueueSnackbar]);
+
+  // 사용자 메뉴 관련 상태
+  const [anchorElUser, setAnchorElUser] = useState<null | HTMLElement>(null);
+  
+  const handleOpenUserMenu = (event: React.MouseEvent<HTMLElement>) => {
+    setAnchorElUser(event.currentTarget);
+  };
+  
+  const handleCloseUserMenu = () => {
+    setAnchorElUser(null);
+  };
+  
+  const handleLogout = async () => {
+    handleCloseUserMenu();
+    try {
+      await logout();
+      enqueueSnackbar('로그아웃 되었습니다.', { 
+        variant: 'success',
+        anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+      });
+      navigate('/login');
+    } catch (error) {
+      console.error('로그아웃 실패:', error);
+      enqueueSnackbar('로그아웃 중 오류가 발생했습니다.', { 
+        variant: 'error',
+        anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
+      });
+    }
+  };
+  
+  const handleProfileClick = () => {
+    handleCloseUserMenu();
+    navigate('/profile');
+  };
+  
+  const handleSettingsClick = () => {
+    handleCloseUserMenu();
+    navigate('/settings');
+  };
   
   // 연결 상태 아이콘 - connected 직접 사용
   const connectionIcon = useMemo(() => {
@@ -89,44 +133,10 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
     );
   }, [connected]);
   
-  // 메뉴 열기/닫기 핸들러
-  const handleMenu = (event: React.MouseEvent<HTMLElement>) => {
-    // setAnchorEl(event.currentTarget);
-  };
-
-  const handleClose = () => {
-    // setAnchorEl(null);
-  };
-
-  // 로그아웃 처리
-  const handleLogout = async () => {
-    try {
-      // 로그아웃 전에 소켓 이벤트 발생
-      if (connected) {
-        logger.debug('Header', '로그아웃: 소켓 연결 종료 시도');
-      }
-      
-      // React Query 로그아웃 함수만 호출 (웹소켓 연결 종료는 AuthContext에서 처리)
-      await logout();
-      
-      // 로그아웃 성공 메시지
-      enqueueSnackbar('로그아웃 되었습니다', {
-        variant: 'success',
-        anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-      });
-      
-      // 홈 페이지로 이동
-      navigate('/');
-    } catch (error) {
-      enqueueSnackbar('로그아웃 중 오류가 발생했습니다', {
-        variant: 'error',
-        anchorOrigin: { vertical: 'bottom', horizontal: 'center' }
-      });
-    }
-  };
-
-  // 이메일이 없는 경우 기본 아바타 사용
-  const animalEmoji = user?.email ? getAnimalEmoji(user.email) : '👤';
+  const userAvatar = useMemo(() => {
+    if (!user) return '👤';
+    return getAnimalEmoji(user.username || user.email || '');
+  }, [user]);
 
   return (
     <AppBar 
@@ -179,32 +189,37 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
           </Box>
 
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            {/* 웹소켓 연결 상태 */}
             <Tooltip title={connected ? "서버와 실시간 연결 됨" : "서버 연결 끊김 (클릭하여 재연결)"}>
-              <IconButton
-                size="small"
-                onClick={handleReconnect}
-                sx={{ 
-                  mr: 1,
-                  backgroundColor: connected 
-                    ? alpha(theme.palette.success.main, 0.1) 
-                    : alpha(theme.palette.error.main, 0.1),
-                  backdropFilter: 'blur(5px)',
-                  border: `1px solid ${alpha(
-                    connected ? theme.palette.success.main : theme.palette.error.main, 
-                    0.2
-                  )}`,
-                  '&:hover': { 
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={handleReconnect}
+                  disabled={connected}
+                  sx={{ 
+                    mr: 1,
                     backgroundColor: connected 
-                      ? alpha(theme.palette.success.main, 0.2) 
-                      : alpha(theme.palette.error.main, 0.2)
-                  }
-                }}
-                aria-label="서버 연결 상태"
-              >
-                {connectionIcon}
-              </IconButton>
+                      ? alpha(theme.palette.success.main, 0.1) 
+                      : alpha(theme.palette.error.main, 0.1),
+                    backdropFilter: 'blur(5px)',
+                    border: `1px solid ${alpha(
+                      connected ? theme.palette.success.main : theme.palette.error.main, 
+                      0.2
+                    )}`,
+                    '&:hover': { 
+                      backgroundColor: connected 
+                        ? alpha(theme.palette.success.main, 0.2) 
+                        : alpha(theme.palette.error.main, 0.2)
+                    }
+                  }}
+                  aria-label="서버 연결 상태"
+                >
+                  {connectionIcon}
+                </IconButton>
+              </span>
             </Tooltip>
-            
+
+            {/* 알림 벨 */}
             {user && (
               <Box 
                 sx={{ 
@@ -218,14 +233,19 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
                   }
                 }}
               >
-                <NotificationBell />
+                {onOpenCVEDetail ? (
+                  <NotificationBell onOpenCVEDetail={onOpenCVEDetail} />
+                ) : (
+                  <NotificationBell />
+                )}
               </Box>
             )}
             
+            {/* 사용자 메뉴 */}
             {user ? (
-              <Tooltip title={user.displayName || user.username}>
+              <Tooltip title={user.displayName || user.username || ''}>
                 <IconButton
-                  onClick={handleMenu}
+                  onClick={handleOpenUserMenu}
                   sx={{ 
                     ml: 1,
                     transition: 'transform 0.2s',
@@ -244,7 +264,7 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
                       boxShadow: `0 0 0 2px rgba(255, 255, 255, 0.3)`
                     }}
                   >
-                    {animalEmoji}
+                    {userAvatar}
                   </Avatar>
                 </IconButton>
               </Tooltip>
@@ -273,10 +293,10 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
 
           <Menu
             id="menu-appbar"
-            // anchorEl={anchorEl}
-            open={false}
-            onClose={handleClose}
-            onClick={handleClose}
+            anchorEl={anchorElUser}
+            open={Boolean(anchorElUser)}
+            onClose={handleCloseUserMenu}
+            onClick={handleCloseUserMenu}
             PaperProps={{
               elevation: 0,
               sx: {
@@ -326,26 +346,26 @@ const Header: React.FC<HeaderProps> = ({ onOpenCVEDetail }) => {
               {user && (
                 <>
                   <Typography variant="subtitle1" component="div" sx={{ fontWeight: 'bold' }}>
-                    {user.displayName || user.username}
+                    {user.displayName || user.username || '사용자'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
-                    {user.email}
+                    {user.email || ''}
                   </Typography>
                 </>
               )}
             </Box>
             <Divider sx={{ my: 1 }} />
-            <MenuItem onClick={() => { handleClose(); navigate('/profile'); }}>
+            <MenuItem onClick={handleProfileClick}>
               <PersonIcon fontSize="small" sx={{ color: theme.palette.primary.main }} />
               프로필
             </MenuItem>
-            <MenuItem onClick={() => { handleClose(); navigate('/settings'); }}>
+            <MenuItem onClick={handleSettingsClick}>
               <SettingsIcon fontSize="small" sx={{ color: theme.palette.primary.main }} />
               설정
             </MenuItem>
             <Divider sx={{ my: 1 }} />
             <MenuItem 
-              onClick={() => { handleClose(); handleLogout(); }}
+              onClick={handleLogout}
               sx={{ color: theme.palette.error.main }}
             >
               <LogoutIcon fontSize="small" />

@@ -4,21 +4,21 @@ import { useEffect, useCallback, useState, useRef, useMemo } from 'react';
 import cveService from '../services/cveService';
 import logger from '../../utils/logging';
 import { QUERY_KEYS } from '../queryKeys';
-import { useSocketIO } from '../../contexts/SocketIOContext';
+import { useSocket } from './useSocket';
 import { SOCKET_EVENTS } from '../../services/socketio/constants';
 import api from '../config/axios';
-import debounce from 'lodash/debounce';
+import _ from 'lodash';
 
 // cve.ts에 정의된 타입들을 사용
 import type { CVEListResponse, CVEDetail, CVEFilterOptions } from '../../types/cve';
 
-// 구독 관련 이벤트 상수는 SOCKET_EVENTS에서 가져옴
-// 추가적인 구독 관련 이벤트 상수 정의
+// 구독 관련 이벤트 상수
 const SUBSCRIPTION_EVENTS = {
   SUBSCRIPTION_ERROR: SOCKET_EVENTS.SUBSCRIPTION_ERROR,
   UNSUBSCRIPTION_ERROR: SOCKET_EVENTS.UNSUBSCRIPTION_ERROR,
 };
 
+// 로거 타입 인터페이스
 interface LoggerType {
   info: (message: string, data?: any) => void;
   warn: (message: string, data?: any) => void;
@@ -58,6 +58,7 @@ const createLogger = (prefix: string): LoggerType => ({
   }
 });
 
+// 타입 정의
 type Filters = Record<string, any>;
 type QueryOptions<T = any> = Omit<UseQueryOptions<T, Error>, 'queryKey' | 'queryFn'>;
 
@@ -70,181 +71,28 @@ interface CVEItem {
   [key: string]: any;
 }
 
-export const useCVEList = (
-  filters: Filters = {},
-  options: QueryOptions<CVEListResponse> = {},
-  customService = cveService
-) => {
-  const queryClient = useQueryClient();
-  const logger = createLogger('useCVEList');
-
-  return useQuery<CVEListResponse, Error>({
-    queryKey: QUERY_KEYS.CVE.list(filters),
-    queryFn: async () => {
-      try {
-        logger.info('목록 조회 요청', { filters });
-        const result = await customService.getCVEs(filters);
-
-        if (!result.total && result.totalItems) {
-          result.total = result.totalItems;
-        }
-        if (!result.items && result.results) {
-          result.items = result.results;
-        }
-
-        if (result && result.items && result.items.length > 0) {
-          const sampleItem = result.items[0];
-          logger.debug('첫 번째 아이템의 날짜 정보:', {
-            createdAt: sampleItem.createdAt,
-            createdAt_type: typeof sampleItem.createdAt,
-            lastModifiedAt: sampleItem.lastModifiedAt,
-            lastModifiedAt_type: typeof sampleItem.lastModifiedAt,
-            created_at: sampleItem.created_at,
-            created_at_type: typeof sampleItem.created_at,
-            last_modified_at: sampleItem.last_modified_at,
-            last_modified_at_type: typeof sampleItem.last_modified_at,
-          });
-          logger.debug('모든 CVE 아이템의 날짜 필드:');
-          result.items.forEach((item: CVEItem, index: number) => {
-            logger.debug(`CVE #${index + 1}: ${item.cveId}`, {
-              createdAt: item.createdAt,
-              createdAt_type: typeof item.createdAt,
-              lastModifiedAt: item.lastModifiedAt,
-              lastModifiedAt_type: typeof item.lastModifiedAt,
-              created_at: item.created_at,
-              created_at_type: typeof item.created_at,
-              last_modified_at: item.last_modified_at,
-              last_modified_at_type: typeof item.last_modified_at,
-            });
-          });
-        }
-
-        logger.info('목록 조회 결과', { 
-          totalItems: result.total || result.totalItems || 0,
-          itemsCount: result.items?.length || result.results?.length || 0,
-          page: filters.page || 1
-        });
-
-        return result;
-      } catch (error: any) {
-        logger.error('목록 조회 중 오류 발생', error);
-        throw error;
-      }
-    },
-    placeholderData: (oldData) => oldData,
-    staleTime: 10000,
-    gcTime: 60000,
-    refetchOnWindowFocus: true,
-    ...options,
-  });
-};
-
-interface UseCVEListQueryParams {
-  page?: number;
-  rowsPerPage?: number;
-  filters?: Filters;
-  sortBy?: string;
-  sortOrder?: 'asc' | 'desc';
+// CVE 통계 타입 정의
+interface CVEStats {
+  byStatus?: Record<string, number>;
+  bySeverity?: Record<string, number>;
+  byMonth?: Record<string, number>;
+  total?: number;
+  [key: string]: any;
 }
 
-export const useCVEListQuery = (params: UseCVEListQueryParams = {}) => {
-  const { 
-    page = 0, 
-    rowsPerPage = 10, 
-    filters = {}, 
-    sortBy = 'createdAt', 
-    sortOrder = 'desc' 
-  } = params;
+// 구독 상태 타입 정의
+interface SubscriptionState {
+  isSubscribed: boolean;
+  subscribers: any[];
+  isLoading: boolean;
+  error: string | null;
+}
 
-  const convertedFilters = {
-    page,
-    rowsPerPage,
-    search: filters.search,
-    sortBy,
-    sortOrder,
-    filters
-  };
-
-  const logger = createLogger('useCVEListQuery');
-  logger.info('호환성 모드로 호출됨 (deprecated)', { params });
-  
-  return useCVEList(convertedFilters);
-};
-
-export const useCVEDetail = (
-  cveId: string,
-  options: QueryOptions<CVEDetail> = {},
-  customService = cveService
-) => {
-  const queryClient = useQueryClient();
-  const logger = createLogger('useCVEDetail');
-
-  const defaultOptions: QueryOptions<CVEDetail> = {
-    enabled: !!cveId,
-    retry: 1,
-    retryDelay: 500,
-    staleTime: 60000, // 1분으로 증가하여 불필요한 리페치 줄이기
-    gcTime: 300000, // 5분으로 유지
-    refetchOnWindowFocus: false, // 창 포커스 시 리페치 비활성화
-    refetchOnMount: false, // 컴포넌트 마운트 시 자동 리페치 비활성화 (명시적 호출만 허용)
-    refetchOnReconnect: false, // 재연결 시 자동 리페치 비활성화
-  };
-
-  const mergedOptions = { ...defaultOptions, ...options };
-
-  return useQuery<CVEDetail, Error>({
-    queryKey: QUERY_KEYS.CVE.detail(cveId),
-    queryFn: async () => {
-      try {
-        logger.info('CVE 상세 조회 요청', { cveId });
-        const startTime = Date.now();
-        const result = await customService.getCVEById(cveId);
-        const endTime = Date.now();
-
-        logger.info('CVE 상세 조회 완료', { 
-          cveId, 
-          elapsedTime: `${endTime - startTime}ms`,
-          dataSize: JSON.stringify(result).length
-        });
-
-        return result;
-      } catch (error: any) {
-        logger.error('상세 정보 조회 중 오류 발생', error);
-        throw error;
-      }
-    },
-    ...mergedOptions
-  });
-};
-
-export const useCVERefresh = (
-  cveId: string,
-  options: any = {},
-  customService = cveService
-) => {
-  const queryClient = useQueryClient();
-  const logger = createLogger('useCVERefresh');
-
-  const refreshFn = async () => {
-    try {
-      logger.info('강제 새로고침 요청', { cveId });
-      const data = await customService.getCVEByIdNoCache(cveId);
-      queryClient.setQueryData(QUERY_KEYS.CVE.detail(cveId), data);
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
-      return data;
-    } catch (error: any) {
-      logger.error('강제 새로고침 중 오류 발생', error);
-      throw error;
-    }
-  };
-
-  return {
-    mutate: refreshFn,
-    isLoading: false,
-    refresh: refreshFn
-  };
-};
-
+/**
+ * CVE 구독 업데이트 처리 함수
+ * @param queryClient - React Query 클라이언트
+ * @param data - 이벤트 데이터
+ */
 export const handleCVESubscriptionUpdate = (
   queryClient: any,
   data: { type?: string; payload?: any; }
@@ -281,188 +129,385 @@ export const handleCVESubscriptionUpdate = (
   }
 };
 
-export const setupCVESubscriptions = (queryClient: any, webSocketService: any) => {
-  const logger = createLogger('setupCVESubscriptions');
+/**
+ * CVE 목록 조회 훅
+ * @param filters - 필터 옵션
+ * @param options - 쿼리 옵션
+ * @param customService - 커스텀 서비스 객체
+ * @returns 쿼리 결과
+ */
+export const useCVEList = (
+  filters: Filters = {},
+  options: QueryOptions<CVEListResponse> = {},
+  customService = cveService
+) => {
+  const logger = createLogger('useCVEList');
+
+  return useQuery<CVEListResponse, Error>({
+    queryKey: QUERY_KEYS.CVE.list(filters),
+    queryFn: async () => {
+      try {
+        logger.info('목록 조회 요청', { filters });
+        const result = await customService.getCVEs(filters);
+
+        // 응답 필드 정규화
+        if (!result.total && result.totalItems) {
+          result.total = result.totalItems;
+        }
+        if (!result.items && result.results) {
+          result.items = result.results;
+        }
+
+        logger.info('목록 조회 결과', { 
+          totalItems: result.total || result.totalItems || 0,
+          itemsCount: result.items?.length || result.results?.length || 0,
+          page: filters.page || 1
+        });
+
+        return result;
+      } catch (error: any) {
+        logger.error('목록 조회 중 오류 발생', error);
+        throw error;
+      }
+    },
+    placeholderData: (oldData) => oldData,
+    staleTime: 10000,
+    gcTime: 60000,
+    refetchOnWindowFocus: true,
+    ...options,
+  });
+};
+
+/**
+ * (하위 호환성) CVE 목록 조회 훅
+ * @param params - 조회 파라미터
+ * @returns 쿼리 결과
+ */
+export const useCVEListQuery = (params: {
+  page?: number;
+  rowsPerPage?: number;
+  filters?: Filters;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+} = {}) => {
+  const { 
+    page = 0, 
+    rowsPerPage = 10, 
+    filters = {}, 
+    sortBy = 'createdAt', 
+    sortOrder = 'desc' 
+  } = params;
+
+  const convertedFilters = {
+    page,
+    rowsPerPage,
+    search: filters.search,
+    sortBy,
+    sortOrder,
+    filters
+  };
+
+  const logger = createLogger('useCVEListQuery');
+  logger.info('호환성 모드로 호출됨 (deprecated)', { params });
   
-  if (!webSocketService || !webSocketService.subscribe) {
-    logger.error('WebSocket 서비스가 유효하지 않음');
-    return () => {};
-  }
+  return useCVEList(convertedFilters);
+};
 
-  logger.info('CVE 실시간 업데이트 구독 설정');
+/**
+ * CVE 상세 정보 조회 훅
+ * @param cveId - CVE ID
+ * @param options - 쿼리 옵션
+ * @param customService - 커스텀 서비스 객체
+ * @returns 쿼리 결과
+ */
+export const useCVEDetail = (
+  cveId: string,
+  options: QueryOptions<CVEDetail> = {},
+  customService = cveService
+) => {
+  const logger = createLogger('useCVEDetail');
 
-  const createSubscription = webSocketService.subscribe(
-    'cve:created',
-    (data: any) => handleCVESubscriptionUpdate(queryClient, { type: 'cve:created', payload: data })
-  );
+  const defaultOptions: QueryOptions<CVEDetail> = {
+    enabled: !!cveId,
+    retry: 1,
+    retryDelay: 500,
+    staleTime: 60000, // 1분으로 증가하여 불필요한 리페치 줄이기
+    gcTime: 300000, // 5분으로 유지
+    refetchOnWindowFocus: false, // 창 포커스 시 리페치 비활성화
+    refetchOnMount: false, // 컴포넌트 마운트 시 자동 리페치 비활성화 (명시적 호출만 허용)
+    refetchOnReconnect: false, // 재연결 시 자동 리페치 비활성화
+  };
 
-  const updateSubscription = webSocketService.subscribe(
-    'cve:updated',
-    (data: any) => handleCVESubscriptionUpdate(queryClient, { type: 'cve:updated', payload: data })
-  );
+  const mergedOptions = { ...defaultOptions, ...options };
 
-  const deleteSubscription = webSocketService.subscribe(
-    'cve:deleted',
-    (data: any) => handleCVESubscriptionUpdate(queryClient, { type: 'cve:deleted', payload: data })
-  );
+  return useQuery<CVEDetail, Error>({
+    queryKey: QUERY_KEYS.CVE.detail(cveId),
+    queryFn: async () => {
+      try {
+        logger.info('CVE, 상세 조회 요청', { cveId });
+        const startTime = Date.now();
+        const result = await customService.getCVEById(cveId);
+        const endTime = Date.now();
 
-  return () => {
-    logger.info('CVE 실시간 업데이트 구독 해제');
-    createSubscription.unsubscribe();
-    updateSubscription.unsubscribe();
-    deleteSubscription.unsubscribe();
+        logger.info('CVE 상세 조회 완료', { 
+          cveId, 
+          elapsedTime: `${endTime - startTime}ms`,
+          dataSize: JSON.stringify(result).length
+        });
+
+        return result;
+      } catch (error: any) {
+        logger.error('상세 정보 조회 중 오류 발생', error);
+        throw error;
+      }
+    },
+    ...mergedOptions
+  });
+};
+
+/**
+ * CVE 새로고침 훅
+ * @param cveId - CVE ID
+ * @param options - 훅 옵션
+ * @param customService - 커스텀 서비스 객체
+ * @returns 새로고침 함수와 상태
+ */
+export const useCVERefresh = (
+  cveId: string,
+  options: any = {},
+  customService = cveService
+) => {
+  const queryClient = useQueryClient();
+  const logger = createLogger('useCVERefresh');
+
+  const refreshFn = async () => {
+    try {
+      logger.info('강제 새로고침 요청', { cveId });
+      const data = await customService.getCVEByIdNoCache(cveId);
+      queryClient.setQueryData(QUERY_KEYS.CVE.detail(cveId), data);
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
+      return data;
+    } catch (error: any) {
+      logger.error('강제 새로고침 중 오류 발생', error);
+      throw error;
+    }
+  };
+
+  return {
+    mutate: refreshFn,
+    isLoading: false,
+    refresh: refreshFn
   };
 };
-
-export const useCVEListUpdates = () => {
-  const socketIO = useSocketIO();
+/**
+ * CVE 목록 실시간 업데이트 훅 (useCVEListUpdates.ts와 통합)
+ * 웹소켓을 통해 CVE 목록 변경사항을 실시간으로 수신하고 쿼리 캐시를 업데이트
+ * @returns 연결 상태 객체
+ */
+export function useCVEListUpdates() {
   const queryClient = useQueryClient();
   const logger = createLogger('useCVEListUpdates');
-
-  // useRef를 사용하여 불필요한 렌더링 방지
-  const socketRef = useRef(socketIO.socket);
-  const connectedRef = useRef(socketIO.connected);
-  const queryClientRef = useRef(queryClient);
-  const isSubscribedRef = useRef(false);
-
-  // 최초 마운트 시 초기값 설정
-  useEffect(() => {
-    socketRef.current = socketIO.socket;
-    connectedRef.current = socketIO.connected;
-    queryClientRef.current = queryClient;
-  }, []);
-
-  // 핸들러 함수를 useRef로 정의하여 의존성 제거
-  const handlersRef = useRef({
-    handleCVECreated: (newCVE) => {
-      logger.info('CVE 생성됨', { cveId: newCVE?.id });
-      queryClientRef.current.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
-    },
-    
-    handleCVEUpdated: (updatedCVE) => {
-      logger.info('CVE 업데이트됨', { cveId: updatedCVE?.cve_id });
-      if (updatedCVE?.cve_id) {
-        queryClientRef.current.setQueryData(QUERY_KEYS.CVE.detail(updatedCVE.cve_id), updatedCVE);
-        queryClientRef.current.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
-      }
-    },
-    
-    handleCVEDeleted: (deletedCVEId) => {
-      logger.info('CVE 삭제됨', { cveId: deletedCVEId });
-      if (deletedCVEId) {
-        queryClientRef.current.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
-        queryClientRef.current.removeQueries({ queryKey: QUERY_KEYS.CVE.detail(deletedCVEId) });
-      }
+  
+  // 컴포넌트 ID - 고정값 사용
+  const componentId = 'cve-list-updates';
+  
+  // 디바운스된 쿼리 무효화 함수 - 성능 최적화
+  const invalidateCVEQueries = useCallback(
+    _.debounce(() => {
+      queryClient.invalidateQueries({
+        queryKey: QUERY_KEYS.CVE.lists(),
+        refetchType: 'active'
+      });
+    }, 300),
+    [queryClient]
+  );
+  
+  // useSocket 훅 사용
+  const { connected, emit, on, cleanup } = useSocket(
+    undefined, undefined, [], { 
+      componentId,
+      useRxJS: true
     }
-  });
-
-  // 소켓 연결 변경 감지를 위한 전용 useEffect
-  useEffect(() => {
-    if (socketIO.connected !== connectedRef.current) {
-      connectedRef.current = socketIO.connected;
-    }
+  );
+  
+  // 이벤트 핸들러 - CVE 생성
+  const handleCVECreated = useCallback((newCve) => {
+    logger.info('실시간 CVE 생성 감지:', newCve);
     
-    if (socketIO.socket !== socketRef.current) {
-      socketRef.current = socketIO.socket;
-    }
-  }, [socketIO.connected, socketIO.socket]);
-
-  // 이벤트 구독 관리를 위한 useEffect
-  useEffect(() => {
-    const socket = socketRef.current;
-    const connected = connectedRef.current;
-    const handlers = handlersRef.current;
-    
-    if (!socket || !connected) {
-      isSubscribedRef.current = false;
-      return;
-    }
-
-    if (isSubscribedRef.current) return;
-    
-    logger.info('Socket.IO 이벤트 리스너 등록');
-
-    socket.on('cve:created', handlers.handleCVECreated);
-    socket.on('cve:updated', handlers.handleCVEUpdated);
-    socket.on('cve:deleted', handlers.handleCVEDeleted);
-
-    socket.emit(SOCKET_EVENTS.SUBSCRIBE_CVES);
-    logger.info('CVE 업데이트 구독 요청 전송', {
-      eventName: SOCKET_EVENTS.SUBSCRIBE_CVES,
-      socketId: socket.id,
-      connected
+    // 낙관적 업데이트: 캐시에 직접 새 CVE 추가
+    queryClient.setQueryData(QUERY_KEYS.CVE.lists(), (oldData: any) => {
+      if (!oldData) return oldData;
+      
+      // 이미 존재하는지 확인 (중복 방지)
+      const exists = oldData.items?.some((cve: any) => cve.cveId === newCve.cveId);
+      if (exists) return oldData;
+      
+      return {
+        ...oldData,
+        items: [newCve, ...(oldData.items || [])],
+        total: ((oldData.total || 0) + 1)
+      };
     });
     
-    isSubscribedRef.current = true;
-
-    return () => {
-      if (!socket) return;
+    // 백그라운드에서 데이터 갱신 (디바운스 적용)
+    invalidateCVEQueries();
+  }, [queryClient, invalidateCVEQueries]);
+  
+  // 이벤트 핸들러 - CVE 업데이트
+  const handleCVEUpdated = useCallback((updatedCve) => {
+    logger.info('실시간 CVE 업데이트 감지:', updatedCve);
+    
+    // 캐시 내 해당 CVE만 업데이트
+    queryClient.setQueryData(QUERY_KEYS.CVE.lists(), (oldData: any) => {
+      if (!oldData) return oldData;
       
-      logger.info('Socket.IO 이벤트 리스너 해제');
-
-      socket.off('cve:created', handlers.handleCVECreated);
-      socket.off('cve:updated', handlers.handleCVEUpdated);
-      socket.off('cve:deleted', handlers.handleCVEDeleted);
-
-      socket.emit(SOCKET_EVENTS.UNSUBSCRIBE_CVES);
-      logger.info('CVE 업데이트 구독 해제 요청 전송', {
-        eventName: SOCKET_EVENTS.UNSUBSCRIBE_CVES,
-        socketId: socket.id
+      const updatedItems = oldData.items?.map((cve: any) => 
+        cve.cveId === updatedCve.cveId ? { ...cve, ...updatedCve } : cve
+      );
+      
+      // 변경이 없으면 기존 데이터 반환 (불필요한 리렌더링 방지)
+      if (_.isEqual(updatedItems, oldData.items)) {
+        return oldData;
+      }
+      
+      return {
+        ...oldData,
+        items: updatedItems || []
+      };
+    });
+    
+    // 해당 CVE의 상세 정보도 업데이트
+    if (updatedCve.cveId) {
+      queryClient.setQueryData(QUERY_KEYS.CVE.detail(updatedCve.cveId), (oldData: any) => {
+        if (!oldData) return updatedCve;
+        
+        // 변경이 없으면 기존 데이터 반환
+        if (_.isEqual(oldData, { ...oldData, ...updatedCve })) {
+          return oldData;
+        }
+        
+        return { ...oldData, ...updatedCve };
+      });
+    }
+    
+    // 백그라운드에서 데이터 갱신 (디바운스 적용)
+    invalidateCVEQueries();
+  }, [queryClient, invalidateCVEQueries]);
+  
+  // 이벤트 핸들러 - CVE 삭제
+  const handleCVEDeleted = useCallback((deletedCveId) => {
+    logger.info('실시간 CVE 삭제 감지:', deletedCveId);
+    
+    // 캐시에서 해당 CVE 제거
+    queryClient.setQueryData(QUERY_KEYS.CVE.lists(), (oldData: any) => {
+      if (!oldData) return oldData;
+      
+      const filteredItems = oldData.items?.filter((cve: any) => cve.cveId !== deletedCveId);
+      
+      // 변경이 없으면 기존 데이터 반환
+      if (_.isEqual(filteredItems, oldData.items)) {
+        return oldData;
+      }
+      
+      return {
+        ...oldData,
+        items: filteredItems || [],
+        total: Math.max(0, (oldData.total || 0) - 1)
+      };
+    });
+    
+    // 해당 CVE의 상세 정보 캐시 무효화
+    if (deletedCveId) {
+      queryClient.removeQueries({
+        queryKey: QUERY_KEYS.CVE.detail(deletedCveId)
+      });
+    }
+    
+    // 백그라운드에서 데이터 갱신 (디바운스 적용)
+    invalidateCVEQueries();
+  }, [queryClient, invalidateCVEQueries]);
+  
+  // 구독 상태 관리용 ref
+  const isSubscribedRef = useRef(false);
+  
+  // 웹소켓 이벤트 구독 설정
+  useEffect(() => {
+    if (connected && !isSubscribedRef.current) {
+      logger.info('CVE 업데이트 구독 요청 전송', {
+        eventName: SOCKET_EVENTS.SUBSCRIBE_CVES,
+        connected
       });
       
-      isSubscribedRef.current = false;
+      // 이벤트 구독 설정
+      const unsubCreated = on('CVE_CREATED', handleCVECreated);
+      const unsubUpdated = on('CVE_UPDATED', handleCVEUpdated);
+      const unsubDeleted = on('CVE_DELETED', handleCVEDeleted);
+      
+      // 서버에 구독 요청 전송
+      emit(SOCKET_EVENTS.SUBSCRIBE_CVES, {});
+      
+      isSubscribedRef.current = true;
+      
+      // 컴포넌트 언마운트 시 정리 작업 수행
+      return () => {
+        // 구독 해제
+        unsubCreated();
+        unsubUpdated();
+        unsubDeleted();
+        
+        // 서버에 구독 해제 요청 전송
+        if (connected) {
+          emit(SOCKET_EVENTS.UNSUBSCRIBE_CVES, {});
+        }
+        
+        // 디바운스된 함수 취소
+        invalidateCVEQueries.cancel();
+        
+        // 소켓 정리
+        cleanup();
+        
+        isSubscribedRef.current = false;
+      };
+    }
+    
+    // 연결되지 않은 경우 정리 함수 제공
+    return () => {
+      invalidateCVEQueries.cancel();
     };
-  }, []); // 의존성 배열을 비워 마운트/언마운트 시에만 실행
+  }, [connected, on, emit, cleanup, handleCVECreated, handleCVEUpdated, handleCVEDeleted, invalidateCVEQueries]);
 
-  return { isConnected: connectedRef.current };
-};
+  return { isConnected: connected };
+}
 
+/**
+ * CVE 구독 관리 훅 (간소화 버전)
+ * @param cveId - CVE ID
+ * @returns 구독 상태와 관리 함수
+ */
 export const useCVESubscription = (cveId: string) => {
-  const { socket, connected } = useSocketIO();
-  const queryClient = useQueryClient();
   const logger = createLogger('useCVESubscription');
-
-  const socketRef = useRef(socket);
-  const connectedRef = useRef(connected);
-
-  // 단일 구독자 상태 관리 (서버 데이터)
-  const [subscribers, setSubscribers] = useState<any[]>([]);
-  const [isSubscribed, setIsSubscribed] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Lodash debounce를 사용하므로 타임아웃 참조 변수 정리
-  const timeoutIdRef = useRef<number | null>(null);
   
-  // 마지막 구독/구독 해제 요청 시간 추적
-  const lastSubscribeRequestRef = useRef<number>(0);
-  const lastUnsubscribeRequestRef = useRef<number>(0);
+  // 단일 상태 객체로 통합 - 관리 용이성 향상
+  const [state, setState] = useState<SubscriptionState>({
+    isSubscribed: false,
+    subscribers: [],
+    isLoading: false,
+    error: null
+  });
   
-  // 구독 요청 중복 방지를 위한 플래그
-  const subscriptionPendingRef = useRef<boolean>(false);
+  // useSocket 훅 사용 - 이전보다 간결한 구조
+  const { connected, emit, on, emitDebounced, cleanup } = useSocket(
+    undefined, 
+    undefined, 
+    [], 
+    {
+      componentId: `cve-subscription-${cveId}`,
+      useRxJS: true,
+      debounceDelay: 300
+    }
+  );
   
-  // 구독 상태 로컬 캐싱
-  const isSubscribedRef = useRef(isSubscribed);
-  
-  // 소켓 및 연결 상태 업데이트
-  useEffect(() => {
-    socketRef.current = socket;
-    connectedRef.current = connected;
-
-    logger.debug('소켓 상태 업데이트', {
-      socketExists: !!socket,
-      socketId: socket?.id,
-      connected,
-      timestamp: new Date().toISOString()
-    });
-  }, [socket, connected]);
-  
-  // 구독 상태 업데이트
-  useEffect(() => {
-    isSubscribedRef.current = isSubscribed;
-  }, [isSubscribed]);
-  
-  // 현재 사용자 정보를 가져오는 함수
+  // 현재 사용자 정보 가져오기
   const getCurrentUserInfo = useCallback(() => {
     const currentUserId = localStorage.getItem('userId');
     if (!currentUserId) return null;
@@ -475,390 +520,251 @@ export const useCVESubscription = (cveId: string) => {
     };
   }, []);
   
-  // 낙관적 UI 업데이트를 위한 구독자 목록 계산 (useMemo로 최적화)
+  // 낙관적 UI 업데이트를 위한 구독자 목록 계산
   const optimisticSubscribers = useMemo(() => {
     // 서버에서 받은 구독자 목록을 기본으로 사용
-    if (!Array.isArray(subscribers)) return [];
+    if (!Array.isArray(state.subscribers)) return [];
     
     const currentUserInfo = getCurrentUserInfo();
-    if (!currentUserInfo) return subscribers;
+    if (!currentUserInfo) return state.subscribers;
     
     // 현재 사용자가 이미 목록에 있는지 확인
-    const isUserInList = subscribers.some(
+    const isUserInList = state.subscribers.some(
       sub => sub.id === currentUserInfo.id || sub.userId === currentUserInfo.id
     );
     
     // 낙관적 UI 업데이트: 구독 상태에 따라 사용자 추가 또는 제거
-    if (isSubscribed && !isUserInList) {
+    if (state.isSubscribed && !isUserInList) {
       // 구독 중이지만 목록에 없으면 추가 (낙관적 업데이트)
-      return [...subscribers, currentUserInfo];
-    } else if (!isSubscribed && isUserInList) {
+      return [...state.subscribers, currentUserInfo];
+    } else if (!state.isSubscribed && isUserInList) {
       // 구독 해제했지만 목록에 있으면 제거 (낙관적 업데이트)
-      return subscribers.filter(
+      return state.subscribers.filter(
         sub => sub.id !== currentUserInfo.id && sub.userId !== currentUserInfo.id
       );
     }
     
     // 변경 사항 없음
-    return subscribers;
-  }, [subscribers, isSubscribed, getCurrentUserInfo]);
-
+    return state.subscribers;
+  }, [state.subscribers, state.isSubscribed, getCurrentUserInfo]);
+  
+  // 구독 요청 중인지 추적하는 플래그
+  const subscriptionPendingRef = useRef<boolean>(false);
+  
+  // 마지막 요청 시간 추적
+  const lastRequestTimeRef = useRef<{subscribe: number, unsubscribe: number}>({
+    subscribe: 0,
+    unsubscribe: 0
+  });
+  
+  // 구독 함수 - 디바운스 적용하여 중복 요청 방지
   const subscribe = useCallback(() => {
-    if (!cveId) {
-      logger.warn('CVE ID가 제공되지 않았습니다.');
-      setError('CVE ID가 제공되지 않았습니다.');
-      return false;
-    }
-
-    const currentSocket = socketRef.current;
-    const isConnected = connectedRef.current;
-
-    if (!isConnected || !currentSocket) {
-      logger.warn('소켓이 연결되지 않았습니다.', {
-        connected: isConnected,
-        socketExists: !!currentSocket,
-        socketId: currentSocket?.id,
-        cveId
+    if (!cveId || !connected) {
+      logger.warn('구독 실패: CVE ID 누락 또는 연결 안됨', {
+        cveId,
+        connected
       });
-      setError('웹소켓 연결이 활성화되지 않았습니다. 잠시 후 다시 시도해주세요.');
+      setState(prev => ({
+        ...prev, 
+        error: '연결 상태를 확인해주세요.'
+      }));
       return false;
     }
     
-    // 이미 구독 중이거나 구독 요청 중인 경우 중복 요청 방지
-    if (isSubscribed || subscriptionPendingRef.current) {
-      logger.info(`이미 구독 중이거나 구독 요청 중입니다: ${cveId}`, {
-        isSubscribed,
-        isPending: subscriptionPendingRef.current
-      });
+    // 이미 구독 중이거나 처리 중인 경우
+    if (state.isSubscribed || subscriptionPendingRef.current) {
       return true;
     }
     
-    // 마지막 요청 시간 확인 (1초 내 중복 요청 방지)
+    // 빠른 중복 요청 방지
     const now = Date.now();
-    if (now - lastSubscribeRequestRef.current < 1000) {
-      logger.info(`구독 요청 너무 빠름, 무시: ${cveId}`, {
-        timeSinceLastRequest: now - lastSubscribeRequestRef.current
-      });
+    if (now - lastRequestTimeRef.current.subscribe < 1000) {
       return true;
     }
     
-    // 요청 시간 및 플래그 업데이트
-    lastSubscribeRequestRef.current = now;
+    lastRequestTimeRef.current.subscribe = now;
     subscriptionPendingRef.current = true;
-
-    // 낙관적 UI 업데이트: 구독 상태 즉시 변경
-    setIsSubscribed(true);
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      logger.info(`CVE 구독 요청: ${cveId}`, {
-        socketId: currentSocket.id,
-        connected: isConnected,
-        timestamp: new Date().toISOString()
-      });
-
-      logger.debug('소켓 이벤트 발생', {
-        eventName: SOCKET_EVENTS.SUBSCRIBE_CVE,
-        data: { cveId },
-        socketId: currentSocket.id
-      });
-
-      currentSocket.emit(SOCKET_EVENTS.SUBSCRIBE_CVE, { cveId });
-
-      // Lodash debounce를 사용하므로 타임아웃 관리 간소화
-      if (timeoutIdRef.current) {
-        clearTimeout(timeoutIdRef.current);
+    
+    // 낙관적 UI 업데이트
+    setState(prev => ({
+      ...prev,
+      isLoading: true,
+      error: null,
+      isSubscribed: true // 낙관적 업데이트
+    }));
+    
+    // 구독 요청 전송
+    logger.info(`CVE 구독 요청: ${cveId}`);
+    emitDebounced(SOCKET_EVENTS.SUBSCRIBE_CVE, { cveId });
+    
+    // 5초 타임아웃 설정
+    setTimeout(() => {
+      if (subscriptionPendingRef.current) {
+        subscriptionPendingRef.current = false;
+        setState(prev => ({
+          ...prev,
+          isLoading: false,
+          error: prev.error || '응답 시간 초과. 네트워크 상태를 확인해주세요.'
+        }));
       }
-
-      timeoutIdRef.current = window.setTimeout(() => {
-        if (isLoading) {
-          logger.warn(`구독 요청 타임아웃: ${cveId}`);
-          setIsLoading(false);
-          setError('구독 요청 시간이 초과되었습니다. 네트워크 연결을 확인하고 다시 시도해주세요.');
-          subscriptionPendingRef.current = false;
-        }
-      }, 5000);
-
-      return true;
-    } catch (err: any) {
-      logger.error('구독 요청 오류:', err);
-      setIsLoading(false);
-      setError(`구독 요청 오류: ${err.message || '알 수 없는 오류'}`);
-      subscriptionPendingRef.current = false;
-      return false;
-    }
-  }, [cveId, isLoading, isSubscribed]);
-
-  // 디바운스된 구독 함수 생성
-  const debouncedSubscribeHandler = useCallback(
-    debounce(() => {
-      // 이미 구독 중이 아니고, 소켓이 연결되어 있을 때만 구독
-      if (!isSubscribedRef.current && connectedRef.current && socketRef.current && cveId) {
-        logger.info(`디바운스된 구독 요청 실행: ${cveId}`, {
-          isSubscribed: isSubscribedRef.current,
-          connected: connectedRef.current,
-          hasSocket: !!socketRef.current
-        });
-        subscribe();
-      }
-    }, 100), // 100ms 디바운스 시간
-    [cveId, subscribe]
-  );
-
+    }, 5000);
+    
+    return true;
+  }, [cveId, connected, state.isSubscribed, emitDebounced]);
+  
+  // 구독 해제 함수 - 디바운스 적용
   const unsubscribe = useCallback(() => {
-    if (!cveId) {
-      logger.warn('CVE ID가 제공되지 않았습니다.');
-      return false;
-    }
-
-    const currentSocket = socketRef.current;
-    const isConnected = connectedRef.current;
-
-    if (!isConnected || !currentSocket) {
-      logger.warn('소켓이 연결되지 않았습니다.', {
-        connected: isConnected,
-        socketExists: !!currentSocket,
-        socketId: currentSocket?.id,
-        cveId
+    if (!cveId || !connected) {
+      logger.warn('구독 해제 실패: CVE ID 누락 또는 연결 안됨', {
+        cveId,
+        connected
       });
       return false;
     }
     
-    // 이미 구독 해제되었거나 구독 해제 요청 중인 경우 중복 요청 방지
-    if (!isSubscribed || subscriptionPendingRef.current) {
-      logger.info(`이미 구독 해제되었거나 구독 해제 요청 중입니다: ${cveId}`, {
-        isSubscribed,
-        isPending: subscriptionPendingRef.current
-      });
+    // 이미 구독 해제되었거나 처리 중인 경우
+    if (!state.isSubscribed || subscriptionPendingRef.current) {
       return true;
     }
     
-    // 마지막 요청 시간 확인 (1초 내 중복 요청 방지)
+    // 빠른 중복 요청 방지
     const now = Date.now();
-    if (now - lastUnsubscribeRequestRef.current < 1000) {
-      logger.info(`구독 해제 요청 너무 빠름, 무시: ${cveId}`, {
-        timeSinceLastRequest: now - lastUnsubscribeRequestRef.current
-      });
+    if (now - lastRequestTimeRef.current.unsubscribe < 1000) {
       return true;
     }
     
-    // 요청 시간 및 플래그 업데이트
-    lastUnsubscribeRequestRef.current = now;
+    lastRequestTimeRef.current.unsubscribe = now;
     subscriptionPendingRef.current = true;
-
-    // 낙관적 UI 업데이트: 구독 상태 즉시 변경
-    setIsSubscribed(false);
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      logger.info(`CVE 구독 해제 요청: ${cveId}`, {
-        socketId: currentSocket.id,
-        connected: isConnected,
-        timestamp: new Date().toISOString()
-      });
-
-      logger.debug('소켓 이벤트 발생', {
-        eventName: SOCKET_EVENTS.UNSUBSCRIBE_CVE,
-        data: { cveId },
-        socketId: currentSocket.id
-      });
-
-      currentSocket.emit(SOCKET_EVENTS.UNSUBSCRIBE_CVE, { cveId });
-
-      // Lodash debounce를 사용하므로 타임아웃 관리 간소화
-      if (timeoutIdRef.current) {
-        clearTimeout(timeoutIdRef.current);
-      }
-
-      timeoutIdRef.current = window.setTimeout(() => {
-        if (isLoading) {
-          logger.warn(`구독 해제 요청 타임아웃: ${cveId}`);
-          setIsLoading(false);
-          subscriptionPendingRef.current = false;
-        }
-      }, 5000);
-
-      return true;
-    } catch (err: any) {
-      logger.error('구독 해제 요청 오류:', err);
-      setIsLoading(false);
-      subscriptionPendingRef.current = false;
-      return false;
-    }
-  }, [cveId, isLoading, isSubscribed]);
-
-  // 디바운스된 구독 해제 함수 생성
-  const debouncedUnsubscribeHandler = useCallback(
-    debounce(() => {
-      // 이미 구독 중이고, 소켓이 연결되어 있을 때만 구독 해제
-      if (isSubscribedRef.current && connectedRef.current && socketRef.current && cveId) {
-        logger.info(`디바운스된 구독 해제 요청 실행: ${cveId}`, {
-          isSubscribed: isSubscribedRef.current,
-          connected: connectedRef.current,
-          hasSocket: !!socketRef.current
-        });
-        unsubscribe();
-      }
-    }, 100), // 100ms 디바운스 시간
-    [cveId, unsubscribe]
-  );
-
-  // 컴포넌트 언마운트 시 디바운스 함수 취소
-  useEffect(() => {
-    return () => {
-      // @ts-ignore - TypeScript에서 cancel 메서드를 인식하지 못할 수 있음
-      debouncedSubscribeHandler.cancel && debouncedSubscribeHandler.cancel();
-      debouncedUnsubscribeHandler.cancel && debouncedUnsubscribeHandler.cancel();
-      
-      // 타임아웃 정리
-      if (timeoutIdRef.current) {
-        clearTimeout(timeoutIdRef.current);
-      }
-    };
-  }, [debouncedSubscribeHandler, debouncedUnsubscribeHandler]);
-
-  // 웹소켓 이벤트 리스너 등록 및 해제
-  useEffect(() => {
-    const currentSocket = socketRef.current;
     
-    if (!currentSocket || !cveId) return;
+    // 낙관적 UI 업데이트
+    setState(prev => ({
+      ...prev,
+      isLoading: true,
+      error: null,
+      isSubscribed: false // 낙관적 업데이트
+    }));
     
-    // 구독자 목록 업데이트 이벤트 핸들러
+    // 구독 해제 요청 전송
+    logger.info(`CVE 구독 해제 요청: ${cveId}`);
+    emitDebounced(SOCKET_EVENTS.UNSUBSCRIBE_CVE, { cveId });
+    
+    // 5초 타임아웃 설정
+    setTimeout(() => {
+      if (subscriptionPendingRef.current) {
+        subscriptionPendingRef.current = false;
+        setState(prev => ({
+          ...prev,
+          isLoading: false
+        }));
+      }
+    }, 5000);
+    
+    return true;
+  }, [cveId, connected, state.isSubscribed, emitDebounced]);
+  
+  // 이벤트 리스너 등록
+  useEffect(() => {
+    if (!cveId) return;
+    
+    // 구독자 업데이트 이벤트 핸들러
     const handleSubscribersUpdated = (data: any) => {
-      logger.debug(`구독자 업데이트 이벤트 원본 데이터:`, data);
+      logger.debug(`구독자 업데이트 이벤트:`, data);
       
       // 서버 응답 구조에 맞게 데이터 추출
       const eventData = data?.data || data;
       const eventCveId = eventData?.cve_id || eventData?.cveId;
       
       if (!eventData || !eventCveId || eventCveId !== cveId) {
-        logger.debug(`구독자 업데이트 이벤트 무시: 잘못된 데이터 구조 또는 다른 CVE ID`, {
-          receivedCveId: eventCveId,
-          expectedCveId: cveId
-        });
         return;
       }
       
-      logger.info(`구독자 목록 업데이트 이벤트 수신: ${cveId}`, eventData);
+      logger.info(`구독자 목록 업데이트: ${cveId}`);
       
-      // 구독자 목록이 배열인지 확인하고 설정
+      // 구독자 목록 업데이트
       const subscribersList = eventData.subscribers || [];
-      if (Array.isArray(subscribersList)) {
-        logger.info(`구독자 목록 업데이트: ${subscribersList.length}명`, {
-          subscribersCount: subscribersList.length
-        });
-        
-        // 구독자 목록 업데이트 (서버 데이터)
-        setSubscribers(subscribersList);
-        
-        // 현재 사용자가 구독 중인지 확인
-        const currentUserId = localStorage.getItem('userId');
-        const isCurrentUserSubscribed = subscribersList.some((sub: any) =>
-          sub.id === currentUserId || sub.userId === currentUserId
-        );
-        
-        setIsSubscribed(isCurrentUserSubscribed);
-      } else {
-        logger.warn(`구독자 목록이 배열이 아님: ${cveId}`, { eventData });
-        // 빈 배열로 초기화하여 "보는 중" 표시
-        setSubscribers([]);
-      }
       
-      // 구독 요청 중 플래그 초기화
+      // 현재 사용자가 구독 중인지 확인
+      const currentUserId = localStorage.getItem('userId');
+      const isCurrentUserSubscribed = subscribersList.some((sub: any) =>
+        sub.id === currentUserId || sub.userId === currentUserId
+      );
+      
+      setState({
+        isSubscribed: isCurrentUserSubscribed,
+        subscribers: subscribersList,
+        isLoading: false,
+        error: null
+      });
+      
+      // 구독 요청 플래그 초기화
       subscriptionPendingRef.current = false;
-      setIsLoading(false);
     };
     
-    // 구독 상태 응답 이벤트 핸들러
+    // 구독 상태 이벤트 핸들러
     const handleSubscriptionStatus = (data: any) => {
-      logger.debug(`구독 상태 이벤트 원본 데이터:`, data);
+      logger.debug(`구독 상태 이벤트:`, data);
       
       // 서버 응답 구조에 맞게 데이터 추출
       const eventData = data?.data || data;
       const eventCveId = eventData?.cve_id || eventData?.cveId;
       
       if (!eventData || !eventCveId || eventCveId !== cveId) {
-        logger.debug(`구독 상태 이벤트 무시: 잘못된 데이터 구조 또는 다른 CVE ID`, {
-          receivedCveId: eventCveId,
-          expectedCveId: cveId
-        });
         return;
       }
       
-      logger.info(`구독 상태 응답 수신: ${cveId}`, eventData);
+      logger.info(`구독 상태 응답: ${cveId}`, eventData);
       
-      // 구독 상태 업데이트 (status가 'subscribed'이고 success가 true인 경우)
+      // 구독 상태 업데이트
       const isSuccess = eventData.success === true;
-      const isSubscribedStatus = eventData.status === 'subscribed';
+      const status = eventData.status;
+      const isSubscribed = status === 'subscribed';
+      const errorMessage = eventData.error || null;
       
-      if (isSuccess && isSubscribedStatus) {
-        setIsSubscribed(true);
-      } else if (isSuccess && eventData.status === 'unsubscribed') {
-        setIsSubscribed(false);
-      }
+      setState(prev => ({
+        isSubscribed: isSuccess ? isSubscribed : prev.isSubscribed,
+        subscribers: Array.isArray(eventData.subscribers) ? eventData.subscribers : prev.subscribers,
+        isLoading: false,
+        error: errorMessage
+      }));
       
-      // 구독자 목록이 있으면 업데이트
-      if (Array.isArray(eventData.subscribers)) {
-        setSubscribers(eventData.subscribers);
-      }
-      
-      // 메시지가 있으면 로깅
-      if (eventData.message) {
-        logger.info(`서버 응답 메시지: ${eventData.message}`);
-      }
-      
-      // 구독 요청 중 플래그 초기화
+      // 구독 요청 플래그 초기화
       subscriptionPendingRef.current = false;
-      setIsLoading(false);
     };
     
-    // 이벤트 리스너 등록
-    currentSocket.on(SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED, handleSubscribersUpdated);
-    currentSocket.on(SOCKET_EVENTS.SUBSCRIPTION_STATUS, handleSubscriptionStatus);
+    // 이벤트 구독
+    const unsubSubscribersUpdated = on(SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED, handleSubscribersUpdated);
+    const unsubStatus = on(SOCKET_EVENTS.SUBSCRIPTION_STATUS, handleSubscriptionStatus);
     
-    logger.debug(`이벤트 리스너 등록: ${cveId}`, {
-      socketId: currentSocket.id,
-      events: [SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED, SOCKET_EVENTS.SUBSCRIPTION_STATUS]
-    });
-    
-    // 컴포넌트 언마운트 시 이벤트 리스너 해제
     return () => {
-      if (currentSocket) {
-        currentSocket.off(SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED, handleSubscribersUpdated);
-        currentSocket.off(SOCKET_EVENTS.SUBSCRIPTION_STATUS, handleSubscriptionStatus);
-        
-        logger.debug(`이벤트 리스너 해제: ${cveId}`, {
-          socketId: currentSocket.id,
-          events: [SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED, SOCKET_EVENTS.SUBSCRIPTION_STATUS]
-        });
+      // 이벤트 구독 해제
+      unsubSubscribersUpdated();
+      unsubStatus();
+      
+      // 연결 상태에서만 구독 해제 요청 전송
+      if (connected && state.isSubscribed) {
+        emit(SOCKET_EVENTS.UNSUBSCRIBE_CVE, { cveId });
       }
+      
+      // 소켓 리소스 정리
+      cleanup();
     };
-  }, [cveId]);
-
+  }, [cveId, on, emit, cleanup, connected, state.isSubscribed]);
+  
   return {
-    subscribe: debouncedSubscribeHandler,
-    unsubscribe: debouncedUnsubscribeHandler,
-    isSubscribed,
-    subscribers: optimisticSubscribers, // 낙관적 UI 업데이트된 구독자 목록 반환
-    isLoading,
-    error
+    subscribe,
+    unsubscribe,
+    isSubscribed: state.isSubscribed,
+    subscribers: optimisticSubscribers, // 낙관적 UI 업데이트된 구독자 목록
+    isLoading: state.isLoading,
+    error: state.error
   };
 };
 
-// CVE 통계 타입 정의
-interface CVEStats {
-  byStatus?: Record<string, number>;
-  bySeverity?: Record<string, number>;
-  byMonth?: Record<string, number>;
-  total?: number;
-  [key: string]: any;
-}
-
-// cveService에 getCVEStats 메서드가 없으므로 API 직접 호출로 대체
+/**
+ * CVE 통계 정보 조회 훅
+ * @param options - 쿼리 옵션
+ * @returns 쿼리 결과
+ */
 export const useCVEStats = (options: QueryOptions<CVEStats> = {}) => {
   const logger = createLogger('useCVEStats');
   
@@ -867,7 +773,6 @@ export const useCVEStats = (options: QueryOptions<CVEStats> = {}) => {
     queryFn: async () => {
       try {
         logger.info('CVE 통계 조회 요청');
-        // cveService에 getCVEStats 메서드가 없으므로 API 직접 호출
         const response = await api.get('/cves/stats');
         const result = response.data;
         logger.info('CVE 통계 조회 결과', { stats: result });
@@ -881,6 +786,11 @@ export const useCVEStats = (options: QueryOptions<CVEStats> = {}) => {
   });
 };
 
+/**
+ * 전체 CVE 수 조회 훅
+ * @param options - 쿼리 옵션
+ * @returns 쿼리 결과
+ */
 export const useTotalCVECount = (options: QueryOptions<number> = {}) => {
   const logger = createLogger('useTotalCVECount');
   
@@ -901,6 +811,12 @@ export const useTotalCVECount = (options: QueryOptions<number> = {}) => {
   });
 };
 
+/**
+ * CVE 업데이트 훅
+ * @param cveId - CVE ID
+ * @param options - 뮤테이션 옵션
+ * @returns 뮤테이션 결과
+ */
 export const useUpdateCVE = (
   cveId: string,
   options: UseMutationOptions<any, Error, Partial<CVEDetail>> = {}
@@ -913,7 +829,7 @@ export const useUpdateCVE = (
       try {
         logger.info(`CVE 업데이트 요청: ${cveId}`, { updateData });
         const result = await cveService.updateCVE(cveId, updateData);
-        logger.info(`CVE 업데이트 성공: ${cveId}`, { result });
+        logger.info(`CVE 업데이트 성공: ${cveId}`);
         return result;
       } catch (error: any) {
         logger.error(`CVE 업데이트 실패: ${cveId}`, error);
@@ -936,7 +852,10 @@ export const useUpdateCVE = (
       }
       
       // 목록 쿼리 무효화
-      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.CVE.lists() });
+      queryClient.invalidateQueries({ 
+        queryKey: QUERY_KEYS.CVE.lists(),
+        refetchType: 'active'
+      });
       
       if (options.onSuccess) {
         options.onSuccess(data, variables, context);
@@ -953,6 +872,7 @@ export const useUpdateCVE = (
   });
 };
 
+// 모든 훅을 객체로 묶어서 내보내기
 export default {
   useCVEList,
   useCVEListQuery,
@@ -963,6 +883,5 @@ export default {
   useTotalCVECount,
   useCVEStats,
   useUpdateCVE,
-  handleCVESubscriptionUpdate,
-  setupCVESubscriptions
+  handleCVESubscriptionUpdate
 };

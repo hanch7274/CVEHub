@@ -1,3 +1,4 @@
+# socketio_manager.py
 # -*- coding: utf-8 -*-
 from enum import Enum
 from typing import Dict, List, Optional, Set, Any, Callable, Awaitable, Union

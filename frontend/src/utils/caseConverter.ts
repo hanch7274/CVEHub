@@ -2,7 +2,7 @@
  * 케이스 변환 유틸리티
  * humps 라이브러리를 사용하여 camelCase와 snake_case 간 변환을 처리합니다.
  */
-import { camelizeKeys, decamelizeKeys } from 'humps';
+import { camelizeKeys as humpsCamelizeKeys, decamelizeKeys } from 'humps';
 import { normalizeDateFieldsFromApi } from './dateUtils';
 
 /**
@@ -13,9 +13,15 @@ export interface CaseConverterOptions {
   excludeFields?: string[];
   /** 날짜 필드 자동 변환 여부 */
   processDate?: boolean;
-  /** 요청 URL (로깅 및 특수 처리용) */
+/** 요청 URL (로깅 및 특수 처리용) */
   requestUrl?: string;
 }
+
+// camelizeKeys를 humps 라이브러리에서 직접 내보내기
+export { humpsCamelizeKeys as camelizeKeys };
+
+// decamelizeKeys를 snakeizeKeys로 별칭하여 내보내기
+export { decamelizeKeys as snakeizeKeys };
 
 /**
  * 스네이크 케이스에서 카멜 케이스로 변환
@@ -42,7 +48,7 @@ export const snakeToCamel = (data: any, options: CaseConverterOptions = {}): any
   
   try {
     // 1. humps 라이브러리로 카멜케이스 변환
-    let camelizedData = camelizeKeys(data, (key: string, convert: (key: string) => string) => {
+    let camelizedData = humpsCamelizeKeys(data, (key: string, convert: (key: string) => string) => {
       // 제외 필드 목록에 있는 경우 변환하지 않음
       return excludeFields.includes(key) ? key : convert(key);
     });

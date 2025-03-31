@@ -17,7 +17,7 @@ import { Comment as CommentIcon } from '@mui/icons-material';
 import { SOCKET_EVENTS } from '../../../services/socketio/constants';
 import logger from '../../../utils/logging';
 import { QUERY_KEYS } from '../../../api/queryKeys';
-import useWebSocketHook from '../../../api/hooks/useWebSocketHook';
+import { useSocket } from '../../../api/hooks/useSocket';
 
 // 멘션된 사용자를 추출하는 유틸리티 함수
 const extractMentions = (content) =>
@@ -72,10 +72,13 @@ const CommentsTab = React.memo(({
   }, []);
   
   // 웹소켓 이벤트 리스너 등록
-  const sendMessage = useWebSocketHook(
+  const { emit: sendMessage, on, connected } = useSocket(
     SOCKET_EVENTS.CVE_UPDATED,
     handleCommentNotification,
+    [],
     {
+      componentId: 'comments-tab',
+      useRxJS: true,
       optimisticUpdate: true,
       queryKey: QUERY_KEYS.CVE.detail(cve.cveId),
       updateDataFn: updateCommentsCache
