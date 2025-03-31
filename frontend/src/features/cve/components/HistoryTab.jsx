@@ -32,7 +32,7 @@ import {
   Assignment as AssignmentIcon,
   Note as NoteIcon
 } from '@mui/icons-material';
-import { formatDateTime, TIME_ZONES } from '../../../utils/dateUtils';
+import { formatDateTime, TIME_ZONES } from 'shared/utils/dateUtils';
 
 // 필드별 아이콘 매핑
 const FIELD_ICONS = {

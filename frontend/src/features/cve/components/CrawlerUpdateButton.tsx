@@ -19,21 +19,14 @@ import {
   InfoOutlined as InfoIcon
 } from '@mui/icons-material';
 import { useQueryClient } from '@tanstack/react-query';
-import api from '../../../api/config/axios';
-import { useSocket } from '../../../api/hooks/useSocket';
+import api from 'shared/api/config/axios';
+import { useSocket } from 'core/socket/hooks/useSocket';
 import { formatDistance } from 'date-fns';
 import { ko } from 'date-fns/locale';
-import logger, { LOG_LEVEL } from '../../../utils/logging';
-import { SOCKET_EVENTS, SOCKET_STATE } from '../../../services/socketio/constants';
+import logger, { LOG_LEVEL } from 'shared/utils/logging';
+import { SOCKET_EVENTS, SOCKET_STATE } from 'core/socket/services/constants';
 import { get } from 'lodash';
-import { CrawlerUpdateData } from '../../../types/socket';
-import { 
-  Crawler, 
-  ProgressState, 
-  UpdatedCVEs, 
-  CrawlerStatusResponse, 
-  StageInfo
-} from '../../../types/crawler';
+import { StageInfo, UpdatedCVEs, Crawler, CrawlerStatusResponse, ProgressState, CrawlerUpdateData } from 'features/crawler/types';
 
 // 개발 환경에서 디버그 로깅
 if (process.env.NODE_ENV === 'development') {

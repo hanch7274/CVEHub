@@ -35,30 +35,29 @@ import {
   useTheme,
   alpha
 } from '@mui/material';
-import { TIME_ZONES, formatDateTime } from '../../utils/dateUtils';
+import { TIME_ZONES, formatDateTime } from 'shared/utils/dateUtils';
 import SearchIcon from '@mui/icons-material/Search';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import AddIcon from '@mui/icons-material/Add';
 import SearchOffIcon from '@mui/icons-material/SearchOff';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from 'features/auth/contexts/AuthContext';
 import { useQueryClient } from '@tanstack/react-query'; 
-import { useSocket } from '../../api/hooks/useSocket';
-import { QUERY_KEYS } from '../../api/queryKeys';
+import { useSocket } from 'core/socket/hooks/useSocket';
+import { QUERY_KEYS } from 'shared/api/queryKeys';
 
 // 기존 import 대신 새로운 통합 서비스 사용
 import { 
   useCVEList, 
   useCVEDetail,
   useTotalCVECount,
-  useCVEStats
-} from '../../api/hooks/useCVEQuery';
+  useCVEStats,
+  useCVEListUpdates
+} from 'features/cve/hooks/useCVEQuery';
 import {
   useDeleteCVE,
   useCreateCVE
-} from '../../api/hooks/useCVEMutation';
-// 새로 만든 웹소켓 이벤트 훅 import
-import { useCVEListUpdates } from '../../api/hooks/useCVEQuery';
+} from 'features/cve/hooks/useCVEMutation';
 
 import CVEDetail from './CVEDetail';
 import CrawlerUpdateButton from './components/CrawlerUpdateButton';

@@ -10,9 +10,9 @@ import {
   Tooltip
 } from '@mui/material';
 import { Menu as MenuIcon, ExitToApp as LogoutIcon } from '@mui/icons-material';
-import api from '../api/config/axios';
+import api from 'shared/api/config/axios';
 import NotificationBell from './NotificationBell';
-import { clearAuthStorage } from '../utils/storage/tokenStorage';
+import { clearAuthStorage } from 'shared/utils/utils/storage/tokenStorage';
 
 const Navbar = memo(() => {
   const navigate = useNavigate();

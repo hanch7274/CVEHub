@@ -18,8 +18,8 @@ import {
   Link
 } from '@mui/material';
 import { Email, Lock, Visibility, VisibilityOff } from '@mui/icons-material';
-import { useAuth } from '../../contexts/AuthContext';
-import { LoginRequest, AuthContextType, LoginResponse } from '../../types/auth';
+import { useAuth } from 'features/auth/contexts/AuthContext';
+import { LoginRequest, AuthContextType, LoginResponse } from 'features/auth/types';
 
 interface FormData {
   email: string;

@@ -20,9 +20,9 @@ import {
 } from '@mui/icons-material';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { ko } from 'date-fns/locale';
-import { highlightMentions } from '../../../utils/mentionUtils';
 import { StyledListItem } from './CommonStyles';
 import MentionInput from './MentionInput';
+import { highlightMentions } from 'shared/utils/mentionUtils';
 
 /**
  * @param {object} props

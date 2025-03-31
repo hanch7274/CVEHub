@@ -18,7 +18,7 @@ import {
   VisibilityOff as VisibilityOffIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import { register } from '../../services/authService';
+import { register } from 'features/auth/services/authService';
 
 const SignUp = () => {
   const navigate = useNavigate();

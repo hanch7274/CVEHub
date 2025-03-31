@@ -1,9 +1,9 @@
 import React, { useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from 'features/auth/contexts/AuthContext';
 import { CircularProgress, Box, Typography } from '@mui/material';
-import logger from '../../utils/logging';
-import { getAccessToken } from '../../utils/storage/tokenStorage';
+import logger from 'shared/utils/logging';
+import { getAccessToken } from 'shared/utils/storage/tokenStorage';
 
 const PrivateRoute = ({ children }) => {
   const location = useLocation();

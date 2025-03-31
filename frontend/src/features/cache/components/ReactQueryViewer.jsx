@@ -35,7 +35,7 @@ import {
 } from '@mui/icons-material';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { useReactQueryCache } from '../../../api/hooks/useCacheQuery';
+import { useReactQueryCache } from 'features/cache/hooks/useCacheQuery';
 
 /**
  * React Query 캐시 뷰어 컴포넌트

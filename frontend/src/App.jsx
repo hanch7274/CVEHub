@@ -9,19 +9,19 @@ import CreateCVE from './features/cve/CreateCVE';
 import SignUp from './features/auth/SignUp';
 import Login from './features/auth/Login.tsx';
 import PrivateRoute from './features/auth/PrivateRoute';
-import AuthRoute from './features/auth/AuthRoute';
-import { AuthProvider } from './contexts/AuthContext';
+import AuthRoute from 'features/auth/AuthRoute';
+import { AuthProvider } from 'features/auth/contexts/AuthContext';
 import { SnackbarProvider } from 'notistack';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import theme from './theme';
-import { injectErrorHandler, injectQueryClient } from './services/authService';
-import { ErrorProvider, useError } from './contexts/ErrorContext';
+import { injectErrorHandler, injectQueryClient } from 'features/auth/services/authService';
+import { ErrorProvider, useError } from 'shared/contexts/ErrorContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import WebSocketQueryBridge from './contexts/WebSocketQueryBridge';
-import { getAccessToken } from './utils/storage/tokenStorage';
-import socketIOWithStore from './services/socketio/socketioWithStore';  // Socket.IO 서비스 임포트
+import WebSocketQueryBridge from 'core/socket/bridge/WebSocketQueryBridge';
+import { getAccessToken } from 'shared/utils/storage/tokenStorage';
+import socketService from 'core/socket/services/socketService';  // Socket.IO 서비스 임포트
 
 // CVEDetail 컴포넌트를 lazy 로딩으로 가져옵니다
 const CVEDetail = lazy(() => import('./features/cve/CVEDetail'));
@@ -253,7 +253,7 @@ const queryClient = new QueryClient({
 injectQueryClient(queryClient);
 
 // Socket.IO 디버깅을 위한 전역 객체 노출
-window._socketDebug = socketIOWithStore;
+window._socketDebug = socketService;
 
 const App = () => {
   const [selectedCVE, setSelectedCVE] = useState(null);
@@ -279,7 +279,7 @@ const App = () => {
           </AuthProvider>
         </SnackbarProvider>
       </ThemeProvider>
-      {process.env.NODE_ENV === 'development' && <ReactQueryDevtools />}
+    {process.env.NODE_ENV === 'development' && <ReactQueryDevtools />}
     </QueryClientProvider>
   );
 };

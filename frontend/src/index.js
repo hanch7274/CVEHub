@@ -2,7 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles/index.css';
 import App from './App.jsx';  // .jsx 확장자 명시
-import logger, { LOG_LEVEL } from './utils/logging';
+import logger, { LOG_LEVEL } from 'shared/utils/logging';
 
 // 로그 레벨 설정 (개발 환경에서 INFO 레벨로 설정하여 로그 양 감소)
 if (process.env.NODE_ENV === 'development') {

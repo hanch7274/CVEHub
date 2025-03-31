@@ -33,7 +33,7 @@ import {
   FormatListBulleted as ListIcon,
   TextFields as TextIcon
 } from '@mui/icons-material';
-import { useCacheValuesQuery } from '../../../api/hooks/useCacheQuery';
+import { useCacheValuesQuery } from '../hooks/useCacheQuery';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 

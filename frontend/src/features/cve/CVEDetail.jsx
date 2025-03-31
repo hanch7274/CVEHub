@@ -8,8 +8,8 @@ import React, {
   memo,
   useLayoutEffect 
 } from 'react';
-import { useSocket } from '../../api/hooks/useSocket';
-import { useAuth } from '../../contexts/AuthContext';
+import { useSocket } from 'core/socket/hooks/useSocket';
+import { useAuth } from 'features/auth/contexts/AuthContext';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSnackbar } from 'notistack';
 import {
@@ -55,15 +55,15 @@ import {
 import CommentsTab from './components/CommentsTab';
 import HistoryTab from './components/HistoryTab';
 import InlineEditText from './components/InlineEditText';
-import logger from '../../utils/logging';
+import logger from 'shared/utils/logging';
 import {
   useCVEDetail,
   useCVERefresh,
   useCVESubscription
-} from '../../api/hooks/useCVEQuery';
-import { useUpdateCVEField } from '../../api/hooks/useCVEMutation';
-import { QUERY_KEYS } from '../../api/queryKeys';
-import { formatDateTime, timeAgo, TIME_ZONES } from '../../utils/dateUtils';
+} from 'features/cve/hooks/useCVEQuery';
+import { useUpdateCVEField } from 'features/cve/hooks/useCVEMutation';
+import { QUERY_KEYS } from 'shared/api/queryKeys';
+import { formatDateTime, timeAgo, TIME_ZONES } from 'shared/utils/dateUtils';
 
 // 활성 댓글 개수 계산
 const countActiveComments = (comments) => {

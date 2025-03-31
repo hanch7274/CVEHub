@@ -15,7 +15,7 @@ import {
   useCacheInfoQuery, 
   useCacheStatsQuery, 
   useReactQueryCache 
-} from '../../api/hooks/useCacheQuery';
+} from './hooks/useCacheQuery';
 import RedisOverview from './components/RedisOverview';
 import RedisKeysList from './components/RedisKeysList';
 import RedisValuesViewer from './components/RedisValuesViewer';

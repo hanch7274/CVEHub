@@ -16,8 +16,6 @@ import {
   Container,
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
-import { useSocket } from '../api/hooks/useSocket';
 import { useSnackbar } from 'notistack';
 import PersonIcon from '@mui/icons-material/Person';
 import SettingsIcon from '@mui/icons-material/Settings';
@@ -25,9 +23,11 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import WifiIcon from '@mui/icons-material/Wifi';
 import WifiOffIcon from '@mui/icons-material/WifiOff';
 import NotificationBell from '../features/notification/NotificationBell';
-import { getAnimalEmoji } from '../utils/avatarUtils';
-import { SOCKET_EVENTS, SOCKET_STATE } from '../services/socketio/constants';
-import logger from '../utils/logging';
+import logger from 'shared/utils/logging';
+import { useAuth } from 'features/auth/contexts/AuthContext';
+import useSocket from 'core/socket/hooks/useSocket';
+import SOCKET_EVENTS from 'core/socket/services/constants';
+import { getAnimalEmoji } from 'shared/utils/avatarUtils';
 
 interface HeaderProps {
   onOpenCVEDetail?: (cveId: string, commentId?: string) => void;

@@ -29,13 +29,13 @@ import {
   Delete as DeleteIcon,
 } from '@mui/icons-material';
 // 기존 hook 및 유틸리티 import는 그대로 유지
-import { useCreateCVE } from '../../api/hooks/useCVEMutation';
+import { useCreateCVE } from 'features/cve/hooks/useCVEMutation';
 import { useSnackbar } from 'notistack';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { QUERY_KEYS } from '../../api/queryKeys';
-import { getUser } from '../../utils/storage/tokenStorage';
-import { getUtcTimestamp, formatDateTime, DATE_FORMATS } from '../../utils/dateUtils';
+import { QUERY_KEYS } from 'shared/api/queryKeys';
+import { getUser } from 'shared/utils/storage/tokenStorage';
+import { getUtcTimestamp } from 'shared/utils/dateUtils';
 
 // 상수 정의는 그대로 유지
 const POC_SOURCES = { Etc: "Etc", Metasploit: "Metasploit", "Nuclei-Templates": "Nuclei-Templates" };

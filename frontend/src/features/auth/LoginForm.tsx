@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Container, Grid, Paper, TextField, Button, Typography, Box, CircularProgress } from '@mui/material';
-import { useAuth } from '../../contexts/AuthContext';
-import { AuthContextType, LoginRequest } from '../../types/auth';
-import { useSocket } from '../../api/hooks/useSocket';
-import logger from '../../utils/logging';
+import { useAuth } from 'features/auth/contexts/AuthContext';
+import { AuthContextType, LoginRequest } from 'features/auth/types';
+import { useSocket } from 'core/socket/hooks/useSocket';
+import logger from 'shared/utils/logging';
 
 
 interface LoginFormProps {

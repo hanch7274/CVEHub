@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import Comment from './Comment';
 import MentionInput from './MentionInput';
-import api from '../../../api/config/axios';
+import api from 'shared/api/config/axios';
 import { useSnackbar } from 'notistack';
 import { useQueryClient, useMutation, useQuery } from '@tanstack/react-query';
 import {
@@ -14,10 +14,10 @@ import {
   EmptyState
 } from './CommonStyles';
 import { Comment as CommentIcon } from '@mui/icons-material';
-import { SOCKET_EVENTS } from '../../../services/socketio/constants';
-import logger from '../../../utils/logging';
-import { QUERY_KEYS } from '../../../api/queryKeys';
-import { useSocket } from '../../../api/hooks/useSocket';
+import { SOCKET_EVENTS } from 'core/socket/services/constants';
+import logger from 'shared/utils/logging';
+import { QUERY_KEYS } from 'shared/api/queryKeys';
+import { useSocket } from 'core/socket/hooks/useSocket';
 
 // 멘션된 사용자를 추출하는 유틸리티 함수
 const extractMentions = (content) =>

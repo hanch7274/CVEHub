@@ -9,8 +9,8 @@ import {
   CircularProgress,
   Box
 } from '@mui/material';
-import api from '../../../api/config/axios';
-import logger from '../../../utils/logging';
+import api from 'shared/api/config/axios';
+import logger from 'shared/utils/logging';
 import { useQueryClient } from '@tanstack/react-query';
 import { debounce } from 'lodash';
 

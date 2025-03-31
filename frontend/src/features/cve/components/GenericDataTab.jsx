@@ -24,11 +24,12 @@ import {
   EmptyState
 } from './CommonStyles';
 import { useQueryClient } from '@tanstack/react-query';
-import api from '../../../api/config/axios';
+import api from 'shared/api/config/axios';
 import { useSnackbar } from 'notistack';
-import { SOCKET_EVENTS } from '../../../services/socketio/constants';
-import { useSocket } from '../../../api/hooks/useSocket';
-import { TIME_ZONES, formatDateTime } from '../../../utils/dateUtils';
+import { SOCKET_EVENTS } from 'core/socket/services/constants';
+import { useSocket } from 'core/socket/hooks/useSocket';
+import { formatDateTime } from 'shared/utils/dateUtils';
+
 
 /**
  * 재사용 가능한 데이터 탭 컴포넌트

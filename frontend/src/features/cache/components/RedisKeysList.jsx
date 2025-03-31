@@ -39,7 +39,7 @@ import {
   Visibility as ViewIcon,
   FilterList as FilterIcon
 } from '@mui/icons-material';
-import { useCacheKeysQuery, useClearCacheMutation } from '../../../api/hooks/useCacheQuery';
+import { useCacheKeysQuery, useClearCacheMutation } from '../hooks/useCacheQuery';
 
 /**
  * Redis 키 목록 컴포넌트

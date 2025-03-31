@@ -13,10 +13,9 @@ import {
   CircularProgress
 } from '@mui/material';
 import NotificationsIcon from '@mui/icons-material/Notifications';
-import { useNotifications, useUnreadCount, useMarkAsRead, useMarkAllAsRead } from '../../api/hooks/useNotifications';
+import { useNotifications, useUnreadCount, useMarkAsRead, useMarkAllAsRead } from '../../features/notification/hooks/useNotifications';
 import CVEDetail from '../cve/CVEDetail';
-import { NotificationBellProps } from '../../types/components';
-
+import { NotificationBellProps } from '../../shared/types/components';
 /**
  * 알림 종 컴포넌트 - RxJS 마이그레이션 버전
  * 
