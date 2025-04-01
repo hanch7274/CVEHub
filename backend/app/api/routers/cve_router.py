@@ -18,11 +18,9 @@ from app.core.cache import (
     get_cache, cache_cve_detail, cache_cve_list, 
     invalidate_cve_caches, CACHE_KEY_PREFIXES
 )
-from app.schemas.cve_request_schemas import (
-    CreateCVERequest, PatchCVERequest, BulkUpsertCVERequest
-)
-from app.schemas.cve_response_schemas import (
-    CVEListResponse, CVEDetailResponse, CVEOperationResponse,
+from app.schemas.cve_base_schemas import (
+    CreateCVERequest, PatchCVERequest, BulkUpsertCVERequest, CVEListResponse, 
+    CVEDetailResponse, CVEOperationResponse,
     BulkOperationResponse, CVESearchResponse
 )
 

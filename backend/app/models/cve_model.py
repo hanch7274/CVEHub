@@ -33,58 +33,77 @@ class Reference(BaseModel):
     last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
     last_modified_by: str = Field(..., description="마지막 수정자")
 
-class Comment(BaseModel):
-    id: str = Field(default_factory=lambda: str(ObjectId()))  # ObjectId 사용
-    content: str
-    created_by: str = Field(..., description="작성자 이름")  # username에서 created_by로 변경
-    parent_id: Optional[str] = None  # 부모 댓글 ID
-    depth: int = 0  # 댓글 깊이 (0: 최상위, 1: 대댓글, 2: 대대댓글, ...)
-    is_deleted: bool = False  # 삭제 여부
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
-    last_modified_by: str = Field(..., description="마지막 수정자")
+# 멘션 정규식 패턴 컴파일 (한 번만 수행)
+MENTION_PATTERN = re.compile(r'@(\w+)')
 
-    @property
-    def mentions(self) -> List[str]:
-        """댓글 내용에서 멘션된 사용자명을 추출합니다."""
-        if not self.content:
+class Comment(Document):
+    id: str = Field(default_factory=lambda: str(ObjectId()))
+    content: str
+    created_by: str = Field(..., description="작성자 이름")
+    parent_id: Optional[str] = None
+    depth: int = 0
+    is_deleted: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    last_modified_by: str = Field(..., description="마지막 수정자")
+    mentions: List[str] = []  # 멘션 목록 필드 추가
+    cve_id: Optional[str] = None  # 연결된 CVE ID
+
+    class Settings:
+        name = "comments"
+        use_state_management = True
+        indexes = [
+            "cve_id",
+            "created_by",
+            [("created_at", -1)],  # 내림차순 인덱스
+            [("cve_id", 1), ("created_at", -1)]  # 복합 인덱스
+        ]
+
+    @classmethod
+    def extract_mentions(cls, content: str) -> List[str]:
+        """댓글 내용에서 멘션된 사용자명을 추출"""
+        if not content:
             return []
-        # @username 패턴 찾기
-        pattern = r'@(\w+)'
-        matches = re.findall(pattern, self.content)
-        # 중복 제거 및 @ 기호 추가
+        matches = MENTION_PATTERN.findall(content)
         return [f"@{username}" for username in set(matches)]
+
+    async def notify_mentioned_users(self):
+        """멘션된 사용자들에게 알림을 보냄"""
+        from .user_model import User
+        from .notification_model import Notification, NotificationType
+
+        for mention in self.mentions:
+            # @ 기호 제거
+            username = mention.lstrip('@')
+            user = await User.find_one({"username": username})
+            if user:
+                notification = Notification(
+                    type=NotificationType.MENTION,
+                    recipient_id=str(user.id),
+                    sender_id=None,  # 필요에 따라 설정
+                    cve_id=self.cve_id if hasattr(self, 'cve_id') else None,
+                    content=f"{self.created_by}님이 댓글에서 회원님을 멘션했습니다.",
+                    metadata={
+                        "comment_id": self.id,
+                        "comment_content": self.content[:100]
+                    }
+                )
+                await notification.create()
 
 class CommentCreate(BaseModel):
     content: str
     parent_id: Optional[str] = None
-    depth: int = 0
-    last_modified_by: str = Field(..., description="마지막 수정자")
-
-    @property
+    
     def extract_mentions(self) -> List[str]:
-        """댓글 내용에서 멘션된 사용자명을 추출합니다."""
-        if not self.content:
-            return []
-        # @username 패턴 찾기
-        pattern = r'@(\w+)'
-        matches = re.findall(pattern, self.content)
-        # 중복 제거 및 @ 기호 추가
-        return [f"@{username}" for username in set(matches)]
+        """댓글 내용에서 멘션된 사용자명을 추출"""
+        return Comment.extract_mentions(self.content)
 
 class CommentUpdate(BaseModel):
     content: str
-
-    @property
+    
     def extract_mentions(self) -> List[str]:
-        """댓글 내용에서 멘션된 사용자명을 추출합니다."""
-        if not self.content:
-            return []
-        # @username 패턴 찾기
-        pattern = r'@(\w+)'
-        matches = re.findall(pattern, self.content)
-        # 중복 제거 및 @ 기호 추가
-        return [f"@{username}" for username in set(matches)]
+        """댓글 내용에서 멘션된 사용자명을 추출"""
+        return Comment.extract_mentions(self.content)
 
 class ChangeItem(BaseModel):
     """변경 사항을 표현하는 모델"""

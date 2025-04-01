@@ -9,6 +9,8 @@ from app.models.cve_model import CVEModel, Comment
 from app.models.user_model import User
 from app.core.socketio_manager import socketio_manager, WSMessageType
 from app.models.notification_model import Notification
+from app.services.activity_service import ActivityService
+from app.models.activity_model import ActivityAction, ActivityTargetType
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +18,14 @@ MAX_COMMENT_DEPTH = 10  # 최대 댓글 깊이 설정
 
 class CommentService:
     """댓글 관련 비즈니스 로직을 처리하는 서비스 클래스"""
+    
+    activity_service = None
+    
+    @classmethod
+    def initialize(cls, activity_service: ActivityService):
+        """서비스 초기화 및 의존성 주입"""
+        cls.activity_service = activity_service
+        logger.info("CommentService initialized with ActivityService")
     
     @staticmethod
     def comment_to_dict(comment: Comment) -> dict:
@@ -26,8 +36,8 @@ class CommentService:
             comment_dict["last_modified_at"] = comment.last_modified_at.isoformat()
         return comment_dict
     
-    @staticmethod
-    async def process_mentions(content: str, cve_id: str, comment_id: PydanticObjectId,
+    @classmethod
+    async def process_mentions(cls, content: str, cve_id: str, comment_id: PydanticObjectId,
                            sender: User, mentioned_usernames: List[str] = None) -> Tuple[int, List[str]]:
         """댓글 내용에서 멘션된 사용자를 찾아 알림을 생성합니다."""
         try:
@@ -81,8 +91,8 @@ class CommentService:
             logger.error(f"Error in process_mentions: {str(e)}")
             return 0, []
     
-    @staticmethod
-    async def count_active_comments(cve_id: str) -> int:
+    @classmethod
+    async def count_active_comments(cls, cve_id: str) -> int:
         """CVE의 활성화된 댓글 수를 계산합니다."""
         try:
             # CVE 찾기
@@ -99,8 +109,8 @@ class CommentService:
             logger.error(f"Error counting active comments: {str(e)}")
             return 0
     
-    @staticmethod
-    async def send_comment_update(cve_id: str) -> None:
+    @classmethod
+    async def send_comment_update(cls, cve_id: str) -> None:
         """댓글 수 업데이트를 Socket.IO로 전송합니다."""
         try:
             count = await CommentService.count_active_comments(cve_id)
@@ -116,8 +126,8 @@ class CommentService:
         except Exception as e:
             logger.error(f"Error sending comment update: {str(e)}")
     
-    @staticmethod
-    async def create_comment(cve_id: str, content: str, user: User, 
+    @classmethod
+    async def create_comment(cls, cve_id: str, content: str, user: User, 
                              parent_id: Optional[str] = None, 
                              mentions: List[str] = None) -> Tuple[Optional[Comment], str]:
         """새 댓글을 생성합니다."""
@@ -185,13 +195,39 @@ class CommentService:
             # 댓글 수 업데이트 전송
             await CommentService.send_comment_update(cve_id)
             
+            # 사용자 활동 추적
+            if cls.activity_service:
+                changes = [{
+                    "field": "comments",
+                    "field_name": "댓글",
+                    "action": "add",
+                    "detail_type": "detailed",
+                    "summary": "댓글 추가됨",
+                    "items": [{"content": content}]
+                }]
+                
+                await cls.activity_service.create_activity(
+                    username=user.username,
+                    activity_type=ActivityAction.COMMENT,
+                    target_type=ActivityTargetType.CVE,
+                    target_id=cve_id,
+                    target_title=cve.title or cve_id,
+                    changes=changes,
+                    metadata={
+                        "comment_id": str(comment.id),
+                        "parent_id": str(parent_id) if parent_id else None,
+                        "severity": cve.severity,
+                        "status": cve.status
+                    }
+                )
+            
             return comment, "댓글이 성공적으로 생성되었습니다."
         except Exception as e:
             logger.error(f"Error creating comment: {str(e)}")
             return None, f"댓글 생성 중 오류가 발생했습니다: {str(e)}"
     
-    @staticmethod
-    async def update_comment(cve_id: str, comment_id: str, content: str, user: User) -> Tuple[Optional[Comment], str]:
+    @classmethod
+    async def update_comment(cls, cve_id: str, comment_id: str, content: str, user: User) -> Tuple[Optional[Comment], str]:
         """댓글을 수정합니다."""
         try:
             # CVE 찾기
@@ -243,13 +279,39 @@ class CommentService:
                     mentioned_usernames=list(added_mentions)
                 )
             
+            # 사용자 활동 추적
+            if cls.activity_service:
+                changes = [{
+                    "field": "comments",
+                    "field_name": "댓글",
+                    "action": "edit",
+                    "detail_type": "detailed",
+                    "summary": "댓글 수정됨",
+                    "before": old_content,
+                    "after": content
+                }]
+                
+                await cls.activity_service.create_activity(
+                    username=user.username,
+                    activity_type=ActivityAction.COMMENT_UPDATE,
+                    target_type=ActivityTargetType.CVE,
+                    target_id=cve_id,
+                    target_title=cve.title or cve_id,
+                    changes=changes,
+                    metadata={
+                        "comment_id": comment_id,
+                        "severity": cve.severity,
+                        "status": cve.status
+                    }
+                )
+            
             return cve.comments[comment_index], "댓글이 성공적으로 수정되었습니다."
         except Exception as e:
             logger.error(f"Error updating comment: {str(e)}")
             return None, f"댓글 수정 중 오류가 발생했습니다: {str(e)}"
     
-    @staticmethod
-    async def delete_comment(cve_id: str, comment_id: str, user: User, permanent: bool = False) -> Tuple[bool, str]:
+    @classmethod
+    async def delete_comment(cls, cve_id: str, comment_id: str, user: User, permanent: bool = False) -> Tuple[bool, str]:
         """댓글을 삭제합니다."""
         try:
             # CVE 찾기
@@ -278,6 +340,8 @@ class CommentService:
                 logger.error(f"Only admin can permanently delete comments")
                 return False, "영구 삭제는 관리자만 가능합니다."
             
+            comment_content = cve.comments[comment_index].content
+            
             if permanent:
                 # 영구 삭제 - 실제 배열에서 제거
                 cve.comments.pop(comment_index)
@@ -292,13 +356,40 @@ class CommentService:
             # 댓글 수 업데이트 전송
             await CommentService.send_comment_update(cve_id)
             
+            # 사용자 활동 추적
+            if cls.activity_service:
+                changes = [{
+                    "field": "comments",
+                    "field_name": "댓글",
+                    "action": "delete",
+                    "detail_type": "detailed",
+                    "summary": "댓글 삭제됨",
+                    "before": comment_content,
+                    "after": None
+                }]
+                
+                await cls.activity_service.create_activity(
+                    username=user.username,
+                    activity_type=ActivityAction.COMMENT_DELETE,
+                    target_type=ActivityTargetType.CVE,
+                    target_id=cve_id,
+                    target_title=cve.title or cve_id,
+                    changes=changes,
+                    metadata={
+                        "comment_id": comment_id,
+                        "permanent": permanent,
+                        "severity": cve.severity,
+                        "status": cve.status
+                    }
+                )
+            
             return True, "댓글이 성공적으로 삭제되었습니다."
         except Exception as e:
             logger.error(f"Error deleting comment: {str(e)}")
             return False, f"댓글 삭제 중 오류가 발생했습니다: {str(e)}"
     
-    @staticmethod
-    async def get_comments(cve_id: str) -> List[Comment]:
+    @classmethod
+    async def get_comments(cls, cve_id: str) -> List[Comment]:
         """CVE의 모든 댓글을 조회합니다."""
         try:
             cve = await CVEModel.find_one({"cve_id": cve_id})

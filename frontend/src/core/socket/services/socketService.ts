@@ -446,6 +446,17 @@ class SocketService implements ISocketIOService {
   
   // 이벤트 스로틀링 적용 여부 결정
   private _shouldThrottleEvent(event: string): boolean {
+    // 이벤트가 없거나 문자열이 아닌 경우 스로틀링 적용하지 않음
+    if (!event || typeof event !== 'string') {
+      return false;
+    }
+    
+    // 디버깅: 이벤트 스로틀링 여부 로깅
+    logger.debug('SocketService', '이벤트 스로틀링 여부 확인', {
+      event,
+      throttle: event.includes('typing') || event.includes('scroll') || event.includes('mouse_move')
+    });
+    
     // 자주 발생하는 이벤트에 스로틀링 적용
     const throttleEvents = [
       'typing', 'scroll', 'mouse_move', 'position_update',

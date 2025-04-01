@@ -106,6 +106,17 @@ export interface TokenPayload {
 }
 
 /**
+ * 사용자 정보 업데이트 인터페이스
+ */
+export interface UserUpdate {
+  email?: string;
+  displayName?: string;
+  profileImage?: string;
+  password?: string;
+  currentPassword?: string;
+}
+
+/**
  * 커스텀 Axios 요청 설정 인터페이스
  */
 export interface CustomAxiosRequestConfig extends AxiosRequestConfig {

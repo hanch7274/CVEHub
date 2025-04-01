@@ -18,7 +18,7 @@ from beanie import init_beanie
 from app.models.cve_model import CVEModel
 
 # 로깅 설정
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 async def test_all_cves():

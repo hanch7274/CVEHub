@@ -80,6 +80,9 @@ export const USER_EVENTS = {
   USER_OFFLINE: 'user_offline', // 백엔드 WSMessageType.USER_OFFLINE와 일치
   USER_STATUS_UPDATE: 'user_status_update', // 백엔드 WSMessageType.USER_STATUS_UPDATE와 일치
   USER_ACTIVITY: 'user_activity', // 백엔드 WSMessageType.USER_ACTIVITY와 일치
+  USER_ACTIVITY_UPDATED: 'user_activity_updated', // 백엔드 WSMessageType.USER_ACTIVITY_UPDATED와 일치
+  TARGET_ACTIVITY_UPDATED: 'target_activity_updated', // 백엔드 WSMessageType.TARGET_ACTIVITY_UPDATED와 일치
+  GLOBAL_ACTIVITY_UPDATED: 'global_activity_updated', // 백엔드 WSMessageType.GLOBAL_ACTIVITY_UPDATED와 일치
 };
 
 // 크롤러 관련 이벤트
@@ -102,6 +105,13 @@ export const CACHE_EVENTS = {
   CACHE_STATUS: 'cache_status', // 백엔드 WSMessageType.CACHE_STATUS와 일치
 };
 
+// 데이터 업데이트 관련 이벤트
+export const DATA_EVENTS = {
+  DATA_UPDATED: 'data_updated', // 프론트엔드 전용: 특정 필드 데이터 업데이트
+  DATA_CREATED: 'data_created', // 프론트엔드 전용: 새로운 데이터 생성
+  DATA_DELETED: 'data_deleted', // 프론트엔드 전용: 데이터 삭제
+};
+
 // 모든 이벤트를 하나의 객체로 통합 (기존 코드와의 호환성 유지)
 export const SOCKET_EVENTS = {
   ...CONNECTION_EVENTS,
@@ -115,6 +125,7 @@ export const SOCKET_EVENTS = {
   ...CRAWLER_EVENTS,
   ...SYSTEM_EVENTS,
   ...CACHE_EVENTS,
+  ...DATA_EVENTS,
 };
 
 // WebSocket 연결 상태에 대한 상수
@@ -197,6 +208,7 @@ export type UserEvent = ValueOf<typeof USER_EVENTS>;
 export type CrawlerEvent = ValueOf<typeof CRAWLER_EVENTS>;
 export type SystemEvent = ValueOf<typeof SYSTEM_EVENTS>;
 export type CacheEvent = ValueOf<typeof CACHE_EVENTS>;
+export type DataEvent = ValueOf<typeof DATA_EVENTS>;
 
 // 이벤트 핸들러 타입
 export type SocketEventHandler<T = any> = (data: T) => void;

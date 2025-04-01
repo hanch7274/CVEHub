@@ -15,6 +15,7 @@ import {
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import SecurityIcon from '@mui/icons-material/Security';
 import StorageIcon from '@mui/icons-material/Storage';
+import HistoryIcon from '@mui/icons-material/History';
 import MenuIcon from '@mui/icons-material/Menu';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import { useTheme } from '@mui/material/styles';
@@ -205,19 +206,56 @@ const Sidebar = () => {
             </ListItemIcon>
             {open && (
               <ListItemText 
-                primary="캐시 시각화" 
+                primary="Cache" 
                 primaryTypographyProps={{
                   color: location.pathname.startsWith('/cache') ? '#3a86ff' : theme.palette.text.primary,
                   fontWeight: location.pathname.startsWith('/cache') ? 500 : 400,
-                  fontSize: '0.95rem',
-                  whiteSpace: 'nowrap', 
-                  overflow: 'hidden', 
-                  textOverflow: 'ellipsis' 
+                  fontSize: '0.95rem'
                 }}
               />
             )}
           </ListItemButton>
         </ListItem>
+        
+        {/* 변경 내역 조회 메뉴 추가 */}
+        <ListItem disablePadding>
+          <ListItemButton 
+            component={Link} 
+            to="/activities"
+            selected={location.pathname.startsWith('/activities')}
+            sx={{
+              borderRadius: open ? '0 20px 20px 0' : '50%',
+              mx: open ? 1 : 'auto',
+              my: 0.5,
+              pl: open ? 2 : 1.5,
+              justifyContent: open ? 'flex-start' : 'center',
+              '&.Mui-selected': {
+                background: 'linear-gradient(90deg, rgba(58, 134, 255, 0.1) 0%, rgba(255, 0, 110, 0.1) 100%)',
+              },
+              '&:hover': {
+                background: 'linear-gradient(90deg, rgba(58, 134, 255, 0.05) 0%, rgba(255, 0, 110, 0.05) 100%)',
+              }
+            }}
+          >
+            <ListItemIcon sx={{ 
+              minWidth: open ? 40 : 'auto',
+              color: location.pathname.startsWith('/activities') ? '#3a86ff' : alpha(theme.palette.text.primary, 0.7)
+            }}>
+              <HistoryIcon />
+            </ListItemIcon>
+            {open && (
+              <ListItemText 
+                primary="변경 내역" 
+                primaryTypographyProps={{
+                  color: location.pathname.startsWith('/activities') ? '#3a86ff' : theme.palette.text.primary,
+                  fontWeight: location.pathname.startsWith('/activities') ? 500 : 400,
+                  fontSize: '0.95rem'
+                }}
+              />
+            )}
+          </ListItemButton>
+        </ListItem>
+        
       </List>
     </Drawer>
   );

@@ -9,8 +9,9 @@ from .models.user_model import User, RefreshToken
 from .models.notification_model import Notification
 from .core.config import get_settings
 from passlib.context import CryptContext
-from .models.comment_model import Comment
+from .models.cve_model import Comment
 from .models.system_config_model import SystemConfig
+from .models.activity_model import UserActivity
 
 # 비밀번호 해싱을 위한 context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -47,7 +48,8 @@ async def init_db():
                 Comment,
                 Notification,
                 RefreshToken,
-                SystemConfig
+                SystemConfig,
+                UserActivity
             ],
             allow_index_dropping=True  # 기존 인덱스를 제거하도록 설정
         )

@@ -1,5 +1,5 @@
 import api from 'shared/api/config/axios';
-import { AUTH } from '../config/endpoints';
+import { AUTH } from 'shared/api/config/endpoints';
 
 export const userService = {
   // 사용자 등록

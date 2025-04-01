@@ -787,7 +787,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose, highlightCommentI
         });
       }
     };
-  }, [propsCveId, open, handleCVEUpdated]);
+  }, [propsCveId, handleCVEUpdated]);
 
   // 모달을 열 때 데이터 새로고침 및 구독 처리
   useEffect(() => {
@@ -1320,7 +1320,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose, highlightCommentI
                             <Typography variant="body2" sx={{ fontWeight: value === cveData.status ? 600 : 400, color: value === cveData.status ? getStatusColor(value) : 'text.primary', lineHeight: 1.2 }}>
                               {label}
                             </Typography>
-                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontSize: '0.7rem', mt: 0.5, lineHeight: 1.2 }}>
+                            <Typography variant="caption" color="text.secondary">
                               {description}
                             </Typography>
                           </Box>
@@ -1333,45 +1333,55 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose, highlightCommentI
                       Severity
                     </Typography>
                     <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1 }}>
-                      {SEVERITY_OPTIONS.map((option) => (
-                        <Paper
-                          key={option.value}
-                          elevation={0}
-                          sx={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            justifyContent: 'center',
-                            minHeight: '40px',
-                            border: '1px solid',
-                            borderRadius: 1,
-                            p: 1,
-                            textAlign: 'center',
-                            cursor: canEdit() ? 'pointer' : 'default',
-                            transition: 'all 0.2s',
-                            bgcolor: option.value === cveData.severity ? 'action.selected' : 'background.paper',
-                            borderColor: option.value === cveData.severity ? option.color : 'divider',
-                            '&:hover': canEdit() ? {
-                              backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                              borderColor: option.color,
-                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                            } : {}
-                          }}
-                          onClick={() => canEdit() && handleSeverityUpdate(option.value)}
-                        >
-                          <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1 }}>
-                            <CircleIcon sx={{ fontSize: 8, color: option.color, flexShrink: 0 }} />
-                            <Typography 
-                              variant="body2" 
-                              sx={{ 
-                                fontWeight: option.value === cveData.severity ? 600 : 400, 
-                                color: option.value === cveData.severity ? option.color : 'text.primary' 
-                              }}
-                            >
-                              {option.label}
-                            </Typography>
-                          </Box>
-                        </Paper>
-                      ))}
+                      {SEVERITY_OPTIONS.map((option) => {
+                        // 개발 환경에서 첫 렌더링 시에만 로그 출력 
+                        // severity 값 비교시 대소문자 무시하여 비교
+                        const backendSeverity = (cveData?.severity || '').toLowerCase();
+                        const optionValue = option.value.toLowerCase();
+                        
+                        // severity 값 일치 여부를 안전하게 비교 (대소문자 무시, 옵셔널 체이닝 사용)
+                        const isSelected = optionValue === backendSeverity;
+                        
+                        return (
+                          <Paper
+                            key={option.value}
+                            elevation={0}
+                            sx={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              justifyContent: 'center',
+                              minHeight: '40px',
+                              border: '1px solid',
+                              borderRadius: 1,
+                              p: 1,
+                              textAlign: 'center',
+                              cursor: canEdit() ? 'pointer' : 'default',
+                              transition: 'all 0.2s',
+                              bgcolor: isSelected ? 'action.selected' : 'background.paper',
+                              borderColor: isSelected ? option.color : 'divider',
+                              '&:hover': canEdit() ? {
+                                backgroundColor: 'rgba(0, 0, 0, 0.04)',
+                                borderColor: option.color,
+                                boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                              } : {}
+                            }}
+                            onClick={() => canEdit() && handleSeverityUpdate(option.value)}
+                          >
+                            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 1 }}>
+                              <CircleIcon sx={{ fontSize: 8, color: option.color, flexShrink: 0 }} />
+                              <Typography 
+                                variant="body2" 
+                                sx={{ 
+                                  fontWeight: isSelected ? 600 : 400, 
+                                  color: isSelected ? option.color : 'text.primary' 
+                                }}
+                              >
+                                {option.label}
+                              </Typography>
+                            </Box>
+                          </Paper>
+                        );
+                      })}
                     </Box>
                   </Box>
                 </Grid>

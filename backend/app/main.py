@@ -15,9 +15,9 @@ from zoneinfo import ZoneInfo
 from .models.user_model import User, RefreshToken
 from .models.cve_model import CVEModel
 from .models.notification_model import Notification
-from .models.comment_model import Comment
+from .models.cve_model import Comment
 from .core.config import get_settings
-from .api.api import api_router
+from app.api.routers import api_router
 from .api.socketio_routes import router as socketio_router
 from .core.exceptions import CVEHubException
 from .core.error_handlers import (

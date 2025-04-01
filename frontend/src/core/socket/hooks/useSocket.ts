@@ -419,6 +419,7 @@ export function useSocket<TData = any, TPayload = any>(
   // 기본 이벤트 발신 함수
   const emit = useCallback((messageEvent: string, data: any, localUpdateCallback?: (data: any) => void) => {
     try {
+    
       // 소켓 연결 상태 확인
       if (!socketService.isSocketConnected()) {
         logger.warn('useSocket', `소켓 연결 없이 메시지 전송 시도: ${messageEvent}`);
@@ -661,7 +662,7 @@ export function useWebSocketWithStore<TData = any, TPayload = any>(
     connected: socket.connected,
     subscribe: socket.on,
     lastReceivedData: socket.lastReceivedData,
-connectionState: socket.connectionState,
+    connectionState: socket.connectionState,
     connectionError: socket.connectionError
   };
 }

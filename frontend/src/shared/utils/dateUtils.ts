@@ -1,5 +1,5 @@
 import { format, parseISO, isValid } from 'date-fns';
-import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
+import { formatInTimeZone, utcToZonedTime } from 'date-fns-tz';
 import { ko } from 'date-fns/locale';
 
 // 날짜 포맷 상수
@@ -50,7 +50,7 @@ export const getUtcTimestamp = (): string => {
  */
 export const getKstNow = (): Date => {
   // UTC 시간을 KST로 변환
-  return toZonedTime(new Date(), TIME_ZONES.KST);
+  return utcToZonedTime(new Date(), TIME_ZONES.KST);
 };
 
 /**

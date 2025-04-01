@@ -22,11 +22,14 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import WebSocketQueryBridge from 'core/socket/bridge/WebSocketQueryBridge';
 import { getAccessToken } from 'shared/utils/storage/tokenStorage';
 import socketService from 'core/socket/services/socketService';  // Socket.IO 서비스 임포트
+import { HelmetProvider } from 'react-helmet-async';
 
 // CVEDetail 컴포넌트를 lazy 로딩으로 가져옵니다
 const CVEDetail = lazy(() => import('./features/cve/CVEDetail'));
 // CacheVisualization 컴포넌트를 lazy 로딩으로 가져옵니다
 const CacheVisualization = lazy(() => import('./features/cache/CacheVisualization'));
+// ActivitiesPage 컴포넌트를 lazy 로딩으로 가져옵니다
+const ActivitiesPage = lazy(() => import('./features/activities/pages/ActivitiesPage'));
 
 // URL 파라미터를 가져와 CVEDetail에 전달하는 래퍼 컴포넌트
 const CVEDetailWrapper = () => {
@@ -206,6 +209,18 @@ const MainRoutes = ({ setSelectedCVE, selectedCVE }) => {
           </PrivateRoute>
         }
       />
+      <Route
+        path="/activities"
+        element={
+          <PrivateRoute>
+            <MainLayout>
+              <Suspense fallback={<div>로딩 중...</div>}>
+                <ActivitiesPage />
+              </Suspense>
+            </MainLayout>
+          </PrivateRoute>
+        }
+      />
 
       {/* Default Route */}
       <Route
@@ -261,23 +276,25 @@ const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider theme={theme}>
-        <SnackbarProvider
-          maxSnack={3}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-          autoHideDuration={3000}
-        >
-          <AuthProvider>
-            <Router>
-              <ErrorProvider>
-                <ErrorHandlerSetup>
-                  <CssBaseline />
-                  <WebSocketQueryBridge />
-                  <MainRoutes setSelectedCVE={setSelectedCVE} selectedCVE={selectedCVE} />
-                </ErrorHandlerSetup>
-              </ErrorProvider>
-            </Router>
-          </AuthProvider>
-        </SnackbarProvider>
+        <HelmetProvider>
+          <SnackbarProvider
+            maxSnack={3}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+            autoHideDuration={3000}
+          >
+            <AuthProvider>
+              <Router>
+                <ErrorProvider>
+                  <ErrorHandlerSetup>
+                    <CssBaseline />
+                    <WebSocketQueryBridge />
+                    <MainRoutes setSelectedCVE={setSelectedCVE} selectedCVE={selectedCVE} />
+                  </ErrorHandlerSetup>
+                </ErrorProvider>
+              </Router>
+            </AuthProvider>
+          </SnackbarProvider>
+        </HelmetProvider>
       </ThemeProvider>
     {process.env.NODE_ENV === 'development' && <ReactQueryDevtools />}
     </QueryClientProvider>

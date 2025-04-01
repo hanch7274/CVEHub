@@ -7,6 +7,8 @@ from ..repositories.cve_repository import CVERepository
 from ..models.cve_model import CVEModel, CreateCVERequest, PatchCVERequest, Comment, CommentCreate, CommentUpdate, PoC, SnortRule, ModificationHistory, ChangeItem
 from ..models.notification_model import Notification
 from ..models.user_model import User
+from ..models.activity_model import UserActivity, ActivityAction, ActivityTargetType
+from ..services.activity_service import ActivityService
 from ..core.socketio_manager import WSMessageType, DateTimeEncoder
 import logging
 import traceback
@@ -22,6 +24,7 @@ class CVEService:
     
     def __init__(self):
         self.repository = CVERepository()
+        self.activity_service = ActivityService()
 
     async def get_cve_list(
         self,
@@ -250,6 +253,33 @@ class CVEService:
             
             if new_cve:
                 logger.info(f"CVE 생성 성공: CVE ID={new_cve.cve_id}")
+                
+                # 활동 추적 - CVE 생성 기록
+                changes = [ChangeItem(
+                    field="cve",
+                    field_name="CVE",
+                    action="add",
+                    detail_type="simple",
+                    summary=f"새 CVE '{new_cve.cve_id}' 생성"
+                )]
+                
+                # 제목이 있으면 추가 정보 제공
+                title = new_cve.title or "제목 없음"
+                
+                await self.activity_service.create_activity(
+                    username=username,
+                    activity_type=ActivityAction.CREATE,
+                    target_type=ActivityTargetType.CVE,
+                    target_id=new_cve.cve_id,
+                    target_title=title,
+                    changes=changes,
+                    metadata={
+                        "is_crawler": is_crawler,
+                        "crawler_name": crawler_name if is_crawler else None,
+                        "severity": new_cve.severity
+                    }
+                )
+                
                 return new_cve
             else:
                 logger.error("CVE 생성 실패: Repository에서 None 반환")
@@ -292,6 +322,15 @@ class CVEService:
                 logger.warning(f"업데이트 데이터에서 _id 필드 제거: {update_data['_id']}")
                 update_data = update_data.copy()  # 원본 데이터 변경 방지
                 del update_data['_id']
+            
+            # 시간 메타데이터 처리가 필요한 필드 목록
+            metadata_fields = ['pocs', 'references', 'snort_rules']
+            
+            # 각 필드에 대해 시간 메타데이터 자동 처리
+            for field in metadata_fields:
+                if field in update_data and isinstance(update_data[field], list):
+                    update_data[field] = self._process_item_metadata(update_data[field], updated_by or "system")
+                    logger.debug(f"{field} 필드의 시간 메타데이터 처리 완료 ({len(update_data[field])} 항목)")
                 
             # 업데이트 시간 설정
             current_time = get_utc_now()
@@ -301,19 +340,63 @@ class CVEService:
             changes = []
             excluded_fields = ['last_modified_at', '_id', 'id']
             
+            # 필드별 한글 이름 매핑
+            field_names = {
+                "title": "제목",
+                "description": "설명",
+                "status": "상태",
+                "severity": "심각도",
+                "pocs": "PoC",
+                "references": "참조",
+                "snort_rules": "Snort 규칙",
+                "notes": "노트",
+                "assigned_to": "담당자"
+            }
+            
             for field, new_value in update_data.items():
                 if field in excluded_fields:
                     continue
                     
                 if field in existing_cve.dict() and existing_cve.dict()[field] != new_value:
-                    changes.append({
-                        "field": field,
-                        "field_name": field,
-                        "action": "edit",
-                        "summary": f"{field} 필드 변경",
-                        "old_value": existing_cve.dict()[field],
-                        "new_value": new_value
-                    })
+                    field_name = field_names.get(field, field)
+                    
+                    # 필드 유형별로 변경 내역 기록 방식 다르게 처리
+                    if field in ['pocs', 'references', 'snort_rules'] and isinstance(new_value, list):
+                        # 컬렉션 아이템 비교 로직
+                        old_items = existing_cve.dict().get(field, [])
+                        
+                        # 새로 추가된 아이템
+                        added_items = []
+                        for new_item in new_value:
+                            is_new = True
+                            for old_item in old_items:
+                                if self._is_same_item(new_item, old_item, field):
+                                    is_new = False
+                                    break
+                            if is_new:
+                                added_items.append(new_item)
+                        
+                        # 변경 사항 요약
+                        if added_items:
+                            changes.append(ChangeItem(
+                                field=field,
+                                field_name=field_name,
+                                action="add",
+                                detail_type="detailed",
+                                items=added_items,
+                                summary=f"{field_name} {len(added_items)}개 추가"
+                            ))
+                    else:
+                        # 일반 필드 변경
+                        changes.append(ChangeItem(
+                            field=field,
+                            field_name=field_name,
+                            action="edit",
+                            detail_type="detailed",
+                            before=existing_cve.dict().get(field),
+                            after=new_value,
+                            summary=f"{field_name} 변경됨"
+                        ))
             
             logger.info(f"변경 필드 수: {len(changes)}")
             
@@ -330,6 +413,20 @@ class CVEService:
                 
                 # 업데이트 데이터에 추가
                 update_data["modification_history"] = existing_history + [modification_history.dict()]
+                
+                # 사용자 활동 추적
+                await self.activity_service.create_activity(
+                    username=updated_by or "system",
+                    activity_type=ActivityAction.UPDATE,
+                    target_type=ActivityTargetType.CVE,
+                    target_id=cve_id,
+                    target_title=update_data.get('title') or existing_cve.title or cve_id,
+                    changes=changes,
+                    metadata={
+                        "severity": update_data.get('severity') or existing_cve.severity,
+                        "status": update_data.get('status') or existing_cve.status
+                    }
+                )
             
             # 업데이트한 사용자 정보 추가
             if updated_by:
@@ -361,25 +458,99 @@ class CVEService:
             logger.error(f"CVE 업데이트 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
             raise
+            
+    def _is_same_item(self, item1, item2, item_type):
+        """두 아이템이 동일한지 비교"""
+        if item_type == 'pocs':
+            return item1.get('url') == item2.get('url')
+        elif item_type == 'references':
+            return item1.get('url') == item2.get('url')
+        elif item_type == 'snort_rules':
+            return item1.get('rule') == item2.get('rule')
+        return False
+        
+    def _process_item_metadata(self, items: List[dict], updated_by: str) -> List[dict]:
+        """
+        항목 리스트(PoC, 참조 등)의 시간 메타데이터를 자동으로 처리합니다.
+        
+        Args:
+            items: 처리할 항목 리스트
+            updated_by: 업데이트 수행 사용자
+            
+        Returns:
+            시간 메타데이터가 추가된 항목 리스트
+        """
+        if not items:
+            return items
+            
+        current_time = get_utc_now()
+        processed_items = []
+        
+        for item in items:
+            # 딕셔너리로 변환
+            if not isinstance(item, dict):
+                item = item.dict() if hasattr(item, 'dict') else vars(item)
+            
+            item_copy = item.copy()
+            
+            # created_at이 없거나 None이면 현재 시간 설정
+            if 'created_at' not in item_copy or item_copy['created_at'] is None:
+                item_copy['created_at'] = current_time
+                
+            # created_by가 없거나 None이면 업데이트 사용자 설정
+            if 'created_by' not in item_copy or item_copy['created_by'] is None:
+                item_copy['created_by'] = updated_by
+                
+            # last_modified_at, last_modified_by는 항상 현재 값으로 업데이트
+            item_copy['last_modified_at'] = current_time
+            item_copy['last_modified_by'] = updated_by
+            
+            processed_items.append(item_copy)
+            
+        return processed_items
 
-    async def delete_cve(self, cve_id: str) -> bool:
+    async def delete_cve(self, cve_id: str, deleted_by: str = "system") -> bool:
         """
         CVE를 삭제합니다.
         
         Args:
             cve_id: 삭제할 CVE ID
+            deleted_by: 삭제를 수행한 사용자 이름
             
         Returns:
             삭제 성공 여부
         """
         try:
-            logger.info(f"CVE 삭제 시도: {cve_id}")
+            logger.info(f"CVE 삭제 시도: {cve_id}, 삭제자: {deleted_by}")
             
             # CVE 조회 (모델로 받기)
             cve = await self.get_cve_detail(cve_id, as_model=True)
             if not cve:
                 logger.warning(f"삭제할 CVE를 찾을 수 없음: {cve_id}")
                 return False
+                
+            # 활동 기록 추가 - 삭제 전에 기록해야 함
+            title = cve.title or "제목 없음"
+            changes = [ChangeItem(
+                field="cve",
+                field_name="CVE",
+                action="delete",
+                detail_type="simple",
+                summary=f"CVE '{cve_id}' 삭제"
+            )]
+            
+            await self.activity_service.create_activity(
+                username=deleted_by,
+                activity_type=ActivityAction.DELETE,
+                target_type=ActivityTargetType.CVE,
+                target_id=cve_id,
+                target_title=title,
+                changes=changes,
+                metadata={
+                    "cve_status": cve.status,
+                    "severity": cve.severity
+                }
+            )
                 
             # 삭제 실행 - cve.id 대신 cve_id 사용
             result = await self.repository.delete_by_cve_id(cve_id)

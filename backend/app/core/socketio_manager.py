@@ -102,7 +102,10 @@ class EventBus:
     async def emit(self, event_name: str, data: Any, sender: Optional[str] = None) -> None:
         """지정된 이벤트 이름으로 이벤트를 발행하고 등록된 핸들러들을 호출합니다."""
         if event_name not in self.handlers:
-            self.logger.debug(f"EventBus: 처리할 핸들러 없음 - 이벤트 '{event_name}'")
+            # 정의되지 않은 이벤트에 대한 상세 디버깅 메시지 추가
+            self.logger.warning(f"정의되지 않은 이벤트 요청입니다: '{event_name}' - 처리할 핸들러가 없습니다.")
+            self.logger.debug(f"이벤트 데이터: {str(data)[:200]}... (sender: {sender})")
+            self.logger.debug(f"등록된 이벤트 목록: {list(self.handlers.keys())}")
             return
 
         self.logger.debug(f"EventBus: 이벤트 발행 - 이벤트 '{event_name}', 데이터: {str(data)[:100]}..., 핸들러 수: {len(self.handlers[event_name])}")
@@ -180,7 +183,7 @@ class SocketIOManager:
             ping_timeout=settings.WS_PING_TIMEOUT,
             ping_interval=settings.WS_PING_INTERVAL,
             max_http_buffer_size=settings.WS_MAX_HTTP_BUFFER_SIZE,
-            logger=logger,
+            logger=settings.LOG_PING_PONG,  # True/False 값으로 로깅 활성화 여부 제어
             engineio_logger=settings.WS_ENGINEIO_LOGGER,
             json=json # python-socketio 기본 json 처리 사용 고려
         )
@@ -378,18 +381,7 @@ class SocketIOManager:
             'client_id': data.get('client_id', sid),
         }
         
-        # 핑퐁 메시지는 로깅하지 않음 (성능 최적화)
-        # 디버깅이 필요한 경우에만 주석 해제
-        # if logger.isEnabledFor(logging.DEBUG) and get_settings().LOG_PING_PONG:
-        #     user_id = self.sid_to_user.get(sid, 'unknown')
-        #     logger.debug(f"Ping 수신 - 사용자: {user_id}, SID: {sid}, 데이터: {data}")
-
-        # emit_message를 사용하여 pong 전송
         await self.emit_message(WSMessageType.PONG, pong_data, target_sid=sid)
-
-        # if logger.isEnabledFor(logging.DEBUG) and get_settings().LOG_PING_PONG:
-        #     user_id = self.sid_to_user.get(sid, 'unknown')
-        #     logger.debug(f"Pong 전송 - 사용자: {user_id}, SID: {sid}, 데이터: {pong_data}")
 
 
     async def _handle_cve_subscribe(self, sid: str, data: Dict[str, Any]) -> None:
@@ -601,8 +593,13 @@ class SocketIOManager:
                 logger.info(f"emit_message 활성 SID 없음 - Target: '{log_target}', Event: {event_name}")
                 return "No active SIDs found"
 
-            logger.info(f"emit_message 전송 시작 - Target: {log_target} ({len(target_sids)} SIDs), Event: {event_name}")
-            logger.debug(f"Data for {log_target}: {data_summary}")
+            # 핑/퐁 이벤트인 경우 설정에 따라 로깅 여부 결정
+            settings = get_settings()
+            is_ping_pong = event_name in [WSMessageType.PING, WSMessageType.PONG, 'ping', 'pong']
+            
+            if not is_ping_pong or (is_ping_pong and settings.LOG_PING_PONG):
+                logger.info(f"emit_message 전송 시작 - Target: {log_target} ({len(target_sids)} SIDs), Event: {event_name}")
+                logger.debug(f"Data for {log_target}: {data_summary}")
 
             # 비동기 emit 작업 생성 및 실행
             sent_count = 0
@@ -614,7 +611,10 @@ class SocketIOManager:
                  sid = list(target_sids)[i] # 로깅용 SID (순서 보장 안 될 수 있음)
                  if isinstance(result, Exception): logger.error(f"emit_message 전송 실패 - SID: {sid}, Event: {event_name}, Error: {result}")
                  else: sent_count += 1
-            logger.info(f"emit_message 전송 완료 - Target: {log_target}, Event: {event_name}, Sent: {sent_count}/{len(target_sids)}")
+                 
+            if not is_ping_pong or (is_ping_pong and settings.LOG_PING_PONG):
+                logger.info(f"emit_message 전송 완료 - Target: {log_target}, Event: {event_name}, Sent: {sent_count}/{len(target_sids)}")
+                
             return f"Sent to {sent_count} SIDs"
 
         except Exception as e:

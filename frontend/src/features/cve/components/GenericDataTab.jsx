@@ -151,7 +151,10 @@ const GenericDataTab = memo(({
 
   // 데이터 업데이트 이벤트 전송
   const sendDataUpdatedEvent = (responseData) => {
-    if (!socket) return;
+    if (!socket) {
+      console.log('[GenericDataTab] 소켓이 없어 이벤트를 발생시키지 않습니다.');
+      return;
+    }
     
     emit(SOCKET_EVENTS.DATA_UPDATED, {
       cveId: cveData.cveId,
@@ -175,16 +178,12 @@ const GenericDataTab = memo(({
       setLoading(true);
       setError(null);
 
-      // UTC 시간 사용 (백엔드와 일관성 유지)
-      const utcTime = new Date();
-      
-      // 새로운 아이템 객체 생성
+      // 새로운 아이템 객체 생성 - 시간 필드는 백엔드에서 처리하도록 변경
       const newItemWithMetadata = {
         ...newItem,
-        created_at: utcTime.toISOString(),  // UTC 시간을 ISO 문자열로 변환
-        created_by: currentUser?.username || 'anonymous',
-        last_modified_at: null,
-        last_modified_by: null
+        // created_by만 프론트엔드에서 설정하고 시간 필드는 백엔드에 위임
+        created_by: currentUser?.username || 'anonymous'
+        // created_at, last_modified_at, last_modified_by는 백엔드에서 처리
       };
 
       // 추가적인 메타데이터 처리 (있다면)
@@ -290,16 +289,13 @@ const GenericDataTab = memo(({
       setLoading(true);
       setError(null);
 
-      // UTC 시간 사용 (백엔드와 일관성 유지)
-      const utcTime = new Date();
-      
       // 업데이트할 아이템 준비 (기존 메타데이터 유지)
       const updatedItemData = { ...selectedItem };
       delete updatedItemData.id; // id는 내부 식별자이므로 제거
       
       // 추가적인 메타데이터 처리 (있다면)
       const finalItem = tabConfig.prepareItemForSave ? 
-        tabConfig.prepareItemForSave(updatedItemData, true, utcTime) : 
+        tabConfig.prepareItemForSave(updatedItemData, true) : 
         updatedItemData;
 
       const updatedItems = items.map((item, i) =>
