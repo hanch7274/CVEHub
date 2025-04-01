@@ -465,8 +465,6 @@ export function useCVEListUpdates() {
         
         // 소켓 정리
         cleanup();
-        
-        isSubscribedRef.current = false;
       };
     }
     
@@ -644,9 +642,9 @@ export const useCVESubscription = (cveId: string) => {
       isSubscribed: false // 낙관적 업데이트
     }));
     
-    // 구독 해제 요청 전송
+    // 구독 해제 요청 전송 - 백엔드 기대 형식(cve_id)으로 수정
     logger.info(`CVE 구독 해제 요청: ${cveId}`);
-    emitDebounced(SOCKET_EVENTS.UNSUBSCRIBE_CVE, { cveId });
+    emitDebounced(SOCKET_EVENTS.UNSUBSCRIBE_CVE, { cve_id: cveId });
     
     // 5초 타임아웃 설정
     setTimeout(() => {
@@ -742,7 +740,8 @@ export const useCVESubscription = (cveId: string) => {
       
       // 연결 상태에서만 구독 해제 요청 전송
       if (connected && state.isSubscribed) {
-        emit(SOCKET_EVENTS.UNSUBSCRIBE_CVE, { cveId });
+        // cveId 대신 cve_id 사용하여 백엔드 기대 형식과 일치시킴
+        emit(SOCKET_EVENTS.UNSUBSCRIBE_CVE, { cve_id: cveId });
       }
       
       // 소켓 리소스 정리

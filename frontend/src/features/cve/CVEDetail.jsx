@@ -826,10 +826,6 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose, highlightCommentI
       }
     } else if (!open) {
       // 모달이 닫힐 때 구독 해제 및 로딩 상태 초기화
-      if (isSubscribedRef.current && connectedRef.current && socketRef.current && propsCveId) {
-        logger.info('CVEDetail', `모달 닫힘, 구독 해제 요청: ${propsCveId}`);
-        debouncedUnsubscribe();
-      }
       setLoading(false);
     }
     
@@ -843,7 +839,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose, highlightCommentI
         isFirstLoadRef.current = true;
       }
     };
-  }, [open, propsCveId, cveData, refetchCveDetail, debouncedSubscribe, debouncedUnsubscribe]);
+  }, [open, propsCveId, cveData, refetchCveDetail, debouncedSubscribe]);
 
   // 소켓 연결 상태 변경 시 구독 처리
   useEffect(() => {
@@ -861,13 +857,8 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose, highlightCommentI
       if (subscriptionTimerRef.current) {
         clearTimeout(subscriptionTimerRef.current);
       }
-      
-      // 구독 중이었다면 구독 해제
-      if (isSubscribedRef.current && propsCveId) {
-        debouncedUnsubscribe();
-      }
     };
-  }, [propsCveId, open, debouncedSubscribe, debouncedUnsubscribe]);
+  }, [propsCveId, open, debouncedSubscribe]);
 
   // 로딩 상태 계산 - 수정
   const isLoading = useMemo(() => {

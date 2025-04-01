@@ -237,10 +237,6 @@ async def head_cve(
             last_modified = cve['last_modified_at'].strftime("%a, %d %b %Y %H:%M:%S GMT")
             response.headers["Last-Modified"] = last_modified
         
-        # ETag 헤더 설정 (선택 사항)
-        version = cve.get('version', '1')
-        response.headers["ETag"] = f'W/"{cve_id}-{version}"'
-        
         return response
     
     except HTTPException:
