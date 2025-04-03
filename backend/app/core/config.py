@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic import BaseSettings
 from typing import List
 from functools import lru_cache
 from datetime import timedelta

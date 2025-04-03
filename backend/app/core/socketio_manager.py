@@ -12,12 +12,11 @@ from datetime import datetime
 from fastapi import Depends # Depends는 현재 코드에서 직접 사용되진 않지만, 향후 확장성을 위해 유지 가능
 
 # 프로젝트 구조에 맞게 경로 조정 필요
-from ..utils.datetime_utils import get_current_time
+from ..common.utils.datetime_utils import get_current_time
 from .config import get_settings
 from .logging_utils import get_logger
-from ..core.auth import verify_token
-from ..services.user_service import UserService
-from ..models.user_model import UserResponse
+from ..auth.service import verify_token, UserService
+from ..auth.models import UserResponse
 
 # 표준화된 로거 사용
 logger = get_logger(__name__)
@@ -193,7 +192,7 @@ class SocketIOManager:
         # UserService 의존성 설정
         if user_service is None:
             logger.warning("UserService가 주입되지 않아 내부에서 생성합니다.")
-            from ..services.user_service import UserService # 지연 import
+            from ..auth.service import UserService # 지연 import
             self.user_service = UserService()
         else:
             self.user_service = user_service

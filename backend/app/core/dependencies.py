@@ -1,19 +1,25 @@
 from functools import lru_cache
-from ..services.user_service import UserService
-from ..services.cve_service import CVEService
-from ..services.notification import NotificationService
-from ..services.crawler_service import CrawlerService
+# 변경: 새 통합 서비스 파일 사용
+from ..auth.service import UserService
+from ..cve.service import CVEService
+from ..notification.service import NotificationService
+from ..crawler.service import CrawlerService
 from .socketio_manager import SocketIOManager
 from fastapi import Depends
 from typing import Annotated
 
 # 싱글톤 인스턴스를 저장할 변수
 _socketio_manager: SocketIOManager = None
+_user_service: UserService = None
 
 @lru_cache()
 def get_user_service() -> UserService:
     """UserService 인스턴스를 반환합니다."""
-    return UserService()
+    global _user_service
+    if _user_service is None:
+        # socketio_manager 의존성 주입
+        _user_service = UserService(socketio_manager=get_socketio_manager())
+    return _user_service
 
 @lru_cache()
 def get_cve_service() -> CVEService:

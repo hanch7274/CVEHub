@@ -89,13 +89,6 @@ export const API_ENDPOINTS = {
         SEARCH: '/users/search'
     },
     /**
-     * 크롤러 관련 엔드포인트
-     */
-    CRAWLER: {
-        BULK_CREATE: '/crawler/bulk-create',
-        BULK_UPDATE: '/crawler/bulk-update'
-    },
-    /**
      * WebSocket 관련 엔드포인트
      */
     WEBSOCKET: {

@@ -4,12 +4,13 @@ uvicorn==0.27.0
 python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-pydantic==2.5.3
-pydantic-settings==2.1.0
+pydantic>=1.10.0,<2.0.0  # Pydantic V1 사용
+# pydantic-settings 대신 기본 설정 관리 사용
 email-validator==2.1.0.post1
+python-dotenv==1.0.0  # .env 파일 로드를 위한 의존성
 
 # MongoDB
-beanie==1.22.6
+beanie==1.19.2  # Pydantic V1과 호환되는 버전
 motor==3.3.2
 pymongo==4.5.0
 
@@ -23,7 +24,7 @@ aiohttp==3.9.1
 
 # Crawler
 GitPython==3.1.41
-PyYAML==6.0.1
+PyYAML==6.0.1  # 원래 버전으로 복원
 APScheduler==3.10.4
 
 # Testing

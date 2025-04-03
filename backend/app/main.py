@@ -12,15 +12,10 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 from zoneinfo import ZoneInfo
 
-from .models.user_model import User, RefreshToken
-from .models.cve_model import CVEModel
-from .models.notification_model import Notification
-from .models.cve_model import Comment
-from .core.config import get_settings
-from app.api.routers import api_router
-from .api.socketio_routes import router as socketio_router
-from .core.exceptions import CVEHubException
-from .core.error_handlers import (
+from app.core.config import get_settings
+from app.core.socketio_routes import router as socketio_router
+from app.core.exceptions import CVEHubException
+from app.core.error_handlers import (
     cvehub_exception_handler,
     validation_exception_handler,
     general_exception_handler,
@@ -31,11 +26,16 @@ from pydantic import ValidationError
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
-from .models.system_config_model import SystemConfig
+from app.system.models import SystemConfig
 from .database import init_db, get_database
+from app.cve.models import CVEModel, CreateCVERequest, PatchCVERequest
+from app.api import api_router  # 새 위치에서 임포트
+from app.core.scheduler import CrawlerScheduler
 
 # 설정 초기화
 settings = get_settings()
+app = FastAPI()
+app.include_router(api_router)
 
 # 로깅 포맷터에 KST 시간대 적용
 class KSTFormatter(logging.Formatter):
@@ -175,7 +175,6 @@ async def startup_event():
         logger.info(f"Total CVEs in database: {cve_count}")
         
         # 스케줄러 초기화 및 시작
-        from .services.scheduler import CrawlerScheduler
         scheduler = CrawlerScheduler()
         # 데이터베이스 초기화가 아닌 스케줄러 상태 초기화만 수행
         await scheduler.init_scheduler_state()

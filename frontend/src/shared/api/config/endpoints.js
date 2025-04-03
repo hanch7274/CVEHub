@@ -30,12 +30,6 @@ export const NOTIFICATION = {
   UNREAD_COUNT: '/notifications/unread/count',
 };
 
-// Crawler endpoints
-export const CRAWLER = {
-  BULK_CREATE: '/crawler/bulk-create',
-  BULK_UPDATE: '/crawler/bulk-update',
-};
-
 // WebSocket endpoints
 export const WEBSOCKET = {
   BASE_URL: WS_BASE_URL || 'http://localhost:8000',
