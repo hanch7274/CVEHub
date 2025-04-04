@@ -47,13 +47,6 @@ import { useSocket } from 'core/socket/hooks/useSocket';
 import { QUERY_KEYS } from 'shared/api/queryKeys';
 
 // 기존 import 대신 새로운 통합 서비스 사용
-import { 
-  useCVEList, 
-  useCVEDetail,
-  useTotalCVECount,
-  useCVEStats,
-  useCVEListUpdates
-} from 'features/cve/hooks/useCVEQuery';
 import {
   useDeleteCVE,
   useCreateCVE
@@ -63,6 +56,7 @@ import CVEDetail from './CVEDetail';
 import CrawlerUpdateButton from './components/CrawlerUpdateButton';
 import CreateCVE from './CreateCVE';
 import { useSnackbar } from 'notistack';
+import { useCVEDetail, useCVEList, useCVEListUpdates, useCVEStats, useTotalCVECount } from './hooks';
 
 // 기본 폰트 스타일
 const fontStyles = {
