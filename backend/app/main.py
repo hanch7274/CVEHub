@@ -13,7 +13,7 @@ import os
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
-from app.core.socketio_routes import router as socketio_router
+from app.socketio.router import router as socketio_router
 from app.core.exceptions import CVEHubException
 from app.core.error_handlers import (
     cvehub_exception_handler,
@@ -146,11 +146,11 @@ async def startup_event():
         await db.client.admin.command('ping')
         logger.info("Successfully connected to MongoDB")
         
-        # SocketIOManager 초기화 - 명시적으로 UserService 주입
-        from .core.dependencies import initialize_socketio_manager, get_user_service
+        # SocketManager 초기화 - 명시적으로 UserService 주입
+        from .core.dependencies import initialize_socket_manager, get_user_service
         user_service = get_user_service()
-        socketio_manager = initialize_socketio_manager()
-        logger.info("SocketIOManager initialized successfully")
+        socket_manager = initialize_socket_manager()
+        logger.info("SocketManager initialized successfully")
         
         # Socket.IO 앱 생성 및 마운트 - CORS 설정 명시적 적용
         import socketio
@@ -161,7 +161,7 @@ async def startup_event():
         logger.info(f"Socket.IO CORS 설정: {settings.CORS_ORIGINS}")
         
         # Socket.IO 앱 생성 및 마운트 - 명시적 경로 설정
-        sio_app = socketio.ASGIApp(socketio_manager.sio)
+        sio_app = socketio.ASGIApp(socket_manager.sio)
         socket_io_path = "/socket.io"
         app.mount(socket_io_path, sio_app)
         logger.info(f"Socket.IO app mounted successfully at path: {socket_io_path}")

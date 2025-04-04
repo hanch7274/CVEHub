@@ -39,52 +39,78 @@ class NucleiCrawlerService(BaseCrawlerService):
         # 디렉토리 생성
         os.makedirs(settings.DATA_DIR, exist_ok=True)
         
-        # 웹소켓 메시지 최적화를 위한 플래그
-        self.websocket_enabled = False
+        # 웹소켓 항상 활성화 상태로 유지
+        self.websocket_enabled = True
         
         self.log_info(f"NucleiCrawlerService 초기화됨, 저장소 경로: {self.repo_path}")
     
     async def crawl(self) -> Dict[str, Any]:
         """전체 크롤링 프로세스 - 간결하고 오류에 강한 구현"""
-        self.websocket_enabled = True
+        # 웹소켓은 이미 초기화에서 활성화됨
         
         try:
+            # 시작 시간 기록 (성능 측정용)
+            start_time = datetime.now()
+            
             # 1. 초기 상태 보고
             await self.report_progress("preparing", 0, f"{self.crawler_id} 업데이트를 시작합니다.", require_websocket=True)
             
             # 2. 저장소 준비 - 에러 처리 강화
             if not await self._clone_or_pull_repo():
                 raise Exception("저장소 클론/풀 작업 실패")
-            await self.report_progress("preparing", 20, "저장소 준비 완료")
+            await self.report_progress("preparing", 10, "저장소 준비 완료")
             
             # 3. 데이터 수집 - 검증 단순화
-            await self.report_progress("fetching", 20, "템플릿 파일 수집 시작...")
+            await self.report_progress("fetching", 10, "템플릿 파일 수집 시작...")
             templates = await self.fetch_data()
             if not templates:
                 raise Exception("템플릿 파일을 찾지 못했습니다.")
-            await self.report_progress("fetching", 40, f"템플릿 파일 {len(templates)}개 수집 완료")
+            
+            # 파일 수집 완료 - 25% 지점
+            await self.report_progress("fetching", 20, f"템플릿 파일 {len(templates)}개 수집 완료")
             
             # 4. 데이터 처리 - 검증 단순화
-            await self.report_progress("processing", 40, f"{len(templates)}개 템플릿 파일 처리 시작...")
+            await self.report_progress("processing", 20, f"{len(templates)}개 템플릿 파일 처리 시작...")
             processed_data = await self.parse_data(templates)
             if not processed_data.get('items'):
                 raise Exception("템플릿 파일 처리 중 오류가 발생했습니다.")
-            await self.report_progress("processing", 60, f"템플릿 파일 {len(processed_data['items'])}개 처리 완료")
+            
+            # 파일 처리 완료 - 60% 지점
+            processed_count = len(processed_data['items'])
+            await self.report_progress("processing", 60, f"템플릿 파일 {processed_count}개 처리 완료")
             
             # 5. 데이터베이스 업데이트
-            await self.report_progress("saving", 60, f"{len(processed_data['items'])}개 항목 업데이트 시작...")
+            await self.report_progress("saving", 60, f"{processed_count}개 항목 업데이트 시작...")
             if not await self.process_data(processed_data):
                 raise Exception("데이터베이스 업데이트 중 오류가 발생했습니다.")
                 
             # 6. 완료 보고
             updated_count = len(getattr(self, 'updated_cves', []))
-            await self.report_progress("completed", 100, f"완료: {updated_count}개의 CVE가 업데이트되었습니다.", 
+            
+            # 소요 시간 계산
+            elapsed_time = (datetime.now() - start_time).total_seconds()
+            time_per_item = elapsed_time / max(1, processed_count)
+            
+            # 완료 메시지 - 성능 정보 포함
+            completion_message = (f"완료: {updated_count}개의 CVE가 업데이트되었습니다. "  
+                                f"(처리 속도: {time_per_item:.2f}초/항목, 총 소요 시간: {elapsed_time:.1f}초)")
+            
+            await self.report_progress("completed", 100, completion_message, 
                                 updated_cves=getattr(self, 'updated_cves', []))
+            
+            # 성능 요약 로깅
+            self.log_info(f"크롤링 완료: {processed_count}개 항목 분석, {updated_count}개 항목 업데이트")
+            self.log_info(f"총 소요 시간: {elapsed_time:.1f}초, 평균 처리 속도: {time_per_item:.2f}초/항목")
             
             return {
                 "stage": "success",
-                "message": f"업데이트 완료: {updated_count}개의 CVE가 업데이트되었습니다.",
-                "updated": updated_count
+                "message": completion_message,
+                "updated": updated_count,
+                "performance": {
+                    "total_time": round(elapsed_time, 1),
+                    "time_per_item": round(time_per_item, 2),
+                    "items_processed": processed_count
+                }
             }
         except Exception as e:
             self.log_error(f"크롤러 오류: {str(e)}", e)
@@ -144,13 +170,26 @@ class NucleiCrawlerService(BaseCrawlerService):
             self.updated_cves = []
             total_count = len(cve_data.get('items', []))
             
+            # 성능 최적화를 위한 로깅 제한
+            log_interval = max(1, total_count // 20)  # 전체 항목의 5%마다 로그 출력
+            
+            # 진행률 보고를 위한 마일스톤 계산 (0%, 25%, 50%, 75%, 100%)
+            milestones = [int(total_count * p) for p in [0, 0.25, 0.5, 0.75, 1.0]]
+            next_milestone_idx = 0
+            
             for idx, item in enumerate(cve_data.get('items', [])):
                 try:
-                    # 진행률 계산 및 보고
-                    progress = 75 + int((idx / total_count) * 20) if total_count > 0 else 75
-                    if idx % (total_count // 4) == 0 or idx == total_count - 1:
-                        await self.report_progress("데이터베이스 업데이트", progress, 
-                                            f"{idx+1}/{total_count} 항목 처리 중 ({(idx+1)/total_count*100:.1f}%)")
+                    # 중요 마일스톤에 도달했을 때만 웹소켓 메시지 전송
+                    if next_milestone_idx < len(milestones) and idx >= milestones[next_milestone_idx]:
+                        # 진행률 계산 (0-100%)
+                        progress = 60 + int((next_milestone_idx / 4) * 40)
+                        milestone_percent = int(next_milestone_idx * 25)
+                        
+                        await self.report_progress(
+                            "saving", progress, 
+                            f"데이터베이스 업데이트 {milestone_percent}% 완료: {idx}/{total_count} 항목"
+                        )
+                        next_milestone_idx += 1
                     
                     cve_id = item.get('cve_id')
                     if not cve_id:
@@ -165,8 +204,10 @@ class NucleiCrawlerService(BaseCrawlerService):
                     # 상위 클래스의 업데이트 메서드 활용
                     updated_cve = await self.update_cve(cve_id, item, creator="Nuclei-Crawler")
                     
+                    # 제한된 로깅 - 특정 간격으로만 상세 로그 출력
                     if updated_cve:
-                        self.log_info(f"CVE 업데이트 성공: {cve_id}")
+                        if idx % log_interval == 0 or idx == total_count - 1:
+                            self.log_info(f"CVE 업데이트 진행 중: {idx+1}/{total_count} ({(idx+1)/total_count*100:.1f}%)")
                         self.updated_cves.append(item)
                     else:
                         self.log_error(f"CVE 업데이트 실패: {cve_id}")
@@ -174,7 +215,9 @@ class NucleiCrawlerService(BaseCrawlerService):
                 except Exception as e:
                     self.log_error(f"항목 처리 중 오류: {str(e)}", e)
                     continue
-                    
+            
+            # 최종 결과 요약 로깅
+            self.log_info(f"총 {total_count}개 항목 중 {len(self.updated_cves)}개 업데이트 완료")
             return len(self.updated_cves) > 0
             
         except Exception as e:
@@ -235,16 +278,34 @@ class NucleiCrawlerService(BaseCrawlerService):
         # 청크 단위로 처리 (메모리 효율성)
         chunk_size = 50  # 한 번에 처리할 파일 수
         
+        # 진행률 보고를 위한 마일스톤 계산 (0%, 25%, 50%, 75%, 100%)
+        milestones = [int(total * p) for p in [0, 0.25, 0.5, 0.75, 1.0]]
+        next_milestone_idx = 0
+        
+        # 로그 최적화를 위한 간격 설정
+        log_interval = max(1, total // 10)  # 10% 간격으로 로그 출력
+        
+        processed_count = 0
         for chunk_start in range(0, total, chunk_size):
             chunk_end = min(chunk_start + chunk_size, total)
             current_chunk = template_files[chunk_start:chunk_end]
+            processed_count += len(current_chunk)
             
-            # 현재 청크 진행률 계산 및 보고
-            progress = 40 + int((chunk_end / total) * 20)
-            await self.report_progress(
-                "processing", progress, 
-                f"데이터 처리 중 ({chunk_end}/{total} 항목, {chunk_end/total*100:.1f}%)"
-            )
+            # 중요 마일스톤에 도달했을 때만 웹소켓 메시지 전송
+            if next_milestone_idx < len(milestones) and processed_count >= milestones[next_milestone_idx]:
+                # 진행률 계산 (0-60%)
+                progress = 20 + int((next_milestone_idx / 4) * 40)
+                milestone_percent = int(next_milestone_idx * 25)
+                
+                await self.report_progress(
+                    "processing", progress, 
+                    f"파일 처리 {milestone_percent}% 완료: {processed_count}/{total} 항목"
+                )
+                next_milestone_idx += 1
+            
+            # 제한된 로깅 - 특정 간격으로만 상세 로그 출력
+            if chunk_start % log_interval < chunk_size or chunk_end == total:
+                self.log_info(f"템플릿 처리 진행 중: {processed_count}/{total} ({processed_count/total*100:.1f}%)")
             
             # 청크 내 파일 병렬 처리
             tasks = [self._process_single_template(file_path) for file_path in current_chunk]
@@ -261,58 +322,53 @@ class NucleiCrawlerService(BaseCrawlerService):
     async def _process_single_template(self, file_path: str) -> Optional[Dict[str, Any]]:
         """단일 템플릿 파일 처리 - 코드 모듈화"""
         try:
-            if not isinstance(file_path, str) or not os.path.exists(file_path):
-                return None
-            
-            # 파일에서 CVE ID 추출
+            # 파일명에서 CVE ID 추출
             file_name = os.path.basename(file_path)
             cve_id = self._extract_cve_id_from_filename(file_name)
             
-            # 파일 읽기 - 비동기로 변환
-            loop = asyncio.get_event_loop()
-            content = await loop.run_in_executor(None, lambda: open(file_path, 'r', encoding='utf-8').read())
-            
-            # 콘텐츠 해시 계산
-            content_hash = self._extract_digest_hash(content)
-            
-            # YAML 파싱 - 비동기로 변환
-            yaml_data = await loop.run_in_executor(None, lambda: yaml.safe_load(content))
-            if not yaml_data:
+            if not cve_id:
+                # 디버그 레벨로 낮춤 - 많은 파일이 처리되므로 경고 로그가 과도하게 생성됨
+                self.logger.debug(f"CVE ID를 추출할 수 없음: {file_name}")
                 return None
             
-            # 정보 추출 로직
+            # YAML 파일 읽기
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+            try:
+                yaml_data = yaml.safe_load(content)
+            except Exception as e:
+                self.log_error(f"YAML 파싱 오류 ({file_path}): {str(e)}")
+                return None
+                
+            if not yaml_data or not isinstance(yaml_data, dict):
+                # 디버그 레벨로 낮춤
+                self.logger.debug(f"유효하지 않은 YAML 형식 ({file_path})")
+                return None
+                
+            # 기본 데이터 추출
             info = yaml_data.get('info', {})
+            
+            severity = info.get('severity', '')
+            description = info.get('description', '')
             name = info.get('name', '')
             
-            # 파싱된 템플릿에서 CVE ID 추출
-            if 'CVE-' in name:
-                cve_pattern = r'(CVE-\d{4}-\d{4,})'
-                match = re.search(cve_pattern, name)
-                if match:
-                    cve_id = match.group(1).upper()
-            
-            # 헬퍼 메소드를 활용하여 심각도 표준화
-            severity = self._standardize_severity(info.get('severity', 'unknown'))
-            
-            # 헬퍼 메소드를 활용하여 참조 URL 추출
-            references = self._extract_references(info.get('reference', []))
-            
-            # 헬퍼 메소드를 활용하여 PoC 정보 생성
-            pocs = self._create_pocs(cve_id, file_path)
-
-            return {
-                "cve_id": cve_id,
-                "title": name or cve_id,
-                "description": info.get('description', ''),
-                "severity": severity,
-                "content": content,
-                "nuclei_hash": content_hash or "",
-                "source": "nuclei-templates",
-                "references": references,
-                "pocs": pocs,
-                "snort_rules": [],
-                "file_path": file_path
+            # CVE 데이터 구성
+            cve_data = {
+                'cve_id': cve_id,
+                'title': name,
+                'description': description,
+                'severity': self._standardize_severity(severity),
+                'content': content,  # 원본 콘텐츠 보존
+                'references': self._extract_references(info.get('reference', [])),
+                'pocs': self._create_pocs(cve_id, file_path),
+                'snort_rules': [],
+                'file_path': file_path
             }
+            
+            # 로그 제거 - 파일이 많아 로그가 과도하게 생성됨
+            return cve_data
+            
         except Exception as e:
             self.log_error(f"템플릿 처리 중 오류: {file_path}, {str(e)}")
             return None

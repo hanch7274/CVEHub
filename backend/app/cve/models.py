@@ -131,6 +131,52 @@ class CommentUpdate(BaseSchema):
     """댓글 수정 요청 모델"""
     content: str = Field(..., description="수정할 댓글 내용")
 
+# 요청용 임베디드 모델 (시간 및 사용자 메타데이터 필드 선택적)
+class ReferenceRequest(BaseModel):
+    """참조 정보 요청 모델 (프론트엔드용)"""
+    url: str = Field(..., description="참조 URL")
+    type: str = Field(default="OTHER", description="참조 타입")
+    description: Optional[str] = Field(None, description="참조 설명")
+    created_at: Optional[datetime] = Field(None, description="생성 시간")
+    created_by: Optional[str] = Field(None, description="추가한 사용자")
+    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간")
+    last_modified_by: Optional[str] = Field(None, description="마지막 수정자")
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+
+class PoCRequest(BaseModel):
+    """PoC 정보 요청 모델 (프론트엔드용)"""
+    url: str = Field(..., description="PoC URL")
+    source: Optional[str] = Field(default="Github", description="PoC 소스")
+    description: Optional[str] = Field(None, description="PoC 설명")
+    created_at: Optional[datetime] = Field(None, description="생성 시간")
+    created_by: Optional[str] = Field(None, description="추가한 사용자")
+    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간")
+    last_modified_by: Optional[str] = Field(None, description="마지막 수정자")
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+
+class SnortRuleRequest(BaseModel):
+    """Snort 규칙 요청 모델 (프론트엔드용)"""
+    rule: str = Field(..., description="Snort 규칙 문자열")
+    type: str = Field(default="USER_DEFINED", description="규칙 타입")
+    description: Optional[str] = Field(None, description="규칙 설명")
+    created_at: Optional[datetime] = Field(None, description="생성 시간")
+    created_by: Optional[str] = Field(None, description="추가한 사용자")
+    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간")
+    last_modified_by: Optional[str] = Field(None, description="마지막 수정자")
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+
 class CreateCVERequest(BaseSchema):
     """CVE 생성 요청 모델"""
     cve_id: str
@@ -138,20 +184,32 @@ class CreateCVERequest(BaseSchema):
     description: Optional[str] = None
     status: str = "신규등록"
     severity: Optional[str] = None
-    references: List[Dict[str, str]] = []
-    pocs: List[Dict[str, str]] = []
-    snort_rules: List[Dict[str, str]] = []
+    references: List[ReferenceRequest] = []
+    pocs: List[PoCRequest] = []
+    snort_rules: List[SnortRuleRequest] = []
+    # 시간 필드를 선택적으로 설정
+    created_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    last_modified_at: Optional[datetime] = None
+    last_modified_by: Optional[str] = None
 
 class PatchCVERequest(BaseSchema):
     """CVE 부분 업데이트 요청 모델"""
-    cve_id: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
     severity: Optional[str] = None
-    references: Optional[List[Reference]] = None
-    pocs: Optional[List[PoC]] = None
-    snort_rules: Optional[List[SnortRule]] = None
+    exploit_status: Optional[str] = None
+    published_date: Optional[datetime] = None
+    references: Optional[List[ReferenceRequest]] = None
+    pocs: Optional[List[PoCRequest]] = None
+    snort_rules: Optional[List[SnortRuleRequest]] = None
+    tags: Optional[List[str]] = None
+    # 시간 필드를 선택적으로 설정
+    created_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    last_modified_at: Optional[datetime] = None
+    last_modified_by: Optional[str] = None
     
     class Config:
         extra = "allow"

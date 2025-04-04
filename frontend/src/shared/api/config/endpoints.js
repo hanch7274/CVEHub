@@ -1,6 +1,7 @@
 import { WS_BASE_URL, SOCKET_IO_PATH } from 'config';
 import logger from 'shared/utils/logging';
 
+
 // Auth endpoints
 export const AUTH = {
   LOGIN: '/auth/token',
@@ -8,6 +9,7 @@ export const AUTH = {
   REFRESH: '/auth/refresh',
   LOGOUT: '/auth/logout',
   ME: '/auth/me',
+  SEARCH: '/auth/search'
 };
 
 // CVE endpoints

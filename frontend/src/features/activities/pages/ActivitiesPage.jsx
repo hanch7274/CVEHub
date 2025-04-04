@@ -8,9 +8,7 @@ import {
   Fade,
   Alert,
   Backdrop,
-  CircularProgress,
-  useMediaQuery,
-  useTheme
+  CircularProgress
 } from '@mui/material';
 import { Helmet } from 'react-helmet-async';
 import { useAuth } from 'features/auth/contexts/AuthContext';
@@ -29,8 +27,6 @@ import { useQueryClient } from '@tanstack/react-query';
  * @returns {JSX.Element} 렌더링된 컴포넌트
  */
 const ActivitiesPage = () => {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
   /** @type {Object} 현재 인증된 사용자 정보 */
   const { user } = useAuth();
@@ -68,16 +64,8 @@ const ActivitiesPage = () => {
     }
     
     // 페이지 변경이 아닌 다른 필터 변경 시에만 페이지 번호 초기화
-    if (
-      filters.action !== filters.action ||
-      filters.target_type !== filters.target_type ||
-      filters.target_id !== filters.target_id ||
-      filters.username !== filters.username ||
-      filters.start_date !== filters.start_date ||
-      filters.end_date !== filters.end_date
-    ) {
-      setFilters(prev => ({ ...prev, page: 1 }));
-    }
+    // 필터 변경 시 페이지 번호를 1로 리셋
+    setFilters(prev => ({ ...prev, page: 1 }));
   }, [filters.action, filters.target_type, filters.target_id, filters.username, filters.start_date, filters.end_date, initialLoad]);
 
   /**
@@ -106,52 +94,9 @@ const ActivitiesPage = () => {
   const isFullPageLoading = isLoading && !isRefetching;
   const isRefreshLoading = !isLoading && isRefetching;
 
-  /**
-   * 소켓 이벤트 구독
-   * useSocket 훅을 사용하여 활동 관련 실시간 이벤트를 구독합니다.
-   */
+  // queryClient 선언은 유지하지만 배경에서 자동으로 데이터를 갱신하는 코드는 제거
+  // 사용자가 수동으로 새로고침할 때만 데이터가 갱신됨
   const queryClient = useQueryClient();
-  
-  // 활동 관련 이벤트를 처리하는 콜백 함수
-  const handleActivityEvent = useCallback((eventData) => {
-    // 글로벌 활동 알림인 경우 모든 활동 쿼리 무효화
-    queryClient.invalidateQueries(['activities'], { refetchActive: true });
-
-    // 현재 사용자 관련 활동인 경우 해당 사용자 활동 쿼리 무효화
-    if (eventData.username === username) {
-      queryClient.invalidateQueries(['userActivities', username], { refetchActive: true });
-    }
-
-    // 특정 대상 관련 활동인 경우 해당 대상 활동 쿼리 무효화
-    if (eventData.target_type && eventData.target_id) {
-      queryClient.invalidateQueries(
-        ['targetActivities', eventData.target_type, eventData.target_id],
-        { refetchActive: true }
-      );
-    }
-  }, [queryClient, username]);
-
-  // 활동 이벤트 구독
-  const { on } = useSocket(null, null, [], {
-    subscribeImmediately: true
-  });
-
-  // 컴포넌트 마운트 시 이벤트 리스너 등록
-  useEffect(() => {
-    // 글로벌 활동 업데이트 이벤트 구독
-    const unsubscribeGlobal = on('GLOBAL_ACTIVITY_UPDATED', handleActivityEvent);
-    // 사용자별 활동 업데이트 이벤트 구독
-    const unsubscribeUser = on('USER_ACTIVITY_UPDATED', handleActivityEvent);
-    // 대상별 활동 업데이트 이벤트 구독
-    const unsubscribeTarget = on('TARGET_ACTIVITY_UPDATED', handleActivityEvent);
-
-    // 컴포넌트 언마운트 시 이벤트 리스너 제거
-    return () => {
-      unsubscribeGlobal();
-      unsubscribeUser();
-      unsubscribeTarget();
-    };
-  }, [on, handleActivityEvent]);
 
   /**
    * 필터 변경 핸들러

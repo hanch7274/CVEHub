@@ -51,6 +51,8 @@ export const SUBSCRIPTION_EVENTS = {
   SUBSCRIBE_CVE_SUCCESS: 'subscribe_cve_success', // 프론트엔드 전용: CVE 구독 성공
   UNSUBSCRIBE_CVE_SUCCESS: 'unsubscribe_cve_success', // 프론트엔드 전용: CVE 구독 취소 성공
   CVE_SUBSCRIBERS_UPDATED: 'cve_subscribers_updated', // 백엔드 WSMessageType.CVE_SUBSCRIBERS_UPDATED와 일치
+  SUBSCRIPTIONS_CHANGED: 'subscriptions_changed', // 프론트엔드 전용: 구독 목록 변경
+  SUBSCRIBED_CVES_UPDATED: 'subscribed_cves_updated', // 프론트엔드 전용: 구독 중인 CVE 목록 업데이트
 };
 
 // 댓글 관련 이벤트

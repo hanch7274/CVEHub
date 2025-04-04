@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { format, formatDistanceToNow } from 'date-fns';
-import { ko } from 'date-fns/locale';
+import { TIME_ZONES, DATE_FORMATS, formatDateTime } from '../../../shared/utils/dateUtils';
 import { 
   Box, 
   Typography, 
@@ -112,23 +111,23 @@ const getTargetTypeText = (targetType) => {
 const ActivityItem = ({ activity }) => {
   const [expanded, setExpanded] = useState(false);
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  // PC 환경에 최적화
   
   const {
     username,
     timestamp,
     action,
-    target_type,
-    target_id,
-    target_title,
-    changes,
-    metadata
+    targetType,
+    targetId,
+    targetTitle,
+    changes
   } = activity;
 
-  // 타임스탬프 포맷팅
-  const formattedDate = format(new Date(timestamp), 'yyyy년 MM월 dd일', { locale: ko });
-  const formattedTime = format(new Date(timestamp), 'HH:mm:ss', { locale: ko });
-  const relativeTime = formatDistanceToNow(new Date(timestamp), { addSuffix: true, locale: ko });
+  // UTC 시간을 KST로 변환하여 표시
+  const dateTimeDisplay = formatDateTime(timestamp, DATE_FORMATS.DISPLAY.FULL, TIME_ZONES.KST);
+  
+  // 툴팁용 상세 한글 포맷 - 이미 KST로 변환된 날짜 사용
+  const dateTimeDetail = formatDateTime(timestamp, 'yyyy년 MM월 dd일 HH시 mm분 ss초');
   
   // 변경 사항이 있는지 확인
   const hasChanges = changes && changes.length > 0;
@@ -145,8 +144,52 @@ const ActivityItem = ({ activity }) => {
     return theme.palette[color].light;
   };
 
+  // 추가 정보 요약 생성 함수 (PoC, Reference 등)
+  const getAdditionalInfo = () => {
+    if (!changes || changes.length === 0) return '';
+    
+    const additionalData = [];
+    
+    // PoC 정보 찾기
+    const pocChange = changes.find(c => c.field === 'pocs' && c.action === 'add');
+    if (pocChange && pocChange.items && pocChange.items.length > 0) {
+      additionalData.push(`PoC ${pocChange.items.length}개`);
+    }
+    
+    // 참조문서 정보 찾기
+    const refChange = changes.find(c => c.field === 'references' && c.action === 'add');
+    if (refChange && refChange.items && refChange.items.length > 0) {
+      additionalData.push(`참조문서 ${refChange.items.length}개`);
+    }
+    
+    // Snort 규칙 정보 찾기
+    const ruleChange = changes.find(c => c.field === 'snort_rules' && c.action === 'add');
+    if (ruleChange && ruleChange.items && ruleChange.items.length > 0) {
+      additionalData.push(`Snort 규칙 ${ruleChange.items.length}개`);
+    }
+    
+    // 추가 정보가 있는 경우 문자열로 결합하여 반환
+    if (additionalData.length > 0) {
+      return ` (${additionalData.join(', ')} 포함)`;
+    }
+    
+    // 추가 정보가 없는 경우 빈 문자열 반환
+    return '';
+  };
+
   // 요약 텍스트 생성
   const summaryText = () => {
+    // 타입이 CVE인지 확인
+    const isCveActivity = targetType === 'cve';
+    
+    // 표시할 ID 결정
+    let displayId = isCveActivity ? targetId : (targetTitle || targetId);
+    
+    // ID가 없는 경우 처리
+    if (!displayId) {
+      displayId = targetId || '';
+    }
+    
     return (
       <>
         <Typography 
@@ -157,16 +200,18 @@ const ActivityItem = ({ activity }) => {
         >
           {username}
         </Typography>
-        님이 {getTargetTypeText(target_type)}{' '}
+        님이 {' '}
         <Link
           component={RouterLink}
-          to={getTargetRoute(target_type, target_id)}
+          to={getTargetRoute(targetType, targetId)}
           sx={{ fontWeight: 'medium' }}
           underline="hover"
         >
-          {target_title || target_id}
+          {displayId}
         </Link>
-        {action && ` ${getActionText(action)}`}함
+        {/* CVE가 아닌 타입에만 괄호로 타입 표시 */}
+        {!isCveActivity ? ` (${getTargetTypeText(targetType)})` : ''}
+        {action && ` ${getActionText(action)}`}함{getAdditionalInfo()}
       </>
     );
   };
@@ -192,7 +237,7 @@ const ActivityItem = ({ activity }) => {
         <Box 
           sx={{ 
             position: 'absolute',
-            top: isMobile ? 10 : -12,
+            top: -12,
             left: 12,
             width: 24,
             height: 24,
@@ -210,9 +255,9 @@ const ActivityItem = ({ activity }) => {
         </Box>
 
         {/* 헤더 영역 */}
-        <Box display="flex" flexDirection={isMobile ? 'column' : 'row'} 
-          justifyContent="space-between" alignItems={isMobile ? 'flex-start' : 'center'}>
-          <Box display="flex" alignItems="center" ml={4} mb={isMobile ? 1 : 0}>
+        <Box display="flex" flexDirection="row" 
+          justifyContent="space-between" alignItems="center">
+          <Box display="flex" alignItems="center" ml={4} mb={0}>
             <Avatar
               sx={{ 
                 width: 24, 
@@ -230,10 +275,10 @@ const ActivityItem = ({ activity }) => {
             </Typography>
           </Box>
 
-          <Box display="flex" alignItems="center" ml={isMobile ? 4 : 0}>
-            <Tooltip title={`${formattedDate} ${formattedTime}`}>
+          <Box display="flex" alignItems="center" ml={0}>
+            <Tooltip title={dateTimeDetail}>
               <Typography variant="caption" color="text.secondary">
-                {relativeTime}
+                {dateTimeDisplay}
               </Typography>
             </Tooltip>
           </Box>

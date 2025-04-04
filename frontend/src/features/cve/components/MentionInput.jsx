@@ -62,7 +62,7 @@ const MentionInput = ({
       
       try {
         // 캐시에서 검색 결과 확인
-        const cacheKey = ['users', 'search', query];
+        const cacheKey = ['auth', 'search', query];
         const cachedResults = queryClient.getQueryData(cacheKey);
         
         if (cachedResults) {
@@ -71,7 +71,7 @@ const MentionInput = ({
           return;
         }
         
-        const response = await api.get('/users/search', {
+        const response = await api.get('/auth/search', {
           params: { query }
         });
         

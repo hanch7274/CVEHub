@@ -1,12 +1,10 @@
 from abc import ABC, abstractmethod
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 import traceback
 from datetime import datetime
 from ..core.config import get_settings
-from ..core.socketio_manager import socketio_manager, WSMessageType
-import asyncio
-from app.common.utils.datetime_utils import get_utc_now
+from app.socketio.manager import socketio_manager, WSMessageType
 from app.cve.models import CVEModel
 from app.cve.service import CVEService
 
@@ -141,12 +139,24 @@ class BaseCrawlerService(ABC, LoggingMixin):
     async def report_progress(self, stage, percent, message, **kwargs):
         """
         크롤링 진행 상황을 보고합니다.
+        
+        Args:
+            stage (str): 진행 단계 (preparing, fetching, processing, saving, completed, error)
+            percent (int): 진행률 (0-100)
+            message (str): 진행 상황 메시지
+            **kwargs: 추가 데이터
         """
         # 기본 로깅
         stage_key = stage.lower().strip()
         self.log_info(f"[{stage_key}] {percent}% - {message}")
-        
-        if self.quiet_mode or not self.websocket_enabled:
+    
+        # 조용한 모드이거나 웹소켓이 비활성화된 경우 웹소켓 메시지 전송 안함
+        if self.quiet_mode:
+            self.log_debug(f"조용한 모드에서 메시지 무시: {message}")
+            return
+            
+        if not self.websocket_enabled:
+            self.log_debug(f"웹소켓 비활성화 상태: {message}")
             return
         
         # 메시지 데이터 준비
@@ -164,22 +174,23 @@ class BaseCrawlerService(ABC, LoggingMixin):
             message_data[key] = value
         
         # WebSocket 메시지 전송
-        try:
-            from app.core.socketio_manager import socketio_manager, WSMessageType
-            
+        try:            
             if hasattr(self, 'requester_id') and self.requester_id:
+                self.log_debug(f"사용자 {self.requester_id}에게 진행 상황 전송 중...")
                 await socketio_manager.emit_to_user(
                     self.requester_id, 
                     WSMessageType.CRAWLER_UPDATE_PROGRESS, 
                     {"type": "crawler_update_progress", "data": message_data}
                 )
             else:
+                self.log_debug("모든 사용자에게 진행 상황 전송 중...")
                 await socketio_manager.emit(
                     WSMessageType.CRAWLER_UPDATE_PROGRESS, 
                     {"type": "crawler_update_progress", "data": message_data}
                 )
+            self.log_debug(f"웹소켓 메시지 전송 완료: {stage_key} {percent}%")
         except Exception as e:
-            self.log_error(f"웹소켓 메시지 전송 실패: {str(e)}")
+            self.log_error(f"웹소켓 메시지 전송 실패: {str(e)}", e)
             
     def set_requester_id(self, user_id: str):
         """업데이트를 요청한 사용자 ID 설정"""
@@ -199,9 +210,7 @@ class BaseCrawlerService(ABC, LoggingMixin):
     async def update_cve(self, cve_id: str, data: Dict[str, Any], creator: str) -> Optional[CVEModel]:
         """
         CVE 모델을 생성하거나 업데이트합니다.
-        """
-        self.log_info(f"CVE {cve_id} 데이터베이스 업데이트 중...")
-        
+        """       
         try:
             # 기존 CVE 찾기
             existing = await self.cve_service.get_cve_detail(cve_id)
@@ -215,7 +224,7 @@ class BaseCrawlerService(ABC, LoggingMixin):
                 data_with_defaults = self._prepare_new_cve_data(cve_id, data, creator)
                 
                 # CVE 모델 생성 (Pydantic 모델 사용)
-                from ..models.cve_model import CreateCVERequest
+                from ..cve.models import CreateCVERequest
                 cve_request = CreateCVERequest(**data_with_defaults)
                 
                 # CVEService를 통해 CVE 생성
@@ -228,13 +237,16 @@ class BaseCrawlerService(ABC, LoggingMixin):
                 data_for_update = self._prepare_update_cve_data(data, creator)
                 
                 # 필드 제한된 패치 데이터 생성
-                from ..models.cve_model import PatchCVERequest
+                from ..cve.models import PatchCVERequest
                 patch_data = PatchCVERequest(**data_for_update)
                 
                 # CVEService를 통해 업데이트
-                await self.cve_service.update_cve(str(existing.id), patch_data, creator)
+                # MongoDB ID 대신 항상 CVE ID를 사용 - 이렇게 하면 CVE ID로 조회할 때 일관성 유지
+                # CVE ID는 전역적으로 유일하므로 이 방법이 더 안전함
+                await self.cve_service.update_cve(cve_id, patch_data, creator)
                 
-            # 모델 조회
+            # MongoDB ID가 아닌 CVE ID를 사용하여 항상 조회
+            # CVE-ID는 표준 형식이고 데이터베이스 내에서 유일해야 함
             return await self.cve_service.get_cve_detail(cve_id)
         except Exception as e:
             self.log_error(f"CVE {cve_id} 업데이트 실패: {str(e)}", e)

@@ -63,7 +63,7 @@ import {
 } from 'features/cve/hooks/useCVEQuery';
 import { useUpdateCVEField } from 'features/cve/hooks/useCVEMutation';
 import { QUERY_KEYS } from 'shared/api/queryKeys';
-import { formatDateTime, timeAgo, TIME_ZONES } from 'shared/utils/dateUtils';
+import { formatDateTime, timeAgo, TIME_ZONES, DATE_FORMATS } from 'shared/utils/dateUtils';
 
 // 활성 댓글 개수 계산
 const countActiveComments = (comments) => {
@@ -153,6 +153,15 @@ const SubscriberCount = memo(({ subscribers = [] }) => {
   const validSubscribers = Array.isArray(subscribers) ? subscribers.filter(Boolean) : [];
   const hasSubscribers = validSubscribers.length > 0;
   
+  // 디버깅 로그 추가
+  console.log('[SubscriberCount] 구독자 정보:', {
+    원본데이터: subscribers,
+    유효구독자: validSubscribers,
+    구독자있음: hasSubscribers,
+    구독자수: validSubscribers.length,
+    timestamp: new Date().toISOString()
+  });
+  
   return (
     <Box 
       sx={{ 
@@ -197,8 +206,19 @@ const SubscriberCount = memo(({ subscribers = [] }) => {
           {validSubscribers.map((subscriber, index) => {
             // subscriber가 유효한 객체인지 확인
             if (!subscriber || typeof subscriber !== 'object') {
+              console.log('[SubscriberCount] 유효하지 않은 구독자:', { subscriber, index });
               return null;
             }
+            
+            // 디버깅: 구독자 세부 정보 로깅
+            console.log('[SubscriberCount] 구독자 항목:', { 
+              index, 
+              id: subscriber.id, 
+              userId: subscriber.userId, 
+              username: subscriber.username,
+              displayName: subscriber.displayName,
+              profileImage: subscriber.profileImage
+            });
             
             // 고유 키 안전하게 생성
             const key = subscriber.id || subscriber.userId || `subscriber-${index}`;
@@ -427,6 +447,27 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose, highlightCommentI
                      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(data.lastModifiedAt)
           }
         });
+
+        // PoC 데이터 구조 디버깅 로그 추가
+        console.log('PoC 데이터 디버깅 - onSuccess에서 호출:', {
+          pocDataExists: !!data.pocs || !!data.poc || !!data.PoCs,
+          pocTypes: {
+            pocs: data.pocs ? typeof data.pocs : 'undefined',
+            poc: data.poc ? typeof data.poc : 'undefined',
+            PoCs: data.PoCs ? typeof data.PoCs : 'undefined'
+          },
+          pocValues: {
+            pocs: data.pocs,
+            poc: data.poc,
+            PoCs: data.PoCs
+          },
+          pocLengths: {
+            pocs: data.pocs?.length,
+            poc: data.poc?.length,
+            PoCs: data.PoCs?.length
+          },
+          전체데이터키: Object.keys(data)
+        });
       }
       
       if (snackbarShown.current) {
@@ -440,6 +481,7 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose, highlightCommentI
       }
       
       // 탭 카운트 업데이트
+      console.log('updateTabCounts 함수 호출 직전', { 데이터존재: !!data });
       updateTabCounts(data);
       setIsCached(false);
       setLoading(false); // 로딩 상태 해제
@@ -478,14 +520,42 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose, highlightCommentI
   
   // 탭 카운트 업데이트 함수
   const updateTabCounts = useCallback((data) => {
-    if (!data) return;
+    console.log('updateTabCounts 함수 실행됨', {
+      데이터타입: typeof data,
+      데이터존재: !!data,
+      시간: new Date().toISOString()
+    });
     
+    if (!data) {
+      console.warn('updateTabCounts: 데이터가 없습니다');
+      return;
+    }
+    
+    // 디버깅: 전체 데이터 키 보기
+    console.log('updateTabCounts - 전체 데이터 키:', {
+      keys: Object.keys(data),
+      sample: JSON.stringify(data).substring(0, 200) + '...'
+    });
+    
+    // 백엔드 응답 필드명 케이스 처리 (camelCase 또는 snake_case)
     const newCounts = {
-      poc: data.pocs?.length || 0,
-      snortRules: data.snortRules?.length || 0,
-      references: data.references?.length || 0,
+      poc: data.pocs?.length || data.poc?.length || data.PoCs?.length || data.pocList?.length || 0,
+      snortRules: data.snortRules?.length || data.snort_rules?.length || 0,
+      references: data.references?.length || data.refs?.length || 0,
       comments: countActiveComments(data.comments)
     };
+    
+    // 디버깅 로그 추가
+    console.log('CVEDetail - 탭 카운트 업데이트:', {
+      원본데이터: {
+        pocs: data.pocs,
+        poc: data.poc,
+        PoCs: data.PoCs,
+        pocList: data.pocList
+      },
+      적용된카운트: newCounts,
+      timestamp: new Date().toISOString()
+    });
     
     setTabCounts(newCounts);
   }, []);
@@ -1184,7 +1254,10 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose, highlightCommentI
               <Chip
                 size="small"
                 icon={<HistoryIcon fontSize="small" />}
-                label={`생성: ${formatDateTime(cveData?.createdAt || cveData?.created_at, undefined, TIME_ZONES.KST)}`}
+                label={(() => {
+                  return `생성: ${formatDateTime(cveData?.createdAt || cveData?.created_at, DATE_FORMATS.DISPLAY.DEFAULT)}`;
+                })()
+              }
                 variant="outlined"
                 sx={{ fontSize: '0.7rem', height: 24 }}
               />
@@ -1193,7 +1266,10 @@ const CVEDetail = ({ cveId: propsCveId, open = false, onClose, highlightCommentI
               <Chip
                 size="small"
                 icon={<HistoryIcon fontSize="small" />}
-                label={`수정: ${formatDateTime(cveData?.lastModifiedAt || cveData?.last_modified_at, undefined, TIME_ZONES.KST)}`}
+                label={(() => {
+                  return `수정: ${formatDateTime(cveData?.lastModifiedAt || cveData?.last_modified_at, DATE_FORMATS.DISPLAY.DEFAULT)}`;
+                })()
+              }
                 variant="outlined"
                 sx={{ fontSize: '0.7rem', height: 24 }}
               />

@@ -78,7 +78,7 @@ const ActivitiesFilter = ({ filters, onFilterChange, onFilterApply, onFilterRese
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  // PC 환경에 최적화
   const isTablet = useMediaQuery(theme.breakpoints.down('md'));
   const { user } = useAuth();
   const currentUsername = user?.username || '';
@@ -275,12 +275,35 @@ const ActivitiesFilter = ({ filters, onFilterChange, onFilterApply, onFilterRese
   };
 
   const handleSetAllActivities = () => {
-    handleQuickFilterChange('username', '');
+    handleQuickFilterChange('username', null);
   };
 
   // 현재 적용된 필터 칩 렌더링
   const renderFilterChips = () => {
     const chips = [];
+
+    // 사용자 필터 칩 추가
+    if (filters.username) {
+      let userLabel = "";
+      if (filters.username === currentUsername) {
+        userLabel = "내 활동";
+      } else if (filters.username === "system") {
+        userLabel = "시스템";
+      } else {
+        const selectedUser = users.find(u => u.username === filters.username);
+        userLabel = selectedUser ? (selectedUser.display_name || selectedUser.username) : filters.username;
+      }
+      
+      chips.push(
+        <Chip
+          key="username"
+          label={`사용자: ${userLabel}`}
+          onDelete={() => handleQuickFilterChange('username', null)}
+          color="primary"
+          size="small"
+        />
+      );
+    }
 
     if (filters.action && filters.action.length > 0) {
       filters.action.forEach(actionValue => {
@@ -454,7 +477,7 @@ const ActivitiesFilter = ({ filters, onFilterChange, onFilterApply, onFilterRese
               sx={{ 
                 flexWrap: 'wrap', 
                 gap: 1,
-                '& > button': { mb: isMobile ? 1 : 0 }
+                '& > button': { mb: 0 }
               }}
             >
               <Button 
@@ -473,42 +496,40 @@ const ActivitiesFilter = ({ filters, onFilterChange, onFilterApply, onFilterRese
               >
                 모든 활동
               </Button>
-              {!isMobile && (
-                <FormControl size="small" sx={{ minWidth: 120 }}>
-                  <Select
-                    value={filters.username || ''}
-                    onChange={(e) => handleQuickFilterChange('username', e.target.value)}
-                    displayEmpty
-                    renderValue={(selected) => {
-                      if (!selected) return "사용자 선택";
-                      
-                      if (selected === currentUsername) {
-                        return "내 활동";
-                      }
-                      
-                      if (selected === 'system') {
-                        return "시스템";
-                      }
-                      
-                      const selectedUser = users.find(u => u.username === selected);
-                      return selectedUser ? (selectedUser.display_name || selectedUser.username) : selected;
-                    }}
-                    sx={{ height: 32 }}
-                  >
-                    <MenuItem value="">모든 사용자</MenuItem>
-                    <MenuItem value={currentUsername}>내 활동</MenuItem>
-                    <MenuItem value="system">시스템</MenuItem>
-                    {users
-                      .filter(u => u.username !== currentUsername && u.username !== 'system')
-                      .map((user) => (
-                        <MenuItem key={user.id} value={user.username}>
-                          {user.display_name || user.username}
-                        </MenuItem>
-                      ))
+              <FormControl size="small" sx={{ minWidth: 120 }}>
+                <Select
+                  value={filters.username || ''}
+                  onChange={(e) => handleQuickFilterChange('username', e.target.value)}
+                  displayEmpty
+                  renderValue={(selected) => {
+                    if (!selected) return "사용자 선택";
+                    
+                    if (selected === currentUsername) {
+                      return "내 활동";
                     }
-                  </Select>
-                </FormControl>
-              )}
+                    
+                    if (selected === 'system') {
+                      return "시스템";
+                    }
+                    
+                    const selectedUser = users.find(u => u.username === selected);
+                    return selectedUser ? (selectedUser.display_name || selectedUser.username) : selected;
+                  }}
+                  sx={{ height: 32 }}
+                >
+                  <MenuItem value={null}>모든 사용자</MenuItem>
+                  <MenuItem value={currentUsername}>내 활동</MenuItem>
+                  <MenuItem value="system">시스템</MenuItem>
+                  {users
+                    .filter(u => u.username !== currentUsername && u.username !== 'system')
+                    .map((user) => (
+                      <MenuItem key={user.id} value={user.username}>
+                        {user.display_name || user.username}
+                      </MenuItem>
+                    ))
+                  }
+                </Select>
+              </FormControl>
             </Stack>
           </Grid>
 
@@ -524,7 +545,7 @@ const ActivitiesFilter = ({ filters, onFilterChange, onFilterApply, onFilterRese
               sx={{ 
                 flexWrap: 'wrap', 
                 gap: 1,
-                '& > button': { mb: isMobile ? 1 : 0 }
+                '& > button': { mb: 0 }
               }}
             >
               <Button 
@@ -676,40 +697,6 @@ const ActivitiesFilter = ({ filters, onFilterChange, onFilterApply, onFilterRese
                     slotProps={{ textField: { size: 'small', fullWidth: true } }}
                   />
                 </Grid>
-                
-                {/* 모바일에서만 표시되는 사용자 선택 */}
-                {isMobile && (
-                  <Grid item xs={12}>
-                    <Autocomplete
-                      options={[
-                        { username: '', display_name: '모든 사용자' },
-                        { username: currentUsername, display_name: '내 활동' },
-                        { username: 'system', display_name: '시스템' },
-                        ...users.filter(u => u.username !== currentUsername && u.username !== 'system')
-                      ]}
-                      getOptionLabel={(option) => 
-                        option.display_name || option.username
-                      }
-                      value={
-                        filters.username === '' 
-                          ? { username: '', display_name: '모든 사용자' }
-                          : filters.username === currentUsername
-                            ? { username: currentUsername, display_name: '내 활동' }
-                            : filters.username === 'system'
-                              ? { username: 'system', display_name: '시스템' }
-                              : users.find(u => u.username === filters.username) || { username: filters.username, display_name: filters.username }
-                      }
-                      onChange={(event, newValue) => {
-                        handleAdvancedFilterChange('username', newValue ? newValue.username : '');
-                      }}
-                      renderInput={(params) => (
-                        <TextField {...params} label="사용자 선택" size="small" />
-                      )}
-                      loading={isLoadingUsers}
-                      loadingText="사용자 목록 로딩 중..."
-                    />
-                  </Grid>
-                )}
 
                 <Grid item xs={12}>
                   <Box display="flex" justifyContent="flex-end" gap={1}>

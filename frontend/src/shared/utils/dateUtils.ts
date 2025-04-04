@@ -18,7 +18,7 @@ export const DATE_FORMATS = {
 export const TIME_ZONES = {
   UTC: 'UTC',
   KST: 'Asia/Seoul',
-  DEFAULT: process.env.REACT_APP_DEFAULT_TIMEZONE || 'Asia/Seoul'
+  DEFAULT: 'Asia/Seoul'
 } as const;
 
 // 타입 정의
@@ -27,9 +27,9 @@ export type TimeZoneType = typeof TIME_ZONES[keyof typeof TIME_ZONES];
 export type DateValueType = string | Date | number | null | undefined;
 
 /**
- * 현재 UTC 시간을 ISO 8601 형식의 문자열로 반환합니다.
+ * 현재 UTC 시간을 Date 객체로 반환합니다.
  * 백엔드의 get_utc_now()와 유사한 기능을 제공합니다.
- * @returns ISO 8601 형식의 UTC 시간 문자열 (예: "2025-03-28T06:46:44.123Z")
+ * @returns UTC 시간의 Date 객체
  */
 export const getUtcNow = (): Date => {
   return new Date();
@@ -46,10 +46,11 @@ export const getUtcTimestamp = (): string => {
 /**
  * 현재 KST 시간을 Date 객체로 반환합니다.
  * 백엔드의 get_kst_now()와 유사한 기능을 제공합니다.
+ * date-fns-tz의 utcToZonedTime을 사용하여 UTC 시간을 KST로 변환합니다.
  * @returns KST 시간대의 Date 객체
  */
 export const getKstNow = (): Date => {
-  // UTC 시간을 KST로 변환
+  // date-fns-tz의 utcToZonedTime 함수로 UTC -> KST 변환
   return utcToZonedTime(new Date(), TIME_ZONES.KST);
 };
 
@@ -103,17 +104,17 @@ export const parseDate = (dateValue: DateValueType): Date | null => {
 };
 
 /**
- * 날짜를 지정된 형식과 시간대로 포맷팅합니다.
- * 백엔드의 format_datetime()과 유사한 기능을 제공합니다.
+ * 날짜를 지정된 형식으로 포맷팅합니다.
+ * UTC 시간을 지정된 시간대(기본값: KST)로 변환하여 포맷팅합니다.
  * @param dateValue - 포맷팅할 날짜 값 (ISO 문자열, Date 객체, 타임스탬프 등)
  * @param formatStr - 출력 포맷 (기본값: yyyy-MM-dd HH:mm)
- * @param timeZone - 변환할 시간대 (기본값: KST)
+ * @param timeZone - 시간대 (기본값: Asia/Seoul)
  * @returns 포맷팅된 문자열
  */
 export const formatDateTime = (
   dateValue: DateValueType,
   formatStr: string = DATE_FORMATS.DISPLAY.DEFAULT,
-  timeZone: TimeZoneType = TIME_ZONES.DEFAULT
+  timeZone: TimeZoneType = TIME_ZONES.KST
 ): string => {
   if (!dateValue) {
     return '-';
@@ -124,10 +125,10 @@ export const formatDateTime = (
     if (!date) {
       return '-';
     }
-
+    
+    // date-fns-tz의 formatInTimeZone 함수로 포맷팅 처리
     return formatInTimeZone(date, timeZone, formatStr, { locale: ko });
   } catch (error) {
-    console.error('날짜 포맷팅 오류:', error);
     return '-';
   }
 };
@@ -203,10 +204,12 @@ export const normalizeDateFieldsFromApi = <T>(data: T, requestUrl: string = ''):
   const DATE_FIELD_CANDIDATES = [
     // 카멜케이스
     'createdAt', 'lastModifiedAt', 'updatedAt', 'publishedAt', 
-    'expiresAt', 'deletedAt', 'dateAdded', 'dateModified',
+    'expiresAt', 'deletedAt', 'dateAdded', 'dateModified', 'date',
+    'timestamp', // 활동 이력의 timestamp 필드 추가
     // 스네이크케이스 (백엔드 일관성)
     'created_at', 'last_modified_at', 'updated_at', 'published_at',
-    'expires_at', 'deleted_at', 'date_added', 'date_modified'
+    'expires_at', 'deleted_at', 'date_added', 'date_modified',
+    'timestamp' // 활동 이력의 timestamp 필드 추가 (스네이크케이스)
   ];
 
   const processValue = (value: any): any => {
@@ -229,12 +232,37 @@ export const normalizeDateFieldsFromApi = <T>(data: T, requestUrl: string = ''):
       // 일반 객체 처리
       const result: any = {};
       for (const [key, val] of Object.entries(value)) {
-        // 날짜 필드 후보인 경우 Date 객체로 변환 시도
+        // 날짜 필드 후보인 경우 Date 객체로 변환 시도 (UTC->KST 변환 고려)
         if (DATE_FIELD_CANDIDATES.includes(key) && typeof val === 'string') {
           try {
-            const date = parseDate(val);
-            result[key] = date || val;
+                                    // 백엔드에서 전송된 날짜를 간단하게 처리
+            let date;
+            
+            // MongoDB 문자열을 ISO 형식으로 예상하고 처리
+            // MongoDB ISODate 문자열은 Z가 없어도 UTC 시간임
+            try {
+              // 1. 문자열에 Z가 없으면 추가
+              if (typeof val === 'string' && val.includes('T') && !val.includes('Z') && !val.includes('+')) {
+                const isoString = val.replace(/(\.\d+)?$/, 'Z');
+                date = parseISO(isoString);
+              } else {
+                // 2. 기본 파싱 시도
+                date = parseDate(val);
+              }
+              
+              if (date && isValid(date)) {
+                // 유효한 날짜라면 그대로 사용
+                result[key] = date;
+            
+              } else {
+                result[key] = val;
+              }
+            } catch (e) {
+              // 오류 발생 시 원본 값 그대로 사용
+              result[key] = val;
+            }
           } catch (error) {
+            console.error(`[ERROR] 날짜 변환 오류 (${key}):`, error);
             result[key] = val;
           }
         } else {

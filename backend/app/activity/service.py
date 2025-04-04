@@ -11,7 +11,6 @@ import inspect
 from .repository import ActivityRepository
 from .models import UserActivity, ActivityAction, ActivityTargetType
 from ..cve.models import ChangeItem
-from ..core.socketio_manager import WSMessageType
 from ..common.utils.change_detection import detect_object_changes
 
 logger = logging.getLogger(__name__)
@@ -50,53 +49,23 @@ class ActivityService:
             생성된 활동 또는 None
         """
         try:
+            # action과 target_type이 문자열이거나 Enum일 수 있으므로 각각 처리
+            action_value = action if isinstance(action, str) else action.value
+            target_type_value = target_type if isinstance(target_type, str) else target_type.value
+            
             activity_data = {
                 "username": username,
                 "timestamp": datetime.now(ZoneInfo("UTC")),
-                "action": action.value,
-                "target_type": target_type.value,
+                "action": action_value,
+                "target_type": target_type_value,
                 "target_id": target_id,
                 "target_title": target_title,
                 "changes": changes or [],
                 "metadata": metadata or {}
             }
             
-            # 활동 생성
+            # 활동 생성 및 반환
             activity = await self.repository.create_activity(activity_data)
-            
-            # 웹소켓으로 활동 알림
-            from ..core.socketio_manager import socketio_manager
-            
-            # 두 개의 이벤트로 알림 - 사용자 관련 및 대상 관련
-            # 1. 사용자별 활동 알림
-            await socketio_manager.emit(
-                WSMessageType.USER_ACTIVITY_UPDATED,
-                {
-                    "username": username,
-                    "activity": activity.dict(exclude={"id"})
-                },
-                room=f"user:{username}"
-            )
-            
-            # 2. 대상별 활동 알림
-            await socketio_manager.emit(
-                WSMessageType.TARGET_ACTIVITY_UPDATED,
-                {
-                    "target_type": target_type.value,
-                    "target_id": target_id,
-                    "activity": activity.dict(exclude={"id"})
-                },
-                room=f"{target_type.value}:{target_id}"
-            )
-            
-            # 3. 글로벌 활동 알림
-            await socketio_manager.emit(
-                WSMessageType.GLOBAL_ACTIVITY_UPDATED,
-                {
-                    "activity": activity.dict(exclude={"id"})
-                }
-            )
-            
             return activity
             
         except Exception as e:
@@ -319,11 +288,65 @@ class ActivityService:
         """
         try:
             # 변경 사항 감지
-            changes = detect_object_changes(old_obj, new_obj, ignore_fields)
+            change_logs = detect_object_changes(old_obj, new_obj, ignore_fields)
             
             # 변경 사항이 없으면 활동 기록 생성하지 않음
-            if not changes:
+            if not change_logs:
                 return None
+            
+            # 필드 이름 매핑 (한글명 또는 사용자 친화적 이름)
+            field_name_mapping = {
+                "title": "제목",
+                "description": "설명",
+                "status": "상태",
+                "assigned_to": "담당자",
+                "severity": "심각도",
+                "pocs": "PoC",
+                "snort_rules": "Snort 규칙",
+                "references": "참조 문서",
+                "username": "사용자명",
+                "email": "이메일",
+                "is_active": "활성 상태",
+                "is_admin": "관리자 여부",
+                "full_name": "이름",
+                "comment": "댓글",
+                # 필요한 필드 추가
+            }
+            
+            # ChangeLogBase를 ChangeItem으로 변환
+            from ..cve.models import ChangeItem
+            
+            # 변경 사항이 여러 개인 경우를 하나의 통합된 ChangeItem으로 처리
+            # 필드가 여러 개인 경우 간단히 표시하기 위해 추가 요약
+            if len(change_logs) > 1:
+                # 필드명 수집
+                changed_fields = [field_name_mapping.get(log.field, log.field) for log in change_logs]
+                
+                change_item = ChangeItem(
+                    field="multiple",
+                    field_name="여러 필드",
+                    action="edit",
+                    detail_type="simple",
+                    summary=f"{len(changed_fields)}개 필드 변경됨: {', '.join(changed_fields[:3])}{' 등' if len(changed_fields) > 3 else ''}"
+                )
+                change_items = [change_item]
+            else:
+                # 단일 변경인 경우 상세 정보 제공
+                log = change_logs[0] if change_logs else None
+                if log:
+                    field_name = field_name_mapping.get(log.field, log.field)
+                    change_item = ChangeItem(
+                        field=log.field,
+                        field_name=field_name,
+                        action="edit" if log.action == "edit" else ("add" if log.action == "add" else "delete"),
+                        detail_type="detailed",
+                        before=log.old_value,
+                        after=log.new_value,
+                        summary=log.summary if hasattr(log, 'summary') else f"{field_name} 변경됨"
+                    )
+                    change_items = [change_item]
+                else:
+                    change_items = []
                 
             # 활동 기록 생성
             return await self.create_activity(
@@ -332,7 +355,7 @@ class ActivityService:
                 target_type=target_type,
                 target_id=target_id,
                 target_title=target_title or str(target_id),
-                changes=changes,
+                changes=change_items,
                 metadata=metadata or {}
             )
         except Exception as e:

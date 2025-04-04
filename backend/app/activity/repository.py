@@ -8,6 +8,16 @@ from .models import UserActivity, ActivityAction, ActivityTargetType
 
 class ActivityRepository:
     """사용자 활동 저장소 클래스"""
+    
+    def _convert_activities_for_response(self, activities: List[UserActivity]) -> List[Dict[str, Any]]:
+        """MongoDB 객체를 API 응답에 맞게 변환합니다."""
+        items_with_id = []
+        for activity in activities:
+            activity_dict = activity.dict()
+            # MongoDB _id를 id 필드로 복사
+            activity_dict["id"] = str(activity_dict.get("_id"))
+            items_with_id.append(activity_dict)
+        return items_with_id
 
     async def create_activity(self, activity_data: Dict[str, Any]) -> UserActivity:
         """
@@ -55,7 +65,7 @@ class ActivityRepository:
         
         return {
             "total": total,
-            "items": activities,
+            "items": self._convert_activities_for_response(activities),
             "page": page,
             "limit": limit
         }
@@ -97,7 +107,7 @@ class ActivityRepository:
         
         return {
             "total": total,
-            "items": activities,
+            "items": self._convert_activities_for_response(activities),
             "page": page,
             "limit": limit
         }
@@ -123,17 +133,25 @@ class ActivityRepository:
         query = {}
         
         if filter_data:
-            # 대상 유형 필터
+            # 대상 유형 필터 - OR 조건 처리
             if "target_type" in filter_data:
                 if isinstance(filter_data["target_type"], ActivityTargetType):
                     query["target_type"] = filter_data["target_type"].value
+                elif isinstance(filter_data["target_type"], str) and "," in filter_data["target_type"]:
+                    # 쉼표로 구분된 문자열을 배열로 분할하여 $in 연산자 사용(OR 조건)
+                    target_type_list = [target_type.strip() for target_type in filter_data["target_type"].split(",")]
+                    query["target_type"] = {"$in": target_type_list}
                 else:
                     query["target_type"] = filter_data["target_type"]
             
-            # 동작 필터
+            # 동작 필터 - OR 조건 처리
             if "action" in filter_data:
                 if isinstance(filter_data["action"], ActivityAction):
                     query["action"] = filter_data["action"].value
+                elif isinstance(filter_data["action"], str) and "," in filter_data["action"]:
+                    # 쉼표로 구분된 문자열을 배열로 분할하여 $in 연산자 사용(OR 조건)
+                    action_list = [action.strip() for action in filter_data["action"].split(",")]
+                    query["action"] = {"$in": action_list}
                 else:
                     query["action"] = filter_data["action"]
             
@@ -170,7 +188,7 @@ class ActivityRepository:
         
         return {
             "total": total,
-            "items": activities,
+            "items": self._convert_activities_for_response(activities),
             "page": page,
             "limit": limit
         }

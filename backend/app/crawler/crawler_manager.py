@@ -78,6 +78,19 @@ class CrawlerManager(LoggingMixin):
             크롤러 인스턴스 또는 None
         """
         return self._crawlers.get(crawler_type.lower())
+        
+    def create_crawler(self, crawler_type: str) -> Optional[BaseCrawlerService]:
+        """
+        지정된 유형의 크롤러를 생성합니다. (하위 호환성을 위한 메서드)
+        내부적으로 get_crawler 메서드를 호출합니다.
+        
+        Args:
+            crawler_type: 크롤러 유형
+            
+        Returns:
+            크롤러 인스턴스 또는 None
+        """
+        return self.get_crawler(crawler_type)
     
     async def run_crawler(self, crawler_type: str, user_id: Optional[str] = None, quiet_mode: bool = False) -> Dict[str, Any]:
         """

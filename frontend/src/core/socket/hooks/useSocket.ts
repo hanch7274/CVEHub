@@ -95,6 +95,9 @@ export interface SocketHookResult<TPayload = any> {
   /** 이벤트 리스너 제거 함수 */
   off: <T = any>(eventName: string, callback: (data: T) => void) => void;
   
+  /** 이벤트 리스너 제거 함수 (off의 별칭) */
+  removeEventListener: <T = any>(eventName: string, callback: (data: T) => void) => void;
+  
   /** 일반 메시지 전송 함수 */
   emit: (messageEvent: string, data: any, localUpdateCallback?: (data: any) => void) => void;
   
@@ -124,14 +127,24 @@ export interface SocketHookResult<TPayload = any> {
   
   /** 웹소켓 정리 함수 */
   cleanup: () => void;
+  
+  /** CVE 구독 함수 */
+  subscribeCVE: (cveId: string) => void;
+  
+  /** CVE 구독 해제 함수 */
+  unsubscribeCVE: (cveId: string) => void;
+  
+  /** CVE 구독 상태 확인 함수 */
+  isSubscribedToCVE: (cveId: string) => boolean;
+  
+  /** 구독 중인 CVE 목록 */
+  subscribedCVEs: string[];
 }
 
 /**
  * 통합 웹소켓 훅
  * 
  * socketService를 활용하여 웹소켓 연결 및 이벤트 처리를 간소화하는 통합 훅입니다.
- * useSocketMigration, useSocketEventListener, useWebSocketWithStore의 기능을 통합하여
- * 단일 인터페이스를 제공합니다.
  * 
  * @param event - 구독할 이벤트 이름 (옵션)
  * @param callback - 이벤트 발생 시 호출될 콜백 함수 (옵션)
@@ -269,6 +282,9 @@ export function useSocket<TData = any, TPayload = any>(
     [handleEvent, throttleDelay]
   );
   
+  // 이벤트 이름을 저장하기 위한 ref
+  const eventNameRef = useRef<string | undefined>(event);
+  
   // 이벤트 구독 함수
   const subscribe = useCallback((eventName?: string) => {
     const targetEvent = eventName || event;
@@ -286,6 +302,7 @@ export function useSocket<TData = any, TPayload = any>(
     try {
       // 이벤트 이름 추적에 추가
       eventNamesRef.current.add(targetEvent);
+      eventNameRef.current = targetEvent;
       
       if (useRxJS) {
         // RxJS 방식으로 구독
@@ -307,66 +324,83 @@ export function useSocket<TData = any, TPayload = any>(
             }
           }
         });
-        
-        logger.debug('useSocket', `RxJS로 이벤트 구독: ${targetEvent}`, { componentId });
-      } else {
-        // 기존 방식으로 구독
-        socketService.on(targetEvent, throttledEventHandler as any);
-        logger.debug('useSocket', `기존 방식으로 이벤트 구독: ${targetEvent}`);
       }
       
       setIsSubscribed(true);
+      logger.debug('useSocket', `이벤트 구독: ${targetEvent}`);
     } catch (error) {
-      logger.error('useSocket', `이벤트 구독 중 오류: ${targetEvent}`, error);
-      
+      logger.error('useSocket', `이벤트 구독 중 오류 발생: ${targetEvent}`, error);
       if (onError) {
         onError(error as Error);
       }
     }
-  }, [event, isSubscribed, useRxJS, filterPredicate, throttledEventHandler, onError]);
+  }, [event, filterPredicate, useRxJS, isSubscribed, throttledEventHandler, onError]);
   
   // 구독 해제 함수
-  const unsubscribe = useCallback((eventName?: string) => {
-    const targetEvent = eventName || event;
-    
-    if (!targetEvent) {
-      logger.warn('useSocket', '이벤트 이름이 제공되지 않았습니다.');
+  const unsubscribe = useCallback((eventToUnsubscribe?: string) => {
+    const actualEvent = eventToUnsubscribe || eventNameRef.current || event;
+    if (!actualEvent) {
+      logger.warn('useSocket', '구독 해제할 이벤트를 지정하지 않았습니다.');
       return;
     }
     
-    if (!isSubscribed) {
-      logger.debug('useSocket', `이미 구독 해제됨: ${targetEvent}`);
+    // RxJS 구독이 있으면 해제
+    if (subscriptionRef.current) {
+      subscriptionRef.current.unsubscribe();
+      subscriptionRef.current = null;
+    }
+    
+    // 이벤트 이름 추적에서 제거
+    eventNamesRef.current.delete(actualEvent);
+    eventNameRef.current = undefined;
+    
+    setIsSubscribed(false);
+    logger.debug('useSocket', `이벤트 구독 해제: ${actualEvent}`);
+  }, [event]);
+  
+  // CVE 구독 관련 메소드(socketService에 위임)
+  const subscribeCVE = useCallback((cveId: string) => {
+    if (!cveId) return;
+    socketService.subscribeCVE(cveId);
+  }, []);
+  
+  const unsubscribeCVE = useCallback((cveId: string) => {
+    if (!cveId) return;
+    socketService.unsubscribeCVE(cveId);
+  }, []);
+  
+  const isSubscribedToCVE = useCallback((cveId: string) => {
+    return socketService.isSubscribedToCVE(cveId);
+  }, []);
+  
+  // 구독 중인 CVE 목록을 상태로 관리
+  const [subscribedCVEs, setSubscribedCVEs] = useState<string[]>(
+    socketService.getSubscribedCVEs()
+  );
+  
+  // CVE 구독 상태 변경 시 컴포넌트 상태 업데이트를 위한 효과
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      const currentSubscribedCVEs = socketService.getSubscribedCVEs();
+      // 깊은 비교를 통해 변경 사항이 있을 때만 상태 업데이트
+      if (!_.isEqual(currentSubscribedCVEs.sort(), subscribedCVEs.sort())) {
+        setSubscribedCVEs(currentSubscribedCVEs);
+      }
+    }, 1000); // 1초마다 확인
+    
+    return () => clearInterval(intervalId);
+  }, [subscribedCVEs]);
+  
+  // 콜백 메모이제이션
+  const memoizedCallback = useCallback(data => {
+    // 필터 조건이 있고, 데이터가 조건을 만족하지 않으면 무시
+    if (filterPredicate && !filterPredicate(data)) {
       return;
     }
     
-    try {
-      if (useRxJS) {
-        // RxJS 구독 해제
-        if (subscriptionRef.current) {
-          subscriptionRef.current.unsubscribe();
-          subscriptionRef.current = null;
-        }
-        
-        // socketService에서 컴포넌트 정리
-        socketService.cleanup(componentIdRef.current);
-      } else {
-        // 기존 방식 구독 해제
-        socketService.off(targetEvent, throttledEventHandler as any);
-      }
-      
-      // 이벤트 이름 추적에서 제거
-      eventNamesRef.current.delete(targetEvent);
-      
-      setIsSubscribed(false);
-      logger.debug('useSocket', `이벤트 구독 해제: ${targetEvent}`);
-    } catch (error) {
-      logger.error('useSocket', `이벤트 구독 해제 중 오류: ${targetEvent}`, error);
-      
-      if (onError) {
-        onError(error as Error);
-      }
-    }
-  }, [event, isSubscribed, useRxJS, throttledEventHandler, onError]);
+    setLastReceivedData(data);
+    callback?.(data);
+  }, [callback, filterPredicate]);
   
   // 이벤트 리스너 등록 함수
   const on = useCallback(<T = any>(eventName: string, callback: (data: T) => void) => {
@@ -377,9 +411,6 @@ export function useSocket<TData = any, TPayload = any>(
     
     const handlers = eventHandlersRef.current.get(eventName)!;
     handlers.add(callback as any);
-    
-    // 실제 이벤트 리스너 등록
-    const unsubscribe = socketService.on(eventName, callback);
     
     logger.debug('useSocket', `이벤트 리스너 등록: ${eventName}`);
     
@@ -392,7 +423,6 @@ export function useSocket<TData = any, TPayload = any>(
           eventHandlersRef.current.delete(eventName);
         }
       }
-      unsubscribe();
       logger.debug('useSocket', `이벤트 리스너 제거: ${eventName}`);
     };
   }, []);
@@ -416,25 +446,18 @@ export function useSocket<TData = any, TPayload = any>(
     logger.debug('useSocket', `이벤트 리스너 제거: ${eventName}`);
   }, []);
   
-  // 기본 이벤트 발신 함수
+  // 일반 메시지 전송 함수
   const emit = useCallback((messageEvent: string, data: any, localUpdateCallback?: (data: any) => void) => {
     try {
-    
-      // 소켓 연결 상태 확인
-      if (!socketService.isSocketConnected()) {
-        logger.warn('useSocket', `소켓 연결 없이 메시지 전송 시도: ${messageEvent}`);
-        return;
-      }
+      // 소켓을 통해 메시지 전송
+      socketService.emit(messageEvent, data);
       
-      logger.debug('useSocket', `메시지 전송: ${messageEvent}`);
-      
-      // 로컬 업데이트 콜백이 제공된 경우 즉시 실행
+      // 로컬 업데이트 콜백이 제공된 경우 호출
       if (localUpdateCallback) {
         localUpdateCallback(data);
       }
       
-      // 소켓을 통해 메시지 전송
-      socketService.emit(messageEvent, data);
+      logger.debug('useSocket', `메시지 전송: ${messageEvent}`, data);
     } catch (error) {
       logger.error('useSocket', `메시지 전송 중 오류 발생: ${messageEvent}`, error);
       
@@ -445,7 +468,7 @@ export function useSocket<TData = any, TPayload = any>(
   }, [onError]);
   
   // 디바운스된 메시지 전송 함수
-  const emitDebounced = useCallback(
+  const debouncedEmit = useCallback(
     _.debounce((messageEvent: string, data: any, localUpdateCallback?: (data: any) => void) => {
       emit(messageEvent, data, localUpdateCallback);
     }, debounceDelay),
@@ -453,71 +476,105 @@ export function useSocket<TData = any, TPayload = any>(
   );
   
   // 쓰로틀된 메시지 전송 함수
-  const emitThrottled = useCallback(
+  const throttledEmit = useCallback(
     _.throttle((messageEvent: string, data: any, localUpdateCallback?: (data: any) => void) => {
       emit(messageEvent, data, localUpdateCallback);
     }, throttleDelay, { leading: true, trailing: true }),
     [emit, throttleDelay]
   );
   
-  // 연결 상태 변경 감지 및 처리
+  // 이벤트 리스너 제거 함수 (off의 별칭)
+  const removeEventListener = useCallback(<T = any>(eventName: string, callback: (data: T) => void) => {
+    off(eventName, callback);
+  }, [off]);
+  
+  // 이벤트 리스너 함수의 연결 상태에 대한 효과
   useEffect(() => {
     // 연결 상태 변경 시 콜백 호출
     if (onConnectionChange) {
       onConnectionChange(connected);
     }
     
-    // 연결되었고 자동 구독이 활성화된 경우 구독
-    if (connected && subscribeImmediately && event && !isSubscribed) {
-      subscribe();
+    // 연결됐을 때 즉시 구독 설정
+    // 중요: 소켓 연결은 App.jsx에서 관리
+    if (connected && subscribeImmediately && event) {
+      subscribe(event);
     }
-  }, [connected, event, isSubscribed, subscribe, subscribeImmediately, onConnectionChange]);
+    
+  }, [connected, subscribeImmediately, event, subscribe, onConnectionChange]);
+
+  // 소켓 연결 상태 검사
+  useEffect(() => {
+    // 경고: 여기서는 소켓 연결을 초기화하지 않음 (최상위 App.jsx에서 관리)
+    if (!socketService.isSocketConnected() && process.env.NODE_ENV === 'development') {
+      logger.warn('useSocket', '소켓이 연결되지 않았습니다. 연결은 App.jsx에서 관리됩니다.');
+    }
+  }, []);
   
   // 정리 함수
   const cleanup = useCallback(() => {
     try {
       // 구독 상태인 경우 구독 해제
-      if (isSubscribed && event) {
+      if (isSubscribed) {
         unsubscribe();
       }
       
-      // socketService에서 컴포넌트 정리
-      socketService.cleanup(componentIdRef.current);
+      // RxJS 구독 취소
+      if (subscriptionRef.current) {
+        subscriptionRef.current.unsubscribe();
+        subscriptionRef.current = null;
+      }
       
-      // 쓰로틀, 디바운스 함수 취소
-      throttledEventHandler.cancel && throttledEventHandler.cancel();
-      emitDebounced.cancel && emitDebounced.cancel();
-      emitThrottled.cancel && emitThrottled.cancel();
+      // 이벤트 핸들러 맵 정리
+      eventHandlersRef.current.clear();
+      eventNamesRef.current.clear();
+      setIsSubscribed(false);
+      setLastReceivedData(null);
       
-      logger.debug('useSocket', '리소스 정리 완료', { componentId: componentIdRef.current });
+      // 중요: 여기서는 소켓 연결을 해제하지 않음 (최상위 App.jsx에서 관리)
+      logger.debug('useSocket', '이 컴포넌트의 이벤트 구독 정리 완료');
     } catch (error) {
       logger.error('useSocket', '정리 중 오류 발생', error);
     }
-  }, [isSubscribed, event, unsubscribe, throttledEventHandler, emitDebounced, emitThrottled]);
+  }, []);
   
   // 컴포넌트 언마운트 시 정리
   useEffect(() => {
-    return cleanup;
+    return () => {
+      cleanup();
+    };
   }, [cleanup]);
   
-  // 결과 반환
+  // 훅 결과 반환
   return {
+    // 기본 속성
     isSubscribed,
     subscribe,
     unsubscribe,
     on,
     addEventListener,
     off,
+    removeEventListener: off,
     emit,
-    emitDebounced,
-    emitThrottled,
+    emitDebounced: debouncedEmit,
+    emitThrottled: throttledEmit,
+    
+    // 연결 상태 정보
     connected,
     connectionState,
     connectionError,
     socket: socketService.getSocket(),
     lastReceivedData,
     connectionState$: socketService.getConnectionState(),
-    cleanup
+    
+    // 추가 유틸리티 함수
+    cleanup,
+    
+    // CVE 구독 관련 메소드
+    subscribeCVE,
+    unsubscribeCVE,
+    isSubscribedToCVE,
+    subscribedCVEs
   };
 }
 
@@ -543,7 +600,7 @@ export function useSocketEventListener<T = any>(
     filterPredicate?: (data: T) => boolean;
     componentId?: string;
   } = {}
-) {
+): { isSubscribed: boolean; subscribe: () => void; unsubscribe: () => void; emit: (data: any) => void } {
   const socket = useSocket<any, T>(
     eventName, 
     callback, 
@@ -560,110 +617,6 @@ export function useSocketEventListener<T = any>(
     subscribe: () => socket.subscribe(eventName),
     unsubscribe: () => socket.unsubscribe(eventName),
     emit: (data: any) => socket.emit(eventName, data)
-  };
-}
-
-/**
- * useSocketMigration 훅
- * 
- * 기존 SocketIOContext에서 새로운 useSocket 훅으로의 점진적 마이그레이션을 
- * 지원하는 훅으로, 기존 코드와의 호환성을 위해 제공됩니다.
- * 
- * @returns 마이그레이션 지원 객체
- */
-export function useSocketMigration() {
-  const socket = useSocket();
-  const componentIdRef = useRef<string>(uuidv4());
-  
-  // 마이그레이션 유틸리티 함수
-  const migrateEvent = useCallback(<T = any>(
-    eventName: string,
-    legacyCallback: (data: T) => void,
-    componentId: string = componentIdRef.current
-  ) => {
-    // socketService의 fromEvent 메서드를 사용한 구독
-    const subscription = socketService
-      .fromEvent<T>(eventName, componentId)
-      .subscribe({
-        next: legacyCallback,
-        error: (err) => {
-          logger.error('useSocketMigration', `마이그레이션된 이벤트 스트림 오류: ${eventName}`, err);
-        }
-      });
-    
-    logger.info('useSocketMigration', `이벤트 마이그레이션 완료: ${eventName}`, { componentId });
-    
-    // 정리 함수 반환
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-  
-  // useCVEQuery와 호환되는 구독 메소드
-  const subscribe = useCallback(<T = any>(
-    eventName: string,
-    callback: (data: T) => void
-  ) => {
-    const unsubscribeFn = socket.on(eventName, callback);
-    
-    return {
-      unsubscribe: unsubscribeFn
-    };
-  }, [socket]);
-  
-  // getLegacySocketInterface 메소드 제공
-  const getLegacySocketInterface = useCallback(() => {
-    return {
-      socket: socketService.getSocket(),
-      connected: socketService.isSocketConnected(),
-      isReady: socketService.isSocketConnected(),
-      error: null,
-      on: socket.on,
-      addEventListener: socket.addEventListener,
-      emit: socket.emit,
-      subscribe
-    };
-  }, [socket, subscribe]);
-  
-  return {
-    ...socket,
-    migrateEvent,
-    subscribe,
-    fromEvent: socketService.fromEvent,
-    getConnectionState: socketService.getConnectionState,
-    getLegacySocketInterface
-  };
-}
-
-/**
- * useWebSocketWithStore 훅
- * 
- * 기존 useWebSocketWithStore 훅과의 호환성을 위해 제공되는 훅입니다.
- * 내부적으로는 useSocket 훅을 사용합니다.
- * 
- * @param event - 구독할 이벤트 이름
- * @param callback - 이벤트 발생 시 호출될 콜백 함수
- * @param options - 훅 옵션
- * @returns 웹소켓 제어 객체
- */
-export function useWebSocketWithStore<TData = any, TPayload = any>(
-  event: string,
-  callback: (data: TPayload) => void,
-  options: Partial<SocketHookOptions<TData, TPayload>> = {}
-) {
-  const socket = useSocket<TData, TPayload>(event, callback, [], {
-    ...options,
-    subscribeImmediately: true
-  });
-  
-  return {
-    sendMessage: socket.emit,
-    sendMessageDebounced: socket.emitDebounced,
-    connected: socket.connected,
-    subscribe: socket.on,
-    lastReceivedData: socket.lastReceivedData,
-    connectionState: socket.connectionState,
-    connectionError: socket.connectionError
   };
 }
 

@@ -5,11 +5,11 @@ import {
   ListItem,
   ListItemIcon,
   ListItemText,
-  Typography,
+  Divider,
   Box,
-  ListItemButton,
+  Typography,
   IconButton,
-  useMediaQuery,
+  ListItemButton,
   alpha
 } from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
@@ -26,13 +26,8 @@ const drawerWidth = 240;
 const Sidebar = () => {
   const theme = useTheme();
   const location = useLocation();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const [open, setOpen] = useState(!isMobile);
-
-  // 화면 크기가 변경될 때 사이드바 상태 조정
-  useEffect(() => {
-    setOpen(!isMobile);
-  }, [isMobile]);
+  // PC 환경에서는 기본적으로 사이드바 오픈
+  const [open, setOpen] = useState(true);
 
   const handleDrawerToggle = () => {
     setOpen(!open);

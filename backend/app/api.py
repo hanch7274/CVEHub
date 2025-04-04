@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 from app.auth.router import router as auth_router
 from app.cve.router import router as cve_router
+from app.comment.router import router as comment_router
 from app.notification.router import router as notification_router
 from app.crawler.router import router as crawler_router
 from app.cache.router import router as cache_router
@@ -15,6 +16,9 @@ api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 
 # CVE 관련 라우터
 api_router.include_router(cve_router, prefix="/cves", tags=["cves"])
+
+# 댓글 관련 라우터
+api_router.include_router(comment_router, prefix="/cves", tags=["comments"])
 
 # 알림 관련 라우터
 api_router.include_router(notification_router, prefix="/notifications", tags=["notifications"])

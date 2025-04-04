@@ -8,7 +8,7 @@ from app.auth.models import User
 from app.auth.service import get_current_user
 from app.core.exceptions import NotFoundError, ValidationError, DatabaseError
 from app.core.schemas import APIResponse, PaginatedResponse, Metadata
-from app.core.socketio_manager import socketio_manager
+from app.socketio.manager import socketio_manager
 from app.notification.service import NotificationService
 from app.core.dependencies import get_notification_service
 import logging

@@ -35,7 +35,7 @@ import {
   useTheme,
   alpha
 } from '@mui/material';
-import { TIME_ZONES, formatDateTime } from 'shared/utils/dateUtils';
+import { TIME_ZONES, DATE_FORMATS, formatDateTime } from 'shared/utils/dateUtils';
 import SearchIcon from '@mui/icons-material/Search';
 import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -582,10 +582,10 @@ const CVETable = React.memo(({
                         />
                       </TableCell>
                       <TableCell sx={tableCellBaseStyle}>
-                        {formatDateTime(cve.createdAt || cve.created_at, undefined, TIME_ZONES.KST)}
+                        {formatDateTime(cve.createdAt || cve.created_at, DATE_FORMATS.DISPLAY.DEFAULT)}
                       </TableCell>
                       <TableCell sx={tableCellBaseStyle}>
-                        {formatDateTime(cve.lastModifiedAt || cve.last_modified_at, undefined, TIME_ZONES.KST)}
+                        {formatDateTime(cve.lastModifiedAt || cve.last_modified_at, DATE_FORMATS.DISPLAY.DEFAULT)}
                       </TableCell>
                       <TableCell sx={tableCellBaseStyle}>
                         <Box sx={{ display: 'flex', gap: 1 }}>
@@ -1012,8 +1012,20 @@ const CVEList = () => {
     setPage(1);
   }, []);
 
+  // 페이지 변경 핸들러에 디바운싱 적용 (빠른 연속 클릭 방지)
+  const pageChangeTimeoutRef = useRef(null);
+  
   const handlePageChange = useCallback((event, newPage) => {
-    setPage(newPage + 1);
+    // 이전 타임아웃이 있으면 취소
+    if (pageChangeTimeoutRef.current) {
+      clearTimeout(pageChangeTimeoutRef.current);
+    }
+    
+    // 새로운 타임아웃 설정 (150ms 디바운스)
+    pageChangeTimeoutRef.current = setTimeout(() => {
+      setPage(newPage + 1);
+      pageChangeTimeoutRef.current = null;
+    }, 150);
   }, []);
 
   const handleRowsPerPageChange = useCallback((event) => {

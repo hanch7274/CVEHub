@@ -108,7 +108,14 @@ const isExcludedFromLogging = (url?: string): boolean => {
 // URL 패턴에 따라 날짜 처리 여부 결정
 const shouldProcessDates = (url?: string): boolean => {
   if (!url) return false;
-  return !URL_NO_DATE_PROCESS_PATTERNS.some(pattern => url.includes(pattern));
+  const shouldProcess = !URL_NO_DATE_PROCESS_PATTERNS.some(pattern => url.includes(pattern));
+  
+  // 개발 환경에서만 날짜 처리 여부 로깅
+  if (isDevelopment() && url.includes('/activities')) {
+    console.log(`[axios] 날짜 처리 결정: URL=${url}, 처리여부=${shouldProcess}`);
+  }
+  
+  return shouldProcess;
 };
 
 // Request Interceptor
@@ -287,9 +294,31 @@ api.interceptors.response.use(
     
     // 날짜 필드 처리 (ISO 문자열을 Date 객체로 변환)
     if (response.data && 
-        typeof response.data === 'object' && 
-        shouldProcessDates(response.config.url)) {
-      response.data = normalizeDateFieldsFromApi(response.data);
+        typeof response.data === 'object') {
+      const url = response.config.url || '';
+      const shouldProcess = shouldProcessDates(url);
+      
+      // 개발 환경에서만 로그 출력
+      if (isDevelopment() && url.includes('/activities')) {
+        console.log(`[axios] 응답 인터셉터 날짜 처리: URL=${url}, 처리여부=${shouldProcess}`);
+        
+        if (shouldProcess) {
+          console.log(`[axios] 날짜 변환 전 timestamp 샘플:`, 
+            Array.isArray(response.data.items) && response.data.items.length > 0 ? 
+              response.data.items[0].timestamp : '샘플 없음');
+        }
+      }
+      
+      if (shouldProcess) {
+        response.data = normalizeDateFieldsFromApi(response.data);
+        
+        // 개발 환경에서만 로그 출력
+        if (isDevelopment() && url.includes('/activities')) {
+          console.log(`[axios] 날짜 변환 후 timestamp 샘플:`, 
+            Array.isArray(response.data.items) && response.data.items.length > 0 ? 
+              response.data.items[0].timestamp : '샘플 없음');
+        }
+      }
     }
     
     // 스네이크 케이스를 카멜 케이스로 변환

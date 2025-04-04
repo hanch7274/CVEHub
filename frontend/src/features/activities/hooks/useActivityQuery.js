@@ -80,8 +80,22 @@ export const useActivityQuery = (options = {}) => {
           url = `/activities/targets/${target_type}/${target_id}`;
         } else {
           // 기본 엔드포인트에서 필터 적용
-          if (action) params.activity_type = action;
-          if (target_type) params.target_type = target_type;
+          if (action) {
+            // action이 배열인 경우, 쉼표로 구분된 문자열로 변환
+            if (Array.isArray(action) && action.length > 0) {
+              params.action = action.join(',');
+            } else if (typeof action === 'string') {
+              params.action = action;
+            }
+          }
+          if (target_type) {
+            // target_type이 배열인 경우, 쉼표로 구분된 문자열로 변환
+            if (Array.isArray(target_type) && target_type.length > 0) {
+              params.target_type = target_type.join(',');
+            } else if (typeof target_type === 'string') {
+              params.target_type = target_type;
+            }
+          }
           if (start_date) params.start_date = start_date.toISOString();
           if (end_date) params.end_date = end_date.toISOString();
         }
@@ -93,19 +107,39 @@ export const useActivityQuery = (options = {}) => {
         
         const { data } = await axios.get(url, { params });
         
-        // 데이터 가공 및 정렬
-        const processedData = {
-          ...data,
-          items: Array.isArray(data.items) 
-            ? data.items.map(item => ({
-                ...item,
-                // 타임스탬프가 문자열로 오는 경우 Date 객체로 변환
-                timestamp: item.timestamp ? new Date(item.timestamp) : new Date()
-              }))
-            : []
-        };
+        // 날짜 필드는 이미 axios 인터셉터에서 normalizeDateFieldsFromApi를 통해 처리됨
+        // 디버깅: 활동 내역 조회 결과 출력
+        console.log(`[활동 내역 디버그] 데이터 조회 결과:`, {
+          url,
+          params,
+          총건수: data.total,
+          현재페이지: params.page,
+          페이지당항목수: params.limit,
+          필터: {
+            사용자: username || '모든 사용자',
+            대상유형: target_type || '전체',
+            대상ID: target_id || '전체',
+            액션: action || '전체',
+            시작일: start_date ? new Date(start_date).toLocaleDateString() : '전체',
+            종료일: end_date ? new Date(end_date).toLocaleDateString() : '전체'
+          }
+        });
         
-        return processedData;
+        // 조회된 첫 5개 항목 샘플 출력 (항목이 많을 경우)
+        if (Array.isArray(data.items) && data.items.length > 0) {
+          console.log(`[활동 내역 디버그] 조회된 항목 샘플 (최대 5개):`, 
+            data.items.slice(0, 5).map(item => ({
+              ID: item.id,
+              사용자: item.username,
+              액션: item.action,
+              대상: `${item.target_type}${item.target_id ? ` (${item.target_id})` : ''}`,
+              시간: item.timestamp.toLocaleString(),
+              상세: item.details
+            }))
+          );
+        }
+        
+        return data;
       } catch (error) {
         console.error('활동 이력 조회 중 오류 발생:', error);
         throw error;
@@ -140,18 +174,8 @@ export const useTargetActivities = (target_type, target_id, options = {}) => {
 
         const { data } = await axios.get(`/activities/targets/${target_type}/${target_id}`, { params });
         
-        // 데이터 가공 및 정렬
-        const processedData = {
-          ...data,
-          items: Array.isArray(data.items) 
-            ? data.items.map(item => ({
-                ...item,
-                timestamp: item.timestamp ? new Date(item.timestamp) : new Date()
-              }))
-            : []
-        };
-        
-        return processedData;
+        // 날짜 필드는 이미 axios 인터셉터에서 처리됨
+        return data;
       } catch (error) {
         console.error(`${target_type} ${target_id}의 활동 이력 조회 중 오류 발생:`, error);
         throw error;
@@ -186,18 +210,8 @@ export const useUserActivities = (username, options = {}) => {
 
         const { data } = await axios.get(`/activities/users/${username}`, { params });
         
-        // 데이터 가공 및 정렬
-        const processedData = {
-          ...data,
-          items: Array.isArray(data.items) 
-            ? data.items.map(item => ({
-                ...item,
-                timestamp: item.timestamp ? new Date(item.timestamp) : new Date()
-              }))
-            : []
-        };
-        
-        return processedData;
+        // 날짜 필드는 이미 axios 인터셉터에서 처리됨
+        return data;
       } catch (error) {
         console.error(`사용자 ${username}의 활동 이력 조회 중 오류 발생:`, error);
         throw error;

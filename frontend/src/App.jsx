@@ -273,6 +273,124 @@ window._socketDebug = socketService;
 const App = () => {
   const [selectedCVE, setSelectedCVE] = useState(null);
 
+  // 현재 경로 확인을 위한 추가 상태
+  const [currentPath, setCurrentPath] = useState(window.location.pathname);
+
+  // 현재 경로 업데이트 함수
+  useEffect(() => {
+    // 초기 경로 설정
+    setCurrentPath(window.location.pathname);
+
+    // 경로 변경 감지
+    const handleRouteChange = () => {
+      setCurrentPath(window.location.pathname);
+    };
+
+    // popstate 이벤트 리스너 등록 (뒤로가기/앞으로가기 감지)
+    window.addEventListener('popstate', handleRouteChange);
+
+    // 정리 함수
+    return () => {
+      window.removeEventListener('popstate', handleRouteChange);
+    };
+  }, []);
+
+  // 앱 시작 시 소켓 연결 초기화 (로그인/회원가입 페이지 제외)
+  useEffect(() => {
+    console.log('[App] Socket connection initialization, current path:', currentPath);
+    
+    // 로그인/회원가입 페이지인지 확인
+    const isAuthPage = currentPath === '/login' || currentPath === '/signup';
+    
+    // 인증 토큰 확인
+    const token = getAccessToken();
+    
+    if (token && !isAuthPage) {
+      console.log('[App] Token exists and not on auth page, connecting socket');
+      socketService.connect(token);
+    } else if (token && isAuthPage) {
+      console.log('[App] On auth page, not connecting socket despite token presence');
+      // 인증 페이지에 있을 때는 연결하지 않음
+      socketService.disconnect();
+    } else {
+      console.log('[App] No token, not connecting socket');
+    }
+
+    // 앱 종료 시 소켓 연결 정리
+    return () => {
+      console.log('[App] Cleaning up socket connection');
+      socketService.disconnect();
+    };
+  }, [currentPath]);
+
+  // 인증 상태 변경 감지 및 소켓 연결 업데이트
+  useEffect(() => {
+    // AuthContext에서 인증 상태 변경 이벤트 구독
+    const handleAuthChange = (e) => {
+      const isAuthenticated = e.detail.isAuthenticated;
+      console.log('[App] Auth state changed:', isAuthenticated);
+      
+      // 로그인/회원가입 페이지인지 확인
+      const isAuthPage = currentPath === '/login' || currentPath === '/signup';
+      
+      if (isAuthenticated && !isAuthPage) {
+        // 인증되었고 인증 페이지가 아닌 경우에만 연결
+        socketService.handleAuthStateChange(isAuthenticated);
+      } else if (!isAuthenticated) {
+        // 인증되지 않은 경우 연결 해제
+        socketService.disconnect();
+      }
+    };
+
+    // 이벤트 리스너 등록
+    window.addEventListener('auth-state-changed', handleAuthChange);
+
+    // 정리 함수
+    return () => {
+      window.removeEventListener('auth-state-changed', handleAuthChange);
+    };
+  }, [currentPath]);
+
+  // 페이지 가시성 변경 감지
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[App] Page visibility changed to visible');
+        const token = getAccessToken();
+        // 로그인/회원가입 페이지인지 확인
+        const isAuthPage = currentPath === '/login' || currentPath === '/signup';
+        
+        if (token && !socketService.isSocketConnected() && !isAuthPage) {
+          console.log('[App] Reconnecting socket on visibility change (not on auth page)');
+          socketService.connect(token);
+        }
+      }
+    };
+
+    // 온라인/오프라인 상태 감지
+    const handleOnline = () => {
+      console.log('[App] Browser went online');
+      const token = getAccessToken();
+      // 로그인/회원가입 페이지인지 확인
+      const isAuthPage = currentPath === '/login' || currentPath === '/signup';
+      
+      if (token && !socketService.isSocketConnected() && !isAuthPage) {
+        console.log('[App] Reconnecting socket on online state (not on auth page)');
+        socketService.connect(token);
+      }
+    };
+
+    // 이벤트 리스너 등록
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnline);
+
+    // 정리 함수
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [currentPath]);
+
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider theme={theme}>

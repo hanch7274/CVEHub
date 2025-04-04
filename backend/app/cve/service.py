@@ -1,7 +1,7 @@
 #app/cve/service.py
 """
-CVE 및 Comment 서비스 통합 구현
-모든 CVE 및 댓글 관련 비즈니스 로직 포함
+CVE 서비스 구현
+모든 CVE 관련 비즈니스 로직 포함
 """
 from typing import List, Optional, Tuple, Dict, Any, Union
 from datetime import datetime, timedelta
@@ -18,18 +18,15 @@ from bson import ObjectId
 from functools import wraps
 
 from app.cve.models import (
-    CVEModel, Comment, CommentCreate, CommentUpdate, CommentResponse, 
-    Reference, PoC, SnortRule, ModificationHistory, ChangeItem,
+    CVEModel, Reference, PoC, SnortRule, ModificationHistory, ChangeItem,
     CreateCVERequest, PatchCVERequest
 )
-from app.notification.models import Notification
-from app.auth.models import User
 from app.activity.models import ActivityAction, ActivityTargetType, UserActivity
 from app.activity.service import ActivityService
 from app.cve.repository import CVERepository
-from app.core.socketio_manager import socketio_manager, WSMessageType
 from app.common.utils.datetime_utils import get_utc_now, format_datetime, normalize_datetime_fields
 from app.common.utils.change_detection import detect_object_changes
+from app.comment.service import CommentService
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -131,7 +128,7 @@ def track_cve_activity(action, extract_title=None, ignore_fields=None):
                 if changes:  # 변경 사항이 있는 경우에만 기록
                     await self.activity_service.create_activity(
                         username=username,
-                        activity_type=action,
+                        action=action,
                         target_type=ActivityTargetType.CVE,
                         target_id=cve_id,
                         target_title=title,
@@ -144,18 +141,36 @@ def track_cve_activity(action, extract_title=None, ignore_fields=None):
     return decorator
 
 class CVEService:
-    """CVE 및 Comment 서비스"""
+    """CVE 서비스"""
     
-    def __init__(self):
-        self.repository = CVERepository()
-        self.activity_service = ActivityService()
-        # 댓글 관리 내부 클래스 초기화
-        self._comment_manager = self._CommentManager(self)
+    def __init__(self, cve_repository: CVERepository = None, activity_service: ActivityService = None, comment_service = None):
+        self.repository = cve_repository or CVERepository()
+        self.activity_service = activity_service or ActivityService()
+        self._comment_service = comment_service
 
     @property
     def comments(self):
-        """댓글 관련 기능에 접근하는 프로퍼티"""
-        return self._comment_manager
+        """댓글 관련 작업을 위한 서비스 접근자"""
+        if self._comment_service is None:
+            # comment_service가 주입되지 않은 경우 동적으로 생성
+            from app.comment.service import CommentService
+            from app.activity.service import ActivityService
+            from app.comment.repository import CommentRepository
+            self._comment_service = CommentService(
+                cve_repository=self.repository,
+                comment_repository=CommentRepository(),
+                activity_service=self.activity_service or ActivityService()
+            )
+        return self._comment_service
+    
+    # 표준화된 결과 반환 메서드
+    def _success_result(self, data, message="작업이 성공적으로 완료되었습니다"):
+        """성공 결과를 표준 형식으로 반환"""
+        return data, message
+    
+    def _error_result(self, message="작업 중 오류가 발생했습니다"):
+        """오류 결과를 표준 형식으로 반환"""
+        return None, message
 
     # === 활동 내역 추적을 위한 데코레이터 ===
     
@@ -280,8 +295,13 @@ class CVEService:
             # 날짜 필드 처리
             cve_dict = normalize_datetime_fields(cve_dict)
             
-            # id 필드가 없는 경우 cve_id 값을 복사
-            if 'id' not in cve_dict and 'cve_id' in cve_dict:
+            # id 필드 처리 - 있으면 문자열로 변환, 없으면 cve_id 값 사용
+            if 'id' in cve_dict:
+                # PydanticObjectId 또는 ObjectId를 문자열로 변환
+                if hasattr(cve_dict['id'], '__str__'):
+                    cve_dict['id'] = str(cve_dict['id'])
+            elif 'cve_id' in cve_dict:
+                # id 필드가 없는 경우 cve_id 값을 사용
                 cve_dict['id'] = cve_dict['cve_id']
             
             return cve_dict
@@ -294,6 +314,9 @@ class CVEService:
 
     async def create_cve(self, cve_data: Union[dict, CreateCVERequest], username: str, is_crawler: bool = False, crawler_name: Optional[str] = None) -> Optional[CVEModel]:
         """새로운 CVE를 생성합니다."""
+        # 트랜잭션 변수 선언
+        new_cve = None
+        
         try:
             logger.info(f"CVE 생성 시작: 사용자={username}, 크롤러={is_crawler}")
             
@@ -303,12 +326,20 @@ class CVEService:
                 
             # 날짜 필드 UTC 설정
             current_time = get_utc_now()
-                
-            # 추가 필드 설정
-            cve_data["created_by"] = username
-            cve_data["created_at"] = current_time
-            cve_data["last_modified_by"] = username
-            cve_data["last_modified_at"] = current_time
+            
+            # CVE 객체 자체에 시간 메타데이터 추가
+            cve_data = self._add_timestamp_metadata(cve_data, username, current_time)
+            
+            # 각 컨테이너 필드에 대해 필수 필드 추가
+            for field in ["references", "pocs", "snort_rules"]:
+                # 필드가 있고, None이 아니고, 비어있지 않은 경우만 처리
+                if field in cve_data and cve_data[field] is not None:
+                    # 빈 리스트가 아닌지 확인하고 처리
+                    if isinstance(cve_data[field], list) and any(cve_data[field]):
+                        # 빈 항목 필터링 (None이나 빈 dict 제거)
+                        cve_data[field] = [item for item in cve_data[field] if item and isinstance(item, dict)]
+                        # 메타데이터 추가
+                        cve_data[field] = self._add_timestamp_metadata(cve_data[field], username, current_time)
             
             # 크롤러 정보 추가
             if is_crawler and crawler_name:
@@ -330,7 +361,7 @@ class CVEService:
             
             # CVE 생성
             new_cve = await self.repository.create(cve_data)
-            
+        
             if new_cve:
                 logger.info(f"CVE 생성 성공: CVE ID={new_cve.cve_id}")
                 
@@ -339,41 +370,174 @@ class CVEService:
                     field="cve",
                     field_name="CVE",
                     action="add",
-                    detail_type="simple",
+                    detail_type="detailed",
                     summary=f"새 CVE '{new_cve.cve_id}' 생성"
                 )]
                 
-                # 제목이 있으면 추가 정보 제공
-                title = new_cve.title or "제목 없음"
+                # 활동 로그를 위한 타이틀 생성 - CVE ID만 사용
+                activity_title = new_cve.cve_id
+                
+                # 심각도 정보
+                changes.append(ChangeItem(
+                    field="severity_context",
+                    field_name="심각도",
+                    action="add",
+                    detail_type="simple",
+                    after=new_cve.severity,
+                    summary=f"심각도: {new_cve.severity}"
+                ))
+                
+                # 상태 정보
+                changes.append(ChangeItem(
+                    field="status_context",
+                    field_name="상태",
+                    action="add",
+                    detail_type="simple",
+                    after=new_cve.status,
+                    summary=f"상태: {new_cve.status}"
+                ))
+                
+                # 크롤러 정보
+                if is_crawler:
+                    changes.append(ChangeItem(
+                        field="crawler_context",
+                        field_name="크롤러",
+                        action="add",
+                        detail_type="simple",
+                        after=crawler_name,
+                        summary=f"크롤러: {crawler_name}"
+                    ))
+                
+                # 생성자 정보
+                changes.append(ChangeItem(
+                    field="created_by_context",
+                    field_name="생성자",
+                    action="add",
+                    detail_type="simple",
+                    after=username,
+                    summary=f"생성자: {username}"
+                ))
+                
+                # PoC 정보 추가
+                if new_cve.pocs and len(new_cve.pocs) > 0:
+                    poc_items = []
+                    for poc in new_cve.pocs:
+                        poc_items.append({
+                            "source": poc.source,
+                            "url": poc.url,
+                            "description": poc.description
+                        })
+                    changes.append(ChangeItem(
+                        field="pocs",
+                        field_name="PoC",
+                        action="add",
+                        detail_type="detailed",
+                        items=poc_items,
+                        summary=f"PoC {len(new_cve.pocs)}개 추가됨"
+                    ))
+                    
+                    # PoC 개수 정보
+                    changes.append(ChangeItem(
+                        field="pocs_count",
+                        field_name="PoC 수",
+                        action="add",  
+                        detail_type="simple",
+                        after=len(new_cve.pocs),
+                        summary=f"PoC 총 {len(new_cve.pocs)}개"
+                    ))
+                
+                # 참조문서 정보 추가
+                if new_cve.references and len(new_cve.references) > 0:
+                    ref_items = []
+                    for ref in new_cve.references:
+                        ref_items.append({
+                            "type": ref.type,
+                            "url": ref.url,
+                            "description": ref.description
+                        })
+                    changes.append(ChangeItem(
+                        field="references",
+                        field_name="참조문서",
+                        action="add",
+                        detail_type="detailed",
+                        items=ref_items,
+                        summary=f"참조문서 {len(new_cve.references)}개 추가됨"
+                    ))
+                    
+                    # 참조문서 개수 정보
+                    changes.append(ChangeItem(
+                        field="references_count",
+                        field_name="참조문서 수",
+                        action="add",  
+                        detail_type="simple",
+                        after=len(new_cve.references),
+                        summary=f"참조문서 총 {len(new_cve.references)}개"
+                    ))
+                
+                # Snort 규칙 정보 추가
+                if new_cve.snort_rules and len(new_cve.snort_rules) > 0:
+                    snort_items = []
+                    for snort in new_cve.snort_rules:
+                        snort_items.append({
+                            "type": snort.type,
+                            "rule": snort.rule,
+                            "description": snort.description
+                        })
+                    changes.append(ChangeItem(
+                        field="snort_rules",
+                        field_name="Snort 규칙",
+                        action="add",
+                        detail_type="detailed",
+                        items=snort_items,
+                        summary=f"Snort 규칙 {len(new_cve.snort_rules)}개 추가됨"
+                    ))
+                    
+                    # Snort 규칙 개수 정보
+                    changes.append(ChangeItem(
+                        field="snort_rules_count",
+                        field_name="Snort 규칙 수",
+                        action="add",  
+                        detail_type="simple",
+                        after=len(new_cve.snort_rules),
+                        summary=f"Snort 규칙 총 {len(new_cve.snort_rules)}개"
+                    ))
                 
                 await self.activity_service.create_activity(
                     username=username,
-                    activity_type=ActivityAction.CREATE,
+                    action=ActivityAction.CREATE,
                     target_type=ActivityTargetType.CVE,
                     target_id=new_cve.cve_id,
-                    target_title=title,
-                    changes=changes,
-                    metadata={
-                        "is_crawler": is_crawler,
-                        "crawler_name": crawler_name if is_crawler else None,
-                        "severity": new_cve.severity
-                    }
+                    target_title=activity_title,  # CVE ID를 활동 타이틀로 사용
+                    changes=changes
                 )
                 
                 return new_cve
             else:
                 logger.error("CVE 생성 실패: Repository에서 None 반환")
-                return None
-        
+                return new_cve
+                
         except Exception as e:
             logger.error(f"CVE 생성 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
+            
+            # 이미 CVE가 생성되었다면 롤백 시도
+            if new_cve and hasattr(new_cve, 'cve_id'):
+                try:
+                    logger.warning(f"오류 발생으로 CVE 롤백 시도: {new_cve.cve_id}")
+                    # 문자열 ID를 사용하여 삭제 (타입 변환 오류 방지)
+                    cve_id_str = str(new_cve.cve_id) if not isinstance(new_cve.cve_id, str) else new_cve.cve_id
+                    await self.repository.delete_by_cve_id(cve_id_str)
+                    logger.info(f"CVE 롤백 성공: {cve_id_str}")
+                except Exception as rollback_error:
+                    logger.error(f"CVE 롤백 실패: {str(rollback_error)}")
+            
             return None
 
     async def update_cve(self, cve_id: str, update_data: Union[dict, PatchCVERequest], updated_by: str = None) -> Optional[Dict[str, Any]]:
         """
         CVE 정보를 업데이트합니다. 객체 변경 감지를 통한 활동 추적 사용.
         
+{{ ... }}
         Args:
             cve_id: 업데이트할 CVE ID
             update_data: 업데이트할 데이터 (dict 또는 PatchCVERequest)
@@ -400,103 +564,168 @@ class CVEService:
             if not isinstance(update_data, dict):
                 update_data = update_data.dict(exclude_unset=True)
             
-             # _id 필드가 있으면 제거 (MongoDB에서 _id는 변경 불가)
-            if '_id' in update_data:
-                logger.warning(f"업데이트 데이터에서 _id 필드 제거: {update_data['_id']}")
-                update_data = update_data.copy()  # 원본 데이터 변경 방지
-                del update_data['_id']
+            # 준비된 업데이트 데이터 생성
+            processed_data = self._prepare_update_data(update_data, existing_cve, updated_by)
             
-            # 임베디드 필드 메타데이터 자동 처리 - 추출하여 재사용성 향상
-            update_data = self._process_embedded_metadata(update_data, updated_by or "system")
+            # 업데이트 실행 - repository의 update_document 메서드 사용
+            result = await self.repository.update_document(cve_id, processed_data)
+            
+            if not result:
+                logger.warning(f"CVE 업데이트 실패: {cve_id}")
+                return None
+            
+            # 업데이트된 CVE 가져오기
+            updated_cve = await self.get_cve_detail(cve_id, as_model=False)
                 
-            # 업데이트 시간 설정
-            current_time = get_utc_now()
-            update_data['last_modified_at'] = current_time
-            
-            # 변경 기록 추적 - 객체 변경 감지 사용
+            # 객체 변경 감지를 이용한 활동 추적
             excluded_fields = ['last_modified_at', '_id', 'id']
             
-            # 사용자 정의 변경 사항 처리 (객체 변경 감지에서 복잡한 케이스 처리가 어려운 경우)
-            changes = self._extract_complex_changes(existing_cve, update_data)
+            # 추가 변경 사항 수집 - 변경 컸텍스트 정보 포함
+            additional_changes = []
             
-            # 변경 이력 데이터 추가
-            if changes:
-                modification_history = ModificationHistory(
-                    username=updated_by or "system",
-                    modified_at=current_time,
-                    changes=changes
-                )
-                
-                # 기존 modification_history 불러오기
-                existing_history = existing_cve.dict().get("modification_history", [])
-                
-                # 업데이트 데이터에 추가
-                update_data["modification_history"] = existing_history + [modification_history.dict()]
+            # 상태 문맵 정보
+            severity_val = updated_cve.get('severity') or existing_cve.severity
+            status_val = updated_cve.get('status') or existing_cve.status
             
-            # 업데이트한 사용자 정보 추가
-            if updated_by:
-                update_data['last_modified_by'] = updated_by
+            # 상태 정보 추가 (비교용)
+            additional_changes.append(ChangeItem(
+                field="severity_context",
+                field_name="현재 심각도",
+                action="context",
+                detail_type="simple",
+                after=severity_val,
+                summary=f"현재 심각도: {severity_val}"
+            ))
             
-            # 기존 CVE의 created_at 필드 보존
-            if 'created_at' not in update_data and hasattr(existing_cve, 'created_at'):
-                update_data['created_at'] = existing_cve.created_at
+            additional_changes.append(ChangeItem(
+                field="status_context",
+                field_name="현재 상태",
+                action="context",
+                detail_type="simple",
+                after=status_val,
+                summary=f"현재 상태: {status_val}"
+            ))
             
-            # 업데이트 실행 - cve_id를 사용하도록 변경
-            try:
-                # id_for_update에 cve_id 사용
-                result = await self.repository.update_by_cve_id(cve_id, update_data)
-                
-                if result:
-                    logger.info(f"CVE {cve_id} 업데이트 성공")
-                    updated_cve = await self.get_cve_detail(cve_id, as_model=False)
+            # 변경자 정보 추가
+            additional_changes.append(ChangeItem(
+                field="updated_by_context",
+                field_name="변경자",
+                action="context",
+                detail_type="simple",
+                after=updated_by or "system",
+                summary=f"변경자: {updated_by or 'system'}"
+            ))
+            
+            # 컬렉션 아이템 수량 정보 비교 추가
+            collections = [
+                {"field": "pocs", "field_name": "PoC 수", "old": len(old_cve_dict.get('pocs', [])), "new": len(updated_cve.get('pocs', []))},
+                {"field": "references", "field_name": "참조문서 수", "old": len(old_cve_dict.get('references', [])), "new": len(updated_cve.get('references', []))},
+                {"field": "snort_rules", "field_name": "Snort 규칙 수", "old": len(old_cve_dict.get('snort_rules', [])), "new": len(updated_cve.get('snort_rules', []))}
+            ]
+            
+            for collection in collections:
+                if collection["old"] != collection["new"]:
+                    additional_changes.append(ChangeItem(
+                        field=f"{collection['field']}_count",
+                        field_name=collection["field_name"],
+                        action="count_change",
+                        detail_type="simple",
+                        before=collection["old"],
+                        after=collection["new"],
+                        summary=f"{collection['field_name']} {collection['old']}개에서 {collection['new']}개로 변경"
+                    ))
+            
+            # track_object_changes 호출
+            await self.activity_service.track_object_changes(
+                username=updated_by or "system",
+                action=ActivityAction.UPDATE,
+                target_type=ActivityTargetType.CVE,
+                target_id=cve_id,
+                old_obj=old_cve_dict,
+                new_obj=updated_cve,
+                target_title=updated_cve.get('title') or existing_cve.title or cve_id,
+                ignore_fields=excluded_fields,
+                additional_changes=additional_changes
+            )
                     
-                    # 객체 변경 감지를 이용한 활동 추적
-                    await self.activity_service.track_object_changes(
-                        username=updated_by or "system",
-                        action=ActivityAction.UPDATE,
-                        target_type=ActivityTargetType.CVE,
-                        target_id=cve_id,
-                        old_obj=old_cve_dict,
-                        new_obj=updated_cve,
-                        target_title=updated_cve.get('title') or existing_cve.title or cve_id,
-                        ignore_fields=excluded_fields,
-                        metadata={
-                            "severity": updated_cve.get('severity') or existing_cve.severity,
-                            "status": updated_cve.get('status') or existing_cve.status
-                        }
-                    )
-                    
-                    return updated_cve
-                else:
-                    logger.warning(f"CVE 업데이트 실패: {cve_id}")
-                    return None
-            except Exception as e:
-                logger.error(f"repository.update_by_cve_id 호출 중 오류: {str(e)}")
-                logger.error(traceback.format_exc())
-                raise
+            return updated_cve
         except Exception as e:
             logger.error(f"CVE 업데이트 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
             raise
 
-    def _process_embedded_metadata(self, update_data: dict, updated_by: str) -> dict:
+    def _prepare_update_data(self, update_data: dict, existing_cve: CVEModel, updated_by: str) -> dict:
         """
-        임베디드 필드(PoC, Reference 등)의 메타데이터를 처리합니다.
-        별도 메서드로 추출하여 재사용성 향상.
-        """
-        # 시간 메타데이터 처리가 필요한 필드 목록
-        metadata_fields = ['pocs', 'references', 'snort_rules']
+        업데이트 데이터 전처리 및 메타데이터 추가
+        
+        Args:
+            update_data: 원본 업데이트 데이터
+            existing_cve: 기존 CVE 모델
+            updated_by: 업데이트한 사용자명
             
-        # 전달받은 데이터 복사본 생성 (원본 변경 방지)
+        Returns:
+            dict: 처리된 업데이트 데이터
+        """
         processed_data = update_data.copy()
-            
-        # 각 필드에 대해 시간 메타데이터 자동 처리
-        for field in metadata_fields:
-            if field in processed_data and isinstance(processed_data[field], list):
-                processed_data[field] = self._process_item_metadata(processed_data[field], updated_by)
-                logger.debug(f"{field} 필드의 시간 메타데이터 처리 완료 ({len(processed_data[field])} 항목)")
-                
+        
+        # _id 필드 제거
+        if '_id' in processed_data:
+            processed_data.pop('_id')
+        
+        # 날짜 필드 UTC 설정
+        current_time = get_utc_now()
+        
+        # 임베디드 필드에 시간 메타데이터 추가
+        for field in ["references", "pocs", "snort_rules"]:
+            # 필드가 있고, None이 아니고, 비어있지 않은 경우만 처리
+            if field in processed_data and processed_data[field] is not None:
+                # 빈 리스트가 아닌지 확인하고 처리
+                if isinstance(processed_data[field], list) and any(processed_data[field]):
+                    # 빈 항목 필터링 (None이나 빈 dict 제거)
+                    processed_data[field] = [item for item in processed_data[field] if item and isinstance(item, dict)]
+                    # 메타데이터 추가
+                    processed_data[field] = self._add_timestamp_metadata(processed_data[field], updated_by or "system", current_time)
+        
+        # 업데이트 시간 및 사용자 설정
+        processed_data['last_modified_at'] = current_time
+        processed_data['last_modified_by'] = updated_by or "system"
+        
+        # 변경 이력 추가
+        changes = self._extract_complex_changes(existing_cve, processed_data)
+        if changes:
+            processed_data = self._add_modification_history(existing_cve, processed_data, changes, updated_by)
+        
         return processed_data
+
+    def _add_modification_history(self, existing_cve: CVEModel, update_data: dict, changes: List[ChangeItem], updated_by: str) -> dict:
+        """
+        변경 이력을 업데이트 데이터에 추가
+        
+        Args:
+            existing_cve: 기존 CVE 모델
+            update_data: 업데이트 데이터
+            changes: 변경 사항 목록
+            updated_by: 업데이트한 사용자명
+            
+        Returns:
+            dict: 변경 이력이 추가된 업데이트 데이터
+        """
+        # 변경 이력 데이터 생성
+        modification_history = ModificationHistory(
+            username=updated_by or "system",
+            modified_at=get_utc_now(),
+            changes=changes
+        )
+        
+        # 기존 modification_history 불러오기
+        existing_history = existing_cve.dict().get("modification_history", [])
+        
+        # 업데이트 데이터에 추가
+        update_data["modification_history"] = existing_history + [modification_history.dict()]
+        
+        return update_data
+
+
 
     def _extract_complex_changes(self, existing_cve: CVEModel, update_data: dict) -> List[ChangeItem]:
         """
@@ -510,7 +739,7 @@ class CVEService:
             "status": "상태",
             "severity": "심각도",
             "pocs": "PoC",
-            "references": "참조",
+            "references": "참조문서",
             "snort_rules": "Snort 규칙",
             "notes": "노트",
             "assigned_to": "담당자"
@@ -542,7 +771,71 @@ class CVEService:
                         if is_new:
                             added_items.append(new_item)
                     
-                    # 변경 사항 요약
+                    # 삭제된 아이템
+                    removed_items = []
+                    for old_item in old_items:
+                        is_removed = True
+                        for new_item in new_value:
+                            if self._is_same_item(new_item, old_item, field):
+                                is_removed = False
+                                break
+                        if is_removed:
+                            removed_items.append(old_item)
+                    
+                    # 아이템 필드 정보 보강
+                    if field == 'pocs':
+                        added_items_detail = []
+                        for item in added_items:
+                            added_items_detail.append({
+                                "source": item.get('source', ''),
+                                "url": item.get('url', ''),
+                                "description": item.get('description', '')
+                            })
+                        removed_items_detail = []
+                        for item in removed_items:
+                            removed_items_detail.append({
+                                "source": item.get('source', ''),
+                                "url": item.get('url', ''),
+                                "description": item.get('description', '')
+                            })
+                        added_items = added_items_detail
+                        removed_items = removed_items_detail
+                    elif field == 'references':
+                        added_items_detail = []
+                        for item in added_items:
+                            added_items_detail.append({
+                                "url": item.get('url', ''),
+                                "type": item.get('type', ''),
+                                "description": item.get('description', '')
+                            })
+                        removed_items_detail = []
+                        for item in removed_items:
+                            removed_items_detail.append({
+                                "url": item.get('url', ''),
+                                "type": item.get('type', ''),
+                                "description": item.get('description', '')
+                            })
+                        added_items = added_items_detail
+                        removed_items = removed_items_detail
+                    elif field == 'snort_rules':
+                        added_items_detail = []
+                        for item in added_items:
+                            added_items_detail.append({
+                                "rule_content": item.get('rule_content', ''),
+                                "type": item.get('type', ''),
+                                "description": item.get('description', '')
+                            })
+                        removed_items_detail = []
+                        for item in removed_items:
+                            removed_items_detail.append({
+                                "rule_content": item.get('rule_content', ''),
+                                "type": item.get('type', ''),
+                                "description": item.get('description', '')
+                            })
+                        added_items = added_items_detail
+                        removed_items = removed_items_detail
+                    
+                    # 추가된 아이템 변경 사항 추가
                     if added_items:
                         changes.append(ChangeItem(
                             field=field,
@@ -550,7 +843,18 @@ class CVEService:
                             action="add",
                             detail_type="detailed",
                             items=added_items,
-                            summary=f"{field_name} {len(added_items)}개 추가"
+                            summary=f"{field_name} {len(added_items)}개 추가됨"
+                        ))
+                    
+                    # 삭제된 아이템 변경 사항 추가
+                    if removed_items:
+                        changes.append(ChangeItem(
+                            field=field,
+                            field_name=field_name,
+                            action="remove",
+                            detail_type="detailed",
+                            items=removed_items,
+                            summary=f"{field_name} {len(removed_items)}개 삭제됨"
                         ))
                 else:
                     # 일반 필드 변경
@@ -584,8 +888,8 @@ class CVEService:
                 'last_modified_by': updated_by or 'system'
             }
             
-            # 부분 업데이트 최적화 - 필요한 필드만 업데이트
-            result = await self.repository.update_by_cve_id(cve_id, update_data)
+            # 부분 업데이트 최적화 - repository의 update_field 메서드 사용
+            result = await self.repository.update_fields(cve_id, update_data)
             
             if result:
                 # 최적화: 필요한 필드만 가져오기
@@ -607,46 +911,55 @@ class CVEService:
             return item1.get('rule') == item2.get('rule')
         return False
         
-    def _process_item_metadata(self, items: List[dict], updated_by: str) -> List[dict]:
+    def _add_timestamp_metadata(self, items, user, current_time=None):
         """
-        항목 리스트(PoC, 참조 등)의 시간 메타데이터를 자동으로 처리합니다.
+        객체 또는 컬렉션에 시간 및 사용자 메타데이터를 추가합니다.
         
         Args:
-            items: 처리할 항목 리스트
-            updated_by: 업데이트 수행 사용자
+            items: 처리할 객체 또는 컬렉션
+            user: 사용자 정보
+            current_time: 현재 시간 (기본값은 현재 시간)
             
         Returns:
-            시간 메타데이터가 추가된 항목 리스트
+            시간 메타데이터가 추가된 객체 또는 컬렉션
         """
         if not items:
             return items
             
-        current_time = get_utc_now()
-        processed_items = []
-        
+        if current_time is None:
+            current_time = get_utc_now()
+            
+        # 단일 객체인 경우
+        if isinstance(items, dict):
+            for field, default_value in {
+                "created_by": user,
+                "last_modified_by": user,
+                "created_at": current_time,
+                "last_modified_at": current_time
+            }.items():
+                # None 값이거나, 필드가 없거나, 값이 비어있는 경우 새 값 설정
+                if field not in items or items.get(field) is None or not items[field]:
+                    items[field] = default_value
+            return items
+            
+        # 컬렉션인 경우
         for item in items:
-            # 딕셔너리로 변환
             if not isinstance(item, dict):
-                item = item.dict() if hasattr(item, 'dict') else vars(item)
-            
-            item_copy = item.copy()
-            
-            # created_at이 없거나 None이면 현재 시간 설정
-            if 'created_at' not in item_copy or item_copy['created_at'] is None:
-                item_copy['created_at'] = current_time
+                continue
                 
-            # created_by가 없거나 None이면 업데이트 사용자 설정
-            if 'created_by' not in item_copy or item_copy['created_by'] is None:
-                item_copy['created_by'] = updated_by
-                
-            # last_modified_at, last_modified_by는 항상 현재 값으로 업데이트
-            item_copy['last_modified_at'] = current_time
-            item_copy['last_modified_by'] = updated_by
-            
-            processed_items.append(item_copy)
-            
-        return processed_items
-
+            # 필수 필드 보장
+            for field, default_value in {
+                "created_by": user,
+                "last_modified_by": user,
+                "created_at": current_time,
+                "last_modified_at": current_time
+            }.items():
+                # None 값이거나, 필드가 없거나, 값이 비어있는 경우 새 값 설정
+                if field not in item or item.get(field) is None or not item[field]:
+                    item[field] = default_value
+                    
+        return items
+    
     # 데코레이터 패턴 적용 - CVE 삭제 (간단한 동작)
     @track_cve_activity(
         action=ActivityAction.DELETE,
@@ -657,7 +970,7 @@ class CVEService:
         try:
             logger.info(f"CVE 삭제 시도: {cve_id}, 삭제자: {deleted_by}")
             
-            # 삭제 실행 - cve.id 대신 cve_id 사용
+            # 삭제 실행 - repository의 delete_by_cve_id 메서드 사용
             result = await self.repository.delete_by_cve_id(cve_id)
             
             if result:
@@ -810,489 +1123,3 @@ class CVEService:
     
     # ==== 내부 댓글 관리 클래스 ====
     
-    class _CommentManager:
-        """댓글 관련 작업을 관리하는 내부 클래스"""
-        
-        def __init__(self, service):
-            """CommentManager 초기화"""
-            self.service = service  # 외부 CVEService 참조
-            self.repository = service.repository
-            self.activity_service = service.activity_service
-            
-        @staticmethod
-        def comment_to_dict(comment: Comment) -> dict:
-            """Comment 객체를 JSON 직렬화 가능한 딕셔너리로 변환"""
-            comment_dict = comment.dict()
-            comment_dict["created_at"] = comment.created_at.isoformat()
-            if comment.last_modified_at:
-                comment_dict["last_modified_at"] = comment.last_modified_at.isoformat()
-            return comment_dict
-        
-        async def process_mentions(self, content: str, cve_id: str, comment_id: str,
-                              sender: User, mentioned_usernames: List[str] = None) -> Tuple[int, List[str]]:
-            """댓글 내용에서 멘션된 사용자를 찾아 알림을 생성합니다."""
-            try:
-                # Comment 모델의 extract_mentions 사용 (중복 코드 제거)
-                mentions = mentioned_usernames or Comment.extract_mentions(content)
-                if not mentions:
-                    return 0, []
-                
-                logger.info(f"발견된 멘션: {mentions}")
-                
-                # 멘션된 사용자들을 한 번에 조회 (N+1 쿼리 문제 해결)
-                # @ 기호 제거하고 사용자명만 추출
-                usernames = [m.replace('@', '') for m in mentions]
-                users = await User.find({"username": {"$in": usernames}}).to_list()
-                
-                # 사용자별 ID 매핑 생성 (조회 최적화)
-                username_to_user = {user.username: user for user in users}
-                
-                # 병렬 알림 처리 준비
-                notifications_created = 0
-                processed_users = []
-                notification_tasks = []
-                
-                for username in usernames:
-                    if username in username_to_user and str(username_to_user[username].id) != str(sender.id):
-                        user = username_to_user[username]
-                        
-                        # 비동기 작업 생성 (병렬 처리)
-                        task = self._create_mention_notification(
-                            user.id, sender, cve_id, comment_id, content
-                        )
-                        notification_tasks.append(task)
-                        processed_users.append(username)
-                        notifications_created += 1
-                
-                # 알림 작업 병렬 실행
-                if notification_tasks:
-                    await asyncio.gather(*notification_tasks)
-                    
-                return notifications_created, processed_users
-            except Exception as e:
-                logger.error(f"process_mentions 중 오류 발생: {str(e)}")
-                return 0, []
-
-        async def _create_mention_notification(self, recipient_id, sender, cve_id, comment_id, content):
-            """알림 생성 헬퍼 메서드 - 중복 코드 제거 및 재사용성 향상"""
-            try:
-                notification, unread_count = await Notification.create_notification(
-                    recipient_id=recipient_id,
-                    sender_id=sender.id,
-                    sender_username=sender.username,
-                    cve_id=cve_id,
-                    comment_id=comment_id,
-                    comment_content=content,
-                    content=f"{sender.username}님이 댓글에서 언급했습니다."
-                )
-                
-                # 웹소켓으로 실시간 알림 전송
-                await socketio_manager.emit(
-                    "notification",
-                    {
-                        "type": WSMessageType.NOTIFICATION,
-                        "data": {
-                            "notification": self.comment_to_dict(notification),
-                            "unread_count": unread_count
-                        }
-                    },
-                    room=str(recipient_id)
-                )
-                
-                return notification
-            except Exception as e:
-                logger.error(f"알림 생성 중 오류: {str(e)}")
-                return None
-        
-        async def count_active_comments(self, cve_id: str) -> int:
-            """CVE의 활성화된 댓글 수를 계산합니다."""
-            try:
-                # 최적화: 전체 CVE 가져오지 않고 댓글만 조회
-                projection = {"comments": 1}
-                cve = await self.repository.find_by_cve_id_with_projection(cve_id, projection)
-                
-                if not cve or not hasattr(cve, 'comments'):
-                    logger.error(f"CVE를 찾을 수 없거나 댓글이 없음: {cve_id}")
-                    return 0
-                    
-                # 삭제되지 않은 댓글 수 계산
-                active_comments = [c for c in cve.comments if not c.is_deleted]
-                logger.info(f"CVE {cve_id}의 활성 댓글 수: {len(active_comments)}개")
-                return len(active_comments)
-            except Exception as e:
-                logger.error(f"활성 댓글 수 계산 중 오류: {str(e)}")
-                return 0
-        
-        async def send_comment_update(self, cve_id: str) -> None:
-            """댓글 수 업데이트를 Socket.IO로 전송합니다."""
-            try:
-                count = await self.count_active_comments(cve_id)
-                await socketio_manager.emit(
-                    "comment_count",
-                    {
-                        "type": WSMessageType.COMMENT_COUNT_UPDATE,
-                        "data": {"cve_id": cve_id, "count": count}
-                    },
-                    broadcast=True
-                )
-                logger.info(f"{cve_id}의 댓글 수 업데이트 전송: {count}")
-            except Exception as e:
-                logger.error(f"댓글 업데이트 전송 중 오류: {str(e)}")
-        
-        async def create_comment(self, cve_id: str, content: str, user: User, 
-                              parent_id: Optional[str] = None, 
-                              mentions: List[str] = None) -> Tuple[Optional[Comment], str]:
-            """새 댓글을 생성합니다."""
-            try:
-                # 댓글 트리 구조 확인 (depth 제한)
-                MAX_COMMENT_DEPTH = 10
-                depth = 0
-                
-                # 최적화: 부모 댓글 정보만 선택적으로 조회
-                if parent_id:
-                    # MongoDB 투영(projection) 사용해 부모 댓글만 조회 (최적화)
-                    parent = await CVEModel.find_one(
-                        {"cve_id": cve_id, "comments.id": parent_id},
-                        {"comments.$": 1}  # 일치하는 댓글만 가져오는 projection
-                    )
-                    
-                    if not parent or not parent.comments:
-                        logger.error(f"부모 댓글을 찾을 수 없음: {parent_id}")
-                        return None, f"부모 댓글을 찾을 수 없습니다: {parent_id}"
-                    
-                    # 부모 댓글 깊이 계산
-                    parent_comment = parent.comments[0]
-                    depth = parent_comment.depth + 1
-                    
-                    if depth >= MAX_COMMENT_DEPTH:
-                        logger.error(f"최대 댓글 깊이에 도달: {MAX_COMMENT_DEPTH}")
-                        return None, f"최대 댓글 깊이({MAX_COMMENT_DEPTH})에 도달했습니다."
-                
-                # 댓글 생성
-                now = datetime.now(ZoneInfo("UTC"))
-                comment = Comment(
-                    id=str(ObjectId()),
-                    content=content,
-                    created_by=user.username,
-                    parent_id=parent_id,
-                    depth=depth,  # 계산된 깊이 저장
-                    created_at=now,
-                    last_modified_at=None,
-                    is_deleted=False,
-                    # Comment 모델의 extract_mentions 메서드 사용
-                    mentions=Comment.extract_mentions(content) if not mentions else mentions
-                )
-                
-                # 최적화: 직접 댓글 추가 (전체 CVE 로드 없이)
-                result = await CVEModel.find_one({"cve_id": cve_id}).update(
-                    {"$push": {"comments": comment.dict()}}
-                )
-                
-                if not result or not result.modified_count:
-                    logger.error(f"댓글 추가 실패: {cve_id}")
-                    return None, "댓글을 추가할 수 없습니다. CVE를 찾을 수 없거나 DB 오류가 발생했습니다."
-                
-                # 멘션 처리
-                await self.process_mentions(
-                    content=content,
-                    cve_id=cve_id,
-                    comment_id=comment.id,
-                    sender=user,
-                    mentioned_usernames=mentions
-                )
-                
-                # 댓글 수 업데이트 전송
-                await self.send_comment_update(cve_id)
-                
-                # 활동 추적 유틸리티 메서드 사용
-                await self._track_comment_activity(
-                    user.username,
-                    cve_id,
-                    comment.id,
-                    ActivityAction.COMMENT,
-                    content=content,
-                    parent_id=parent_id
-                )
-                
-                return comment, "댓글이 성공적으로 생성되었습니다."
-            except Exception as e:
-                logger.error(f"댓글 생성 중 오류: {str(e)}")
-                logger.error(traceback.format_exc())
-                return None, f"댓글 생성 중 오류가 발생했습니다: {str(e)}"
-        
-        async def update_comment(self, cve_id: str, comment_id: str, content: str, user: User) -> Tuple[Optional[Comment], str]:
-            """댓글을 수정합니다."""
-            try:
-                # 최적화: 필요한 정보만 조회
-                projection = {"comments.$": 1, "title": 1, "severity": 1, "status": 1}
-                
-                # MongoDB 투영(projection) 사용해 해당 댓글만 조회
-                cve = await CVEModel.find_one(
-                    {"cve_id": cve_id, "comments.id": comment_id},
-                    projection
-                )
-                
-                if not cve or not cve.comments:
-                    logger.error(f"댓글을 찾을 수 없음: {comment_id}")
-                    return None, f"댓글을 찾을 수 없습니다: {comment_id}"
-                
-                # 첫 번째 일치하는 댓글 (comments.$ 연산자 결과)
-                comment = cve.comments[0]
-                
-                # 권한 확인
-                if comment.created_by != user.username and not user.is_admin:
-                    logger.error(f"사용자 {user.username}의 댓글 {comment_id} 수정 권한 없음")
-                    return None, "댓글 수정 권한이 없습니다."
-                
-                # 댓글이 삭제되었는지 확인
-                if comment.is_deleted:
-                    logger.error(f"삭제된 댓글 수정 불가: {comment_id}")
-                    return None, "삭제된 댓글은 수정할 수 없습니다."
-                
-                # 변경 전 내용 저장 (변경 감지용)
-                old_content = comment.content
-                old_mentions = set(comment.mentions) if comment.mentions else set()
-                
-                # 새 멘션 추출
-                new_mentions = set(Comment.extract_mentions(content))
-                
-                # 최적화: 직접 필드만 업데이트
-                # MongoDB의 positional $ 연산자를 사용하여 배열 내 특정 요소만 업데이트
-                now = datetime.now(ZoneInfo("UTC"))
-                result = await CVEModel.find_one(
-                    {"cve_id": cve_id, "comments.id": comment_id}
-                ).update({
-                    "$set": {
-                        "comments.$.content": content,
-                        "comments.$.last_modified_at": now,
-                        "comments.$.last_modified_by": user.username,
-                        "comments.$.mentions": list(new_mentions)
-                    }
-                })
-                
-                if not result or not result.modified_count:
-                    logger.error(f"댓글 수정 실패: {comment_id}")
-                    return None, "댓글 수정에 실패했습니다"
-                
-                # 수정된 댓글 객체 생성 (응답용)
-                updated_comment = Comment(
-                    id=comment.id,
-                    content=content,
-                    created_by=comment.created_by,
-                    created_at=comment.created_at,
-                    parent_id=comment.parent_id,
-                    depth=comment.depth,
-                    is_deleted=False,
-                    last_modified_at=now,
-                    last_modified_by=user.username,
-                    mentions=list(new_mentions)
-                )
-                
-                # 멘션 처리 (새 멘션이 추가된 경우만)
-                added_mentions = new_mentions - old_mentions
-                if added_mentions:
-                    await self.process_mentions(
-                        content=content,
-                        cve_id=cve_id,
-                        comment_id=comment_id,
-                        sender=user,
-                        mentioned_usernames=list(added_mentions)
-                    )
-                
-                # 활동 추적
-                await self._track_comment_activity(
-                    user.username,
-                    cve_id,
-                    comment_id,
-                    ActivityAction.COMMENT_UPDATE,
-                    content=content,
-                    old_content=old_content,
-                    cve_title=cve.title
-                )
-                
-                return updated_comment, "댓글이 성공적으로 수정되었습니다."
-            except Exception as e:
-                logger.error(f"댓글 수정 중 오류: {str(e)}")
-                logger.error(traceback.format_exc())
-                return None, f"댓글 수정 중 오류가 발생했습니다: {str(e)}"
-        
-        async def delete_comment(self, cve_id: str, comment_id: str, user: User, permanent: bool = False) -> Tuple[bool, str]:
-            """댓글을 삭제합니다."""
-            try:
-                # 최적화: 필요한 정보만 조회
-                projection = {"comments.$": 1, "title": 1, "severity": 1, "status": 1}
-                
-                # MongoDB 투영(projection) 사용해 해당 댓글만 조회
-                cve = await CVEModel.find_one(
-                    {"cve_id": cve_id, "comments.id": comment_id},
-                    projection
-                )
-                
-                if not cve or not cve.comments:
-                    logger.error(f"댓글을 찾을 수 없음: {comment_id}")
-                    return False, f"댓글을 찾을 수 없습니다: {comment_id}"
-                
-                # 첫 번째 일치하는 댓글 (comments.$ 연산자 결과)
-                comment = cve.comments[0]
-                
-                # 권한 확인
-                if comment.created_by != user.username and not user.is_admin:
-                    logger.error(f"사용자 {user.username}의 댓글 {comment_id} 삭제 권한 없음")
-                    return False, "댓글 삭제 권한이 없습니다."
-                
-                if permanent and not user.is_admin:
-                    logger.error("관리자만 영구 삭제 가능")
-                    return False, "영구 삭제는 관리자만 가능합니다."
-                
-                comment_content = comment.content
-                
-                result = False
-                if permanent:
-                    # 영구 삭제 - MongoDB의 $pull 연산자 사용 (부분 업데이트 최적화)
-                    delete_result = await CVEModel.find_one({"cve_id": cve_id}).update({
-                        "$pull": {"comments": {"id": comment_id}}
-                    })
-                    result = delete_result and delete_result.modified_count > 0
-                else:
-                    # 논리적 삭제 - MongoDB의 positional $ 연산자 사용 (부분 업데이트)
-                    now = datetime.now(ZoneInfo("UTC"))
-                    update_result = await CVEModel.find_one(
-                        {"cve_id": cve_id, "comments.id": comment_id}
-                    ).update({
-                        "$set": {
-                            "comments.$.is_deleted": True,
-                            "comments.$.last_modified_at": now,
-                            "comments.$.last_modified_by": user.username
-                        }
-                    })
-                    result = update_result and update_result.modified_count > 0
-                
-                if not result:
-                    logger.error(f"댓글 삭제 실패: {comment_id}")
-                    return False, "댓글 삭제에 실패했습니다"
-                
-                # 댓글 수 업데이트 전송
-                await self.send_comment_update(cve_id)
-                
-                # 활동 추적
-                await self._track_comment_activity(
-                    user.username,
-                    cve_id,
-                    comment_id,
-                    ActivityAction.COMMENT_DELETE,
-                    content=comment_content,
-                    cve_title=cve.title,
-                    permanent=permanent
-                )
-                
-                return True, "댓글이 성공적으로 삭제되었습니다."
-            except Exception as e:
-                logger.error(f"댓글 삭제 중 오류: {str(e)}")
-                logger.error(traceback.format_exc())
-                return False, f"댓글 삭제 중 오류가 발생했습니다: {str(e)}"
-        
-        async def get_comments(self, cve_id: str, include_deleted: bool = False) -> List[Comment]:
-            """CVE의 모든 댓글을 조회합니다."""
-            try:
-                # 최적화: 댓글 필드만 조회
-                projection = {"comments": 1}
-                cve = await self.repository.find_by_cve_id_with_projection(cve_id, projection)
-                
-                if not cve:
-                    logger.error(f"CVE를 찾을 수 없음: {cve_id}")
-                    return []
-                
-                # 삭제된 댓글 필터링 (필요한 경우)
-                comments = cve.comments
-                if not include_deleted:
-                    comments = [c for c in comments if not c.is_deleted]
-                
-                # 댓글 정렬 (생성 시간순)
-                return sorted(comments, key=lambda x: x.created_at)
-            except Exception as e:
-                logger.error(f"댓글 조회 중 오류: {str(e)}")
-                logger.error(traceback.format_exc())
-                return []
-        
-        async def _track_comment_activity(self, 
-                                      username: str,
-                                      cve_id: str, 
-                                      comment_id: str,
-                                      activity_type: ActivityAction,
-                                      content: str = None,
-                                      old_content: str = None,
-                                      cve_title: str = None,
-                                      parent_id: str = None,
-                                      permanent: bool = False):
-            """댓글 활동 추적을 위한 유틸리티 메서드 - 중복 코드 제거"""
-            try:
-                # 기본 메타데이터 설정
-                metadata = {
-                    "comment_id": comment_id
-                }
-                
-                # 추가 메타데이터 설정
-                if parent_id:
-                    metadata["parent_id"] = parent_id
-                if permanent:
-                    metadata["permanent"] = permanent
-                
-                # CVE 정보가 없는 경우 조회
-                if not cve_title:
-                    projection = {"title": 1, "severity": 1, "status": 1}
-                    cve = await self.repository.find_by_cve_id_with_projection(cve_id, projection)
-                    if cve:
-                        cve_title = cve.title or cve_id
-                        metadata.update({
-                            "severity": cve.severity,
-                            "status": cve.status
-                        })
-                
-                # 활동 유형에 따른 변경 내역 생성
-                changes = []
-                
-                if activity_type == ActivityAction.COMMENT:
-                    changes.append(ChangeItem(
-                        field="comments",
-                        field_name="댓글",
-                        action="add",
-                        detail_type="detailed",
-                        summary="댓글 추가됨",
-                        items=[{"content": content}]
-                    ))
-                elif activity_type == ActivityAction.COMMENT_UPDATE:
-                    changes.append(ChangeItem(
-                        field="comments",
-                        field_name="댓글",
-                        action="edit",
-                        detail_type="detailed",
-                        before=old_content,
-                        after=content,
-                        summary="댓글 수정됨"
-                    ))
-                elif activity_type == ActivityAction.COMMENT_DELETE:
-                    changes.append(ChangeItem(
-                        field="comments",
-                        field_name="댓글",
-                        action="delete",
-                        detail_type="detailed",
-                        before=content,
-                        summary=f"댓글 {permanent and '영구 ' or ''}삭제됨"
-                    ))
-                
-                # 활동 기록 생성
-                await self.activity_service.create_activity(
-                    username=username,
-                    activity_type=activity_type,
-                    target_type=ActivityTargetType.CVE,
-                    target_id=cve_id,
-                    target_title=cve_title or cve_id,
-                    changes=changes,
-                    metadata=metadata
-                )
-                
-                return True
-            except Exception as e:
-                logger.error(f"댓글 활동 추적 중 오류: {str(e)}")
-                logger.error(traceback.format_exc())
-                return False

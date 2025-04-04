@@ -38,8 +38,7 @@ class UserActivity(Document):
     target_type: str = Field(..., description="대상 유형")
     target_id: str = Field(..., description="대상 ID (CVE ID, 댓글 ID 등)")
     target_title: Optional[str] = Field(None, description="대상 제목 또는 요약 (검색 및 표시 용도)")
-    changes: List[ChangeItem] = Field(default_factory=list, description="변경 사항 목록")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="추가 메타데이터")
+    changes: List[ChangeItem] = Field(default_factory=list, description="변경 사항 목록 (모든 변경 내역 및 컨텍스트 정보 포함)")
 
     class Settings:
         name = "user_activities"
@@ -65,7 +64,6 @@ class ActivityResponse(BaseModel):
     target_id: str
     target_title: Optional[str]
     changes: List[ChangeItem]
-    metadata: Dict[str, Any]
 
     class Config:
         orm_mode = True

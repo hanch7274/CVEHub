@@ -23,7 +23,7 @@ import ActivityItem from './ActivityItem';
  */
 const ActivitySkeleton = () => {
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  // PC 환경에 최적화
   
   return (
     <Box sx={{ 
@@ -33,19 +33,15 @@ const ActivitySkeleton = () => {
       border: `1px solid ${theme.palette.divider}`,
       borderLeft: `3px solid ${theme.palette.grey[400]}`
     }}>
-      <Box display="flex" flexDirection={isMobile ? 'column' : 'row'} justifyContent="space-between" alignItems="center">
+      <Box display="flex" flexDirection="row" justifyContent="space-between" alignItems="center">
         <Box display="flex" alignItems="center" width="100%">
           <Skeleton variant="circular" width={24} height={24} sx={{ mr: 1 }} />
-          <Skeleton variant="text" width={isMobile ? '80%' : '40%'} height={24} />
+          <Skeleton variant="text" width="40%" height={24} />
         </Box>
-        {!isMobile && <Skeleton variant="text" width={100} />}
+        <Skeleton variant="text" width={100} />
       </Box>
       
-      {isMobile && (
-        <Box ml={4} mt={1}>
-          <Skeleton variant="text" width={100} />
-        </Box>
-      )}
+      {/* PC 환경에서는 필요 없는 모바일 코드 제거 */}
       
       <Box mt={2}>
         <Skeleton variant="rectangular" width="100%" height={40} sx={{ borderRadius: 1 }} />
@@ -82,7 +78,7 @@ const ActivityList = ({
   onLimitChange
 }) => {
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  // PC 환경에 최적화
   
   // 총 페이지 수 계산
   const totalPages = Math.max(1, Math.ceil(total / limit));
@@ -159,9 +155,12 @@ const ActivityList = ({
 
   return (
     <Box>
-      {/* 활동 목록 */}
+      {/* 활동 목록 - 항상 고유한 키 보장 (인덱스를 항상 포함) */}
       {activities.map((activity, index) => (
-        <ActivityItem key={activity.id || `activity-${index}`} activity={activity} />
+        <ActivityItem 
+          key={activity?.id ? `item-${activity.id}-${index}` : `activity-${index}`} 
+          activity={activity} 
+        />
       ))}
 
       {/* 페이지네이션 및 표시 개수 컨트롤 */}
@@ -170,13 +169,13 @@ const ActivityList = ({
           sx={{ 
             mt: 3, 
             display: 'flex', 
-            flexDirection: isMobile ? 'column' : 'row',
+            flexDirection: 'row',
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 2
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', order: isMobile ? 2 : 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', order: 1 }}>
             <Typography variant="body2" color="text.secondary" mr={2}>
               총 {total}개 항목
             </Typography>
@@ -201,18 +200,18 @@ const ActivityList = ({
               direction="row" 
               spacing={2} 
               justifyContent="center"
-              order={isMobile ? 1 : 2}
-              width={isMobile ? '100%' : 'auto'}
+              order={2}
+              width="auto"
             >
               <Pagination 
                 count={totalPages} 
                 page={page} 
                 onChange={(event, value) => onPageChange(value)}
                 color="primary"
-                size={isMobile ? "small" : "medium"}
-                showFirstButton={!isMobile}
-                showLastButton={!isMobile}
-                siblingCount={isMobile ? 0 : 1}
+                size="medium"
+                showFirstButton={true}
+                showLastButton={true}
+                siblingCount={1}
               />
             </Stack>
           )}

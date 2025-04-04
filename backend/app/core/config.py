@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "CVEHub"
     VERSION: str = "1.0.0"
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    DEBUG: bool = False
 
     # Database settings
     MONGODB_URL: str
@@ -34,6 +35,10 @@ class Settings(BaseSettings):
     WS_ENGINEIO_LOGGER: bool = False
     WS_CLEANUP_INTERVAL: int = 300  # 5분마다 정리
     LOG_PING_PONG: bool = False
+
+    @property
+    def socket_path(self) -> str:
+        return '/ws/socket.io'
     
     # 데이터 디렉토리 설정 추가
     DATA_DIR: str = "/home/CVEHub/data"

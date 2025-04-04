@@ -1,4 +1,3 @@
-
 import axios from 'axios';
 import {
   User,
@@ -82,6 +81,12 @@ const handleError = (error: Error, context = ''): void => {
  */
 export const getCurrentUser = async (): Promise<User | null> => {
   try {
+    // 액세스 토큰이 없으면 API 호출하지 않고 null 반환
+    const accessToken = getAccessToken();
+    if (!accessToken) {
+      return null;
+    }
+    
     // 로컬 스토리지에서 사용자 정보 확인
     const cachedUser = getUser();
     

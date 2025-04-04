@@ -1,16 +1,11 @@
 """크롤러 관련 비즈니스 로직을 처리하는 서비스 클래스"""
 import logging
 from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime
 import asyncio
 
-from app.cve.models import CreateCVERequest
-from app.auth.models import User
 from app.cve.service import CVEService
-from app.crawler.crawlers.nuclei_crawler import NucleiCrawlerService
 from app.crawler.crawler_manager import CrawlerManager
 from app.core.scheduler import CrawlerScheduler
-from app.core.socketio_manager import socketio_manager, WSMessageType
 from app.core.cache import get_cache, set_cache
 
 logger = logging.getLogger(__name__)

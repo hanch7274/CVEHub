@@ -108,7 +108,7 @@ const CommentsTab = React.memo(({
   const { data: users = [], isLoading: isUsersLoading } = useQuery({
     queryKey: QUERY_KEYS.USERS.search,
     queryFn: async () => {
-      const response = await api.get('/users/search');
+      const response = await api.get('/auth/search');
       return response.data || [];
     },
     // 캐싱 옵션
@@ -621,6 +621,15 @@ const CommentsTab = React.memo(({
             <Box sx={{ flex: 1 }}>
               {MemoizedMentionInput}
             </Box>
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={handleSubmit}
+              disabled={loading || !newComment.trim()}
+              sx={{ mt: 1 }} // 버튼을 입력창과 수직 정렬
+            >
+              작성
+            </Button>
           </Box>
         </Box>
       )}

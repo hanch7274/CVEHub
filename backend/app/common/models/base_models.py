@@ -44,7 +44,8 @@ class BaseDocument(Document):
     
     class Config:
         json_encoders = {
-            datetime: lambda v: v.replace(tzinfo=ZoneInfo("UTC")).isoformat().replace('+00:00', 'Z') if v else None,
+            # MongoDB에서 가져온 시간을 그대로 유지하면서 UTC로 표시
+            datetime: lambda v: v.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + 'Z' if v else None,
             PydanticObjectId: str
         }
 

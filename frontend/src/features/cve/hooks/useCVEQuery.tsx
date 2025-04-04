@@ -3,19 +3,21 @@ import { useQuery, useQueryClient, UseQueryOptions, useMutation, UseMutationOpti
 import { useEffect, useCallback, useRef, useMemo, useReducer } from 'react';
 import cveService from '../services/cveService';
 import { QUERY_KEYS } from 'shared/api/queryKeys';
-import { SOCKET_EVENTS } from 'core/socket/services/constants';
+import { SOCKET_EVENTS, SUBSCRIPTION_EVENTS } from 'core/socket/services/constants';
 import _ from 'lodash';
 import logger from 'shared/utils/logging';
 
 // cve.ts에 정의된 타입들을 사용
 import type { CVEListResponse, CVEDetail } from '../types/cve';
 import useSocket from 'core/socket/hooks/useSocket';
+import socketService from 'core/socket/services/socketService';
 import api from 'shared/api/config/axios';
+import { Subscription } from 'rxjs';
 
 /**
  * 구독 관련 이벤트 상수
  */
-const SUBSCRIPTION_EVENTS = {
+const LOCAL_SUBSCRIPTION_EVENTS = {
   SUBSCRIPTION_ERROR: SOCKET_EVENTS.SUBSCRIPTION_ERROR,
   UNSUBSCRIPTION_ERROR: SOCKET_EVENTS.UNSUBSCRIPTION_ERROR,
 };
@@ -896,10 +898,14 @@ export function useCVEListUpdates() {
 
 /**
  * CVE 구독 관리 훅 (최적화 버전)
- * 특정 CVE에 대한 실시간 구독을 관리
+ * 특정 CVE에 대한 실시간 구독을 관리합니다.
+ * socketService를 통해 구독 상태를 중앙 관리하여 다음의 이점을 제공합니다:
+ * - 한 번 구독한 CVE는 여러 컴포넌트에서 일관된 구독 상태 공유
+ * - 상태 변경 이벤트 발행을 통한 구독 상태 변경 알림
+ * - 로컬 스토리지 저장함으로써 브라우저 새로고침 후에도 상태 유지
  * 
- * @param cveId - CVE ID
- * @returns 구독 상태와 관리 함수
+ * @param cveId - 구독할 CVE ID
+ * @returns 구독 상태와 관리 함수를 포함한 객체
  */
 export const useCVESubscription = (cveId: string) => {
   const logger = createLogger('useCVESubscription');
@@ -909,6 +915,9 @@ export const useCVESubscription = (cveId: string) => {
   const subscriptionPendingRef = useRef(false);
   const requestIdRef = useRef('');
   
+  // 이벤트 구독 관리를 위한 ref - RxJS 구독 관리 및 메모리 누수 방지
+  const subscriptionsRef = useRef<Subscription[]>([]);
+  
   // 마지막 요청 시간을 추적하기 위한 ref (중복 요청 방지)
   const lastRequestTimeRef = useRef({
     subscribe: 0,
@@ -917,10 +926,17 @@ export const useCVESubscription = (cveId: string) => {
   
   // 재시도 횟수 ref
   const retryCountRef = useRef(0);
+
+  // 초기 구독 상태 확인
+  const initialSubscriptionState = useMemo(() => {
+    const isSubscribed = socketService.isSubscribedToCVE(cveId);
+    logger.debug(`CVE 구독 초기화: ${cveId}, 구독상태: ${isSubscribed}`);
+    return isSubscribed;
+  }, [cveId]);
   
   // useReducer로 상태 관리 단순화
   const [state, dispatch] = useReducer(subscriptionReducer, {
-    isSubscribed: false,
+    isSubscribed: initialSubscriptionState, // socketService에서 초기 구독 상태 확인
     subscribers: [],
     isLoading: false,
     error: null,
@@ -1026,7 +1042,7 @@ export const useCVESubscription = (cveId: string) => {
     }
   }, [cveId, connected]);
   
-  // 재시도 유틸리티
+  // 재시도 유틸리티 - socketService 기반으로 단순화
   const retryAttempt = useCallback((action: 'subscribe' | 'unsubscribe') => {
     retryCountRef.current++;
     
@@ -1035,22 +1051,27 @@ export const useCVESubscription = (cveId: string) => {
       RETRY_CONFIG.MAX_DELAY
     );
     
-    logger.info(`${action} 재시도 예약`, {
+    logger.info(`${action} 재시도 예약 (socketService 활용)`, {
       cveId,
       retryCount: retryCountRef.current,
       delay: `${delay}ms`
     });
     
     startTimer(`${action}-retry`, () => {
+      // socketService를 통해 구독 관리
       if (action === 'subscribe') {
-        subscribe(true);
+        // 낙관적 UI 업데이트
+        dispatch({ type: 'SUBSCRIBE_REQUEST' });
+        socketService.subscribeCVE(cveId);
       } else {
-        unsubscribe(true);
+        // 낙관적 UI 업데이트
+        dispatch({ type: 'UNSUBSCRIBE_REQUEST' });
+        socketService.unsubscribeCVE(cveId);
       }
     }, delay);
   }, [cveId]);
   
-  // 구독자 업데이트 이벤트 핸들러 (메모이제이션 적용)
+  // 구독자 업데이트 이벤트 핸들러 (메모이제이션 적용) - socketService 연동 최적화
   const handleSubscribersUpdated = useCallback((data: any) => {
     logger.debug('구독자 업데이트 이벤트:', data);
     
@@ -1072,21 +1093,42 @@ export const useCVESubscription = (cveId: string) => {
       sub.id === currentUserId || sub.userId === currentUserId
     );
     
+    // socketService의 구독 상태 확인
+    const serviceSubscriptionStatus = socketService.isSubscribedToCVE(cveId);
+    
+    // 서버 구독 상태와 socketService 구독 상태가 다른 경우
+    if (isCurrentUserSubscribed !== serviceSubscriptionStatus) {
+      logger.info(`구독 상태 불일치 발견: ${cveId} (서버 이벤트와 socketService)`, {
+        serverStatus: isCurrentUserSubscribed,
+        serviceStatus: serviceSubscriptionStatus
+      });
+      
+      // socketService에 상태 동기화
+      if (isCurrentUserSubscribed) {
+        socketService.subscribeCVE(cveId); // 상태 업데이트만 - 서버 요청은 보내지 않음
+      } else {
+        socketService.unsubscribeCVE(cveId); // 상태 업데이트만 - 서버 요청은 보내지 않음
+      }
+    }
+    
     // 이전 상태와 비교
     const prevSubscribers = state.subscribers;
     const prevIsSubscribed = state.isSubscribed;
     
     // 변경 사항이 있는 경우에만 업데이트
-    if (
-      prevIsSubscribed !== isCurrentUserSubscribed ||
-      JSON.stringify(prevSubscribers) !== JSON.stringify(subscribersList)
-    ) {
-      logger.info(`구독자 목록 변경됨: ${cveId}`, {
+    const subscribersChanged = JSON.stringify(prevSubscribers) !== JSON.stringify(subscribersList);
+    const subscriptionChanged = prevIsSubscribed !== isCurrentUserSubscribed;
+    
+    if (subscriptionChanged || subscribersChanged) {
+      const logLevel = subscriptionChanged ? 'info' : 'debug';
+      const message = `구독자 목록 ${subscriptionChanged ? '구독 상태 변경' : '만'} 변경됨: ${cveId}`;
+      
+      logger[logLevel](message, {
         구독자수: subscribersList.length,
         내구독상태: isCurrentUserSubscribed,
         변경사항: {
-          구독상태변경: prevIsSubscribed !== isCurrentUserSubscribed,
-          구독자변경: JSON.stringify(prevSubscribers) !== JSON.stringify(subscribersList)
+          구독상태변경: subscriptionChanged,
+          구독자변경: subscribersChanged
         }
       });
       
@@ -1104,7 +1146,7 @@ export const useCVESubscription = (cveId: string) => {
     retryCountRef.current = 0;
   }, [cveId, state.subscribers, state.isSubscribed]);
   
-  // 구독 상태 이벤트 핸들러 (메모이제이션 적용)
+  // 구독 상태 이벤트 핸들러 - socketService 연동 및 중앙화
   const handleSubscriptionStatus = useCallback((data: any) => {
     logger.debug(`구독 상태 이벤트:`, data);
     
@@ -1125,12 +1167,33 @@ export const useCVESubscription = (cveId: string) => {
     const errorMessage = eventData.error || null;
     const subscribers = Array.isArray(eventData.subscribers) ? eventData.subscribers : [];
     
+    // socketService의 현재 구독 상태 확인
+    const currentServiceStatus = socketService.isSubscribedToCVE(cveId);
+    
     if (isSuccess) {
       // 성공적인 응답 처리
       if (isSubscribed) {
+        // 서버에서 구독 성공 응답을 받은 경우
+        
+        // socketService의 상태와 서버 응답의 상태가 다른 경우 동기화
+        if (!currentServiceStatus) {
+          logger.info(`구독 상태 불일치 동기화 (서버: 구독됨, 서비스: 구독안됨): ${cveId}`);
+          socketService.subscribeCVE(cveId);
+        }
+        
+        // UI 업데이트
         dispatch({ type: 'SUBSCRIBE_SUCCESS', subscribers });
         logger.info(`구독 성공(${requestIdRef.current}): ${cveId}`);
       } else {
+        // 서버에서 구독 해제 성공 응답을 받은 경우
+        
+        // socketService의 상태와 서버 응답의 상태가 다른 경우 동기화
+        if (currentServiceStatus) {
+          logger.info(`구독 상태 불일치 동기화 (서버: 구독안됨, 서비스: 구독됨): ${cveId}`);
+          socketService.unsubscribeCVE(cveId);
+        }
+        
+        // UI 업데이트
         dispatch({ type: 'UNSUBSCRIBE_SUCCESS', subscribers });
         logger.info(`구독 해제 성공(${requestIdRef.current}): ${cveId}`);
       }
@@ -1140,6 +1203,17 @@ export const useCVESubscription = (cveId: string) => {
         error: errorMessage
       });
       
+      // 오류 발생 시에도 socketService의 상태와 서버 상태를 동기화 시도
+      // (오류가 발생했으나 예상했던 상태를 기준으로 리셋)
+      if (state.isSubscribed && !currentServiceStatus) {
+        // 구독 인 상태를 유지해야 하지만 서비스에서는 구독되지 않음
+        socketService.subscribeCVE(cveId);
+      } else if (!state.isSubscribed && currentServiceStatus) {
+        // 구독 해제 상태를 유지해야 하지만 서비스에서는 구독되어 있음
+        socketService.unsubscribeCVE(cveId);
+      }
+      
+      // 오류 상태 UI 업데이트
       if (state.isSubscribed) {
         dispatch({ type: 'SUBSCRIBE_FAILURE', error: errorMessage });
       } else {
@@ -1171,7 +1245,7 @@ export const useCVESubscription = (cveId: string) => {
     }
   }, [cveId, retryAttempt]);
   
-  // 구독 함수 - 디바운스 및 메모이제이션 적용
+  // 구독 함수 - socketService를 활용한 중앙화된 구독 관리
   const subscribe = useCallback((isRetry = false) => {
     if (!cveId || !connected) {
       logger.warn('구독 실패: CVE ID 누락 또는 연결 안됨', {
@@ -1214,15 +1288,16 @@ export const useCVESubscription = (cveId: string) => {
     // 낙관적 UI 업데이트
     dispatch({ type: 'SUBSCRIBE_REQUEST' });
     
-    // 구독 요청 전송
-    logger.info(`CVE 구독 요청(${requestIdRef.current}): ${cveId}`, {
+    // socketService를 통한 구독 요청
+    logger.info(`socketService를 통한 CVE 구독 요청(${requestIdRef.current}): ${cveId}`, {
       isRetry,
       retryCount: isRetry ? retryCountRef.current : 0
     });
     
-    emitDebounced(SOCKET_EVENTS.SUBSCRIBE_CVE, { cve_id: cveId });
+    // socketService를 사용하여 구독
+    socketService.subscribeCVE(cveId);
     
-    // 타임아웃 설정
+    // 타임아웃 설정 (socketService에서 이벤트 발행하지만 혹시 모를 경우를 대비)
     startTimer('subscribe-timeout', () => {
       handleRequestTimeout('subscribe');
     }, RETRY_CONFIG.TIMEOUT);
@@ -1230,7 +1305,7 @@ export const useCVESubscription = (cveId: string) => {
     return true;
   }, [cveId, connected, state.isSubscribed, emitDebounced, clearTimer, startTimer, handleRequestTimeout]);
   
-  // 구독 해제 함수 - 디바운스 및 메모이제이션 적용
+  // 구독 해제 함수 - socketService를 활용한 중앙화된 구독 관리
   const unsubscribe = useCallback((isRetry = false) => {
     if (!cveId || !connected) {
       logger.warn('구독 해제 실패: CVE ID 누락 또는 연결 안됨', {
@@ -1273,15 +1348,16 @@ export const useCVESubscription = (cveId: string) => {
     // 낙관적 UI 업데이트
     dispatch({ type: 'UNSUBSCRIBE_REQUEST' });
     
-    // 구독 해제 요청 전송 - 백엔드 기대 형식(cve_id)으로 수정
-    logger.info(`CVE 구독 해제 요청(${requestIdRef.current}): ${cveId}`, {
+    // socketService를 통한 구독 해제 요청
+    logger.info(`socketService를 통한 CVE 구독 해제 요청(${requestIdRef.current}): ${cveId}`, {
       isRetry,
       retryCount: isRetry ? retryCountRef.current : 0
     });
     
-    emitDebounced(SOCKET_EVENTS.UNSUBSCRIBE_CVE, { cve_id: cveId });
+    // socketService를 사용하여 구독 해제
+    socketService.unsubscribeCVE(cveId);
     
-    // 타임아웃 설정
+    // 타임아웃 설정 (socketService에서 이벤트 발행하지만 혹시 모를 경우를 대비)
     startTimer('unsubscribe-timeout', () => {
       handleRequestTimeout('unsubscribe');
     }, RETRY_CONFIG.TIMEOUT);
@@ -1289,7 +1365,7 @@ export const useCVESubscription = (cveId: string) => {
     return true;
   }, [cveId, connected, state.isSubscribed, emitDebounced, clearTimer, startTimer, handleRequestTimeout]);
   
-  // 연결 상태 변화 관리 - 연결 복구 시 필요한 작업 수행
+  // 연결 상태 변화 관리 - socketService를 활용한 연결 복구 개선
   useEffect(() => {
     if (!connected && !state.connectionLost) {
       logger.warn('연결이 끊어졌습니다.');
@@ -1298,61 +1374,155 @@ export const useCVESubscription = (cveId: string) => {
       logger.info('연결이 복구되었습니다.');
       dispatch({ type: 'CONNECTION_RESTORED' });
       
-      // 구독 상태라면 구독 복구
-      if (state.isSubscribed) {
-        logger.info('구독 상태 복구 시도');
-        subscribe(true);
+      // socketService의 구독 상태와 현재 상태 비교
+      const serviceSubscriptionStatus = socketService.isSubscribedToCVE(cveId);
+      
+      if (serviceSubscriptionStatus !== state.isSubscribed) {
+        logger.info(`연결 복구 후 구독 상태 불일치 발견: ${cveId}`, {
+          serviceStatus: serviceSubscriptionStatus, 
+          localStatus: state.isSubscribed
+        });
+        
+        // socketService 상태를 우선하여 로컬 상태를 그에 맞춤
+        if (serviceSubscriptionStatus) {
+          // 서비스에서는 구독 중이지만 로컬에서는 구독 안됨 -> 구독 상태로 업데이트
+          logger.info(`연결 복구 후 구독 상태 UI 업데이트: ${cveId}`);
+          dispatch({ type: 'SUBSCRIBE_SUCCESS', subscribers: state.subscribers }); // 구독자 목록은 유지
+        } else {
+          // 서비스에서는 구독 안되었지만 로컬에서는 구독 중 -> 구독 해제 상태로 업데이트
+          logger.info(`연결 복구 후 구독 해제 상태 UI 업데이트: ${cveId}`);
+          dispatch({ type: 'UNSUBSCRIBE_SUCCESS', subscribers: state.subscribers }); // 구독자 목록은 유지
+        }
+      } else if (state.isSubscribed) {
+        // 양쪽 모두 구독 중인 상태 -> 구독자 목록 새로 가져오기
+        logger.info(`연결 복구 후 구독 정보 업데이트 요청: ${cveId}`);
+        // 구독자 목록 업데이트를 위한 요청
+        emit(SOCKET_EVENTS.GET_CVE_SUBSCRIBERS, { cve_id: cveId });
       }
     }
-  }, [connected, state.connectionLost, state.isSubscribed, subscribe]);
+  }, [connected, state.connectionLost, state.isSubscribed, state.subscribers, cveId, emit]);
   
   // 이벤트 리스너 설정 및 정리 (소켓 요청 단일화 및 이벤트 핸들러 관리)
   useEffect(() => {
     // 이벤트 구독 핸들러 등록 - 이벤트 핸들러 관리
     logger.debug(`이벤트 핸들러 등록: ${cveId}`);
     
+    // Socket.IO 이벤트 구독
     const unsubSubscribersUpdated = on(SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED, handleSubscribersUpdated);
     const unsubStatus = on(SOCKET_EVENTS.SUBSCRIPTION_STATUS, handleSubscriptionStatus);
     
+    // socketService 구독 상태 변경 관찰
+    const subscriptionChangedSubscription = socketService.getSubscriptionChanges()
+      .subscribe(() => {
+        // 이 CVE의 구독 상태 확인
+        const isSubscribed = socketService.isSubscribedToCVE(cveId);
+        
+        // 현재 상태와 다른 경우에만 업데이트
+        if (isSubscribed !== state.isSubscribed) {
+          logger.info(`socketService 구독 상태 변경 발견: ${cveId}`, {
+            isSubscribed,
+            previousState: state.isSubscribed
+          });
+          
+          // 상태 업데이트
+          dispatch({
+            type: isSubscribed ? 'SUBSCRIBE_SUCCESS' : 'UNSUBSCRIBE_SUCCESS',
+            subscribers: state.subscribers // 구독자 목록은 변경되지 않았으므로 현재 상태 유지
+          });
+        }
+      });
+    
+    // 구독한 이벤트들 ref에 저장
+    subscriptionsRef.current = [
+      subscriptionChangedSubscription
+    ];
+    
     logger.debug(`이벤트 핸들러 등록됨: ${cveId}`, {
-      이벤트: [SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED, SOCKET_EVENTS.SUBSCRIPTION_STATUS],
+      이벤트: [
+        SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED, 
+        SOCKET_EVENTS.SUBSCRIPTION_STATUS,
+        SUBSCRIPTION_EVENTS.SUBSCRIPTIONS_CHANGED
+      ],
       connected
     });
     
     // 컴포넌트 언마운트 또는 의존성 변경 시 정리
     return () => {
-      // 이벤트 구독 해제
-      unsubSubscribersUpdated();
-      unsubStatus();
-      
-      logger.debug(`이벤트 핸들러 해제: ${cveId}`);
-      
-      // 연결 상태에서만 구독 해제 요청 전송 - 정리 시 구독 해제
-      if (connected && state.isSubscribed) {
-        // 이미 처리 중이 아닐 때만 요청
-        if (!subscriptionPendingRef.current) {
-          logger.info(`컴포넌트 언마운트: CVE 구독 자동 해제 ${cveId}`);
-          emit(SOCKET_EVENTS.UNSUBSCRIBE_CVE, { cve_id: cveId });
-        }
-      }
+      logger.debug(`컴포넌트 언마운트 시작: ${cveId}`);
       
       // 타이머 정리
       clearAllTimers();
       
+      // 이벤트 구독 해제
+      unsubSubscribersUpdated();
+      unsubStatus();
+      
+      // socketService의 이벤트 구독 해제
+      subscriptionsRef.current.forEach(subscription => {
+        if (subscription && typeof subscription.unsubscribe === 'function') {
+          subscription.unsubscribe();
+        }
+      });
+      
+      logger.debug(`이벤트 핸들러 해제 완료: ${cveId}`);
+      
+      // 구독 해제 처리
+      const serviceSubscriptionStatus = socketService.isSubscribedToCVE(cveId);
+      if (serviceSubscriptionStatus) {
+        // socketService에서 여전히 구독 상태인 경우에만 구독 해제 수행
+        if (!subscriptionPendingRef.current) {
+          logger.info(`컴포넌트 언마운트: CVE 구독 자동 해제 ${cveId}`);
+          
+          try {
+            // socketService를 통한 구독 해제
+            socketService.unsubscribeCVE(cveId);
+            
+            // 연결되어 있고 연결이 유지되면 서버에도 해제 요청 전송
+            if (connected) {
+              emit(SOCKET_EVENTS.UNSUBSCRIBE_CVE, { cve_id: cveId });
+            }
+          } catch (error) {
+            logger.error(`컴포넌트 언마운트 시 구독 해제 오류: ${cveId}`, error);
+          }
+        }
+      } else {
+        logger.debug(`컴포넌트 언마운트: 이미 구독 해제된 상태이므로 추가 작업 없음 ${cveId}`);
+      }
+      
       // 소켓 리소스 정리
       cleanup();
+      logger.debug(`컴포넌트 언마운트 완료: ${cveId}`);
     };
   }, [cveId, on, emit, cleanup, connected, state.isSubscribed, handleSubscribersUpdated, handleSubscriptionStatus, clearAllTimers]);
+  
+  // 출력을 위한 추가 메모이제이션
+  const socketSubscriptionStatus = useMemo(() => {
+    // socketService의 상태와 로컬 상태 간 불일치 검사
+    const serviceStatus = socketService.isSubscribedToCVE(cveId);
+    if (serviceStatus !== state.isSubscribed) {
+      logger.debug(`구독 상태 불일치 검출: ${cveId}`, {
+        stateIsSubscribed: state.isSubscribed,
+        socketServiceIsSubscribed: serviceStatus
+      });
+    }
+    // 검사 후 socketService의 상태 반환 (중앙 저장소 우선)
+    return serviceStatus;
+  }, [cveId, state.isSubscribed]);
   
   // 반환값
   return {
     subscribe: () => subscribe(false),
     unsubscribe: () => unsubscribe(false),
-    isSubscribed: state.isSubscribed,
+    isSubscribed: socketSubscriptionStatus, // socketService 상태 우선 사용
     subscribers: optimisticSubscribers, // 메모이제이션된 구독자 목록
     isLoading: state.isLoading,
     error: state.error,
-    connectionLost: state.connectionLost
+    connectionLost: state.connectionLost,
+    // 디버깅을 위한 추가 정보
+    debug: {
+      localState: state.isSubscribed,
+      serviceState: socketSubscriptionStatus
+    }
   };
 };
 

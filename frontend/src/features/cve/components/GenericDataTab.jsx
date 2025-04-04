@@ -240,11 +240,17 @@ const GenericDataTab = memo(({
 
       // 기존 아이템 배열에서 해당 인덱스만 제외
       const updatedItems = items.filter((_, i) => i !== index);
+      
+      // 백엔드로 전송할 데이터 준비 - action을 'delete'로 명시적 설정
+      const item = items[index];
+      const updateData = {
+        [tabConfig.dataField]: updatedItems,
+        // 변경된 부분: action 값을 명시적으로 'delete'로 설정
+        action: "delete"
+      };
 
       try {
-        const response = await api.patch(`/cves/${cveData.cveId}`, {
-          [tabConfig.dataField]: updatedItems
-        }, {
+        const response = await api.patch(`/cves/${cveData.cveId}`, updateData, {
           skipAuthRefresh: false // 명시적으로 skipAuthRefresh 설정
         });
 

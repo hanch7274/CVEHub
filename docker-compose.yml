@@ -11,7 +11,7 @@ services:
       - mongodb_data:/data/db
       - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
     environment:
-      - TZ=Asia/Seoul
+      - TZ=UTC
     networks:
       - cvehub-network
     healthcheck:
@@ -30,7 +30,7 @@ services:
       - redis_data:/data
     command: redis-server --appendonly yes
     environment:
-      - TZ=Asia/Seoul
+      - TZ=UTC
     networks:
       - cvehub-network
     healthcheck:
@@ -77,7 +77,7 @@ services:
       - ./frontend/node_modules:/app/node_modules
       - ./frontend/.env:/app/.env
     environment:
-      - TZ=Asia/Seoul
+      - TZ=UTC
     depends_on:
       - backend
     networks:

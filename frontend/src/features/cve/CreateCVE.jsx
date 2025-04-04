@@ -210,32 +210,24 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
   const handleSubmit = async (e) => {
      e.preventDefault(); // Prevent default form submission if wrapped in <form>
 
-     // Basic Validation
-     if (!formData.cveId.trim() || !formData.title.trim()) {
-       setError('CVE ID와 제목은 필수 항목입니다.');
+     // Basic Validation - title 필드 필수 제외
+     if (!formData.cveId.trim()) {
+       setError('CVE ID는 필수 항목입니다.');
        enqueueSnackbar('필수 입력 값을 확인해주세요.', { variant: 'warning' });
        return;
      }
      setError(null);
     // setLoading(true); // isLoading 사용
 
-    const currentTime = getUtcTimestamp();
     const cveData = {
       ...formData, // cveId, title, description, status, severity, tags (array), exploitStatus
       pocs: pocs.map(({ id, ...rest }) => rest),
       snortRules: snortRules.map(({ id, ...rest }) => rest),
       references: references.map(({ id, ...rest }) => rest),
-      createdAt: currentTime,
-      lastModifiedAt: currentTime,
-      publishedDate: currentTime, // Example
+      // 시간 관련 필드는 백엔드에서 자동으로 설정
     };
 
-    // Date validation (optional)
-    if (!cveData.createdAt || !cveData.lastModifiedAt || !cveData.publishedDate) {
-      handleError(new Error('날짜 필드 생성 중 오류 발생'));
-      // setLoading(false);
-      return;
-    }
+    // 시간 관련 필드 검증 제거 - 백엔드에서 처리
 
     mutate(cveData);
   };
@@ -281,10 +273,9 @@ const CreateCVE = ({ open = false, onClose, onSuccess }) => {
               </Grid>
               <Grid item xs={12} sm={6} md={8} lg={5}>
                 <TextField
-                  required fullWidth label="제목" name="title"
+                  fullWidth label="제목" name="title"
                   value={formData.title} onChange={handleInputChange}
                   size="small" sx={inputStyles(theme)}
-                   error={!formData.title.trim() && !!error}
                 />
               </Grid>
               <Grid item xs={12} sm={6} md={4} lg={2}>

@@ -18,8 +18,7 @@ from fastapi.security import OAuth2PasswordBearer
 from .models import User, RefreshToken, TokenData, UserCreate, UserUpdate, UserResponse, Token
 
 from ..core.config import get_settings
-# get_user_by_session_id에서 필요할 수 있으므로 조건부 import 또는 의존성 주입 고려
-# from ..core.socketio_manager import socketio_manager
+
 
 # --- FastAPI 의존성 관련 설정 ---
 # tokenUrl은 실제 API 엔드포인트 경로에 맞게 수정해야 합니다.
@@ -31,11 +30,11 @@ logger = logging.getLogger(__name__)
 class UserService:
     """사용자 및 인증 관련 서비스"""
 
-    def __init__(self, socketio_manager=None):
+    def __init__(self, socket_manager=None):
         self.pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
         self.settings = get_settings() # settings는 전역 변수로도 접근 가능하지만, 명시적으로 주입
         self.logger = logging.getLogger(__name__) # logger는 전역 변수로도 접근 가능
-        self._socketio_manager = socketio_manager
+        self._socket_manager = socket_manager
 
     # --- Password Handling ---
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:

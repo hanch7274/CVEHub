@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import axios from 'shared/api/config/axios';
 import { userService } from '../services/userService';
 import { getCurrentUser } from '../services/authService';
+import { getAccessToken } from 'shared/utils/storage/tokenStorage';
 import { User, UserUpdate } from '../types/index';
 
 /**
@@ -18,11 +19,16 @@ export interface UserListResponse {
  * @returns 현재 사용자 정보 쿼리 결과
  */
 export const useCurrentUser = () => {
+  // 액세스 토큰이 있는지 확인
+  const hasToken = Boolean(getAccessToken());
+  
   return useQuery({
     queryKey: ['auth', 'user'],
     queryFn: getCurrentUser,
     staleTime: 5 * 60 * 1000, // 5분
-    retry: 1
+    retry: 1,
+    // 토큰이 있을 때만 쿼리 실행
+    enabled: hasToken
   });
 };
 
@@ -36,7 +42,7 @@ export const useUsers = () => {
     queryKey: ['users'],
     queryFn: async () => {
       try {
-        const { data } = await axios.get('/users');
+        const { data } = await axios.get('/auth/');
         return data;
       } catch (error) {
         console.error('사용자 목록 조회 중 오류 발생:', error);
@@ -63,7 +69,7 @@ export const useSearchUsers = (query: string) => {
           return { items: [] };
         }
         
-        const { data } = await axios.get(`/users/search`, {
+        const { data } = await axios.get(`/auth/search`, {
           params: { query }
         });
         return data;

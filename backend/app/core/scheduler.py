@@ -8,8 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.crawler.crawler_manager import CrawlerManager
 from .config import get_settings
 from app.system.models import SystemConfig
-from .socketio_manager import socketio_manager
-from app.cve.models import CVEModel
+from app.socketio.manager import socketio_manager
 from app.crawler.crawler_base import LoggingMixin
 import functools
 from typing import Optional, Dict, Any, List, Tuple
@@ -296,7 +295,7 @@ class CrawlerScheduler(LoggingMixin):
                 
                 try:
                     # 크롤러 실행
-                    update_result = await crawler.run()
+                    update_result = await crawler.crawl()
                     
                     # 크롤러 실행 성공 시
                     if update_result and update_result.get("stage") == "success":

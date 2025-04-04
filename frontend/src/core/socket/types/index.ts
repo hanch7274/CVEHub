@@ -99,6 +99,8 @@ export interface SocketOptions {
   autoConnect: boolean;
   auth: {
     token: string;
+    userId?: string; // 인증된 사용자 ID
+    username?: string; // 사용자명
     session_id?: string;
     client_id?: string;
   };
@@ -196,7 +198,7 @@ export interface SubscriptionStatusMessage {
   cve_id: string;
   subscribed: boolean;
   subscriber_count: number;
-  user_id: string;
+  username: string;
   success: boolean;
   error?: string;
 }

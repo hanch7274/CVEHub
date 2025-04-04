@@ -19,7 +19,7 @@ from app.auth.models import User
 from app.cve.service import CVEService
 from app.core.dependencies import get_cve_service
 from app.auth.service import get_current_user, get_current_admin_user
-from app.core.socketio_manager import socketio_manager, WSMessageType, DateTimeEncoder
+from app.socketio.manager import socketio_manager, WSMessageType, DateTimeEncoder
 from app.core.cache import (
     get_cache, cache_cve_detail, cache_cve_list, 
     invalidate_cve_caches, CACHE_KEY_PREFIXES
@@ -168,6 +168,18 @@ async def get_cve_list(
     # 성능 측정 및 로깅
     elapsed_time = (datetime.now() - start_time).total_seconds()
     logger.info(f"CVE 목록 검색 완료. 소요 시간: {elapsed_time:.3f}초, 총 항목: {result.get('total', 0)}")
+    
+    # 시간 필드 디버깅 로그 추가
+    if result.get('items') and len(result['items']) > 0:
+        sample_item = result['items'][0]
+        if 'created_at' in sample_item:
+            logger.debug(f"[시간 디버깅] CVE 목록 첫 항목의 created_at: {sample_item['created_at']} (타입: {type(sample_item['created_at']).__name__})")
+        if 'last_modified_at' in sample_item:
+            logger.debug(f"[시간 디버깅] CVE 목록 첫 항목의 last_modified_at: {sample_item['last_modified_at']} (타입: {type(sample_item['last_modified_at']).__name__})")
+        
+        # UTC 시간 변환 테스트
+        current_utc = datetime.now().isoformat()
+        logger.debug(f"[시간 디버깅] 현재 시간(UTC): {current_utc}")
     
     # 결과 캐싱
     await cache_cve_list(query_params, result)
@@ -320,6 +332,11 @@ async def create_cve(
         
     # 모델을 딕셔너리로 변환
     cve_dict = cve.dict() if hasattr(cve, 'dict') else cve
+    
+    # id 필드가 문자열인지 확인하고 아니면 변환
+    if 'id' in cve_dict and cve_dict['id'] is not None and not isinstance(cve_dict['id'], str):
+        logger.debug(f"id 필드 타입 변환: {type(cve_dict['id'])} -> str")
+        cve_dict['id'] = str(cve_dict['id'])
     
     # 소켓 알림 전송
     await send_cve_notification("add", cve_dict)

@@ -86,7 +86,7 @@ export const API_ENDPOINTS = {
      * 사용자 관련 엔드포인트
      */
     USER: {
-        SEARCH: '/users/search'
+        SEARCH: '/auth/search'
     },
     /**
      * WebSocket 관련 엔드포인트
@@ -105,7 +105,7 @@ export const CASE_CONVERSION_CONFIG = {
     DEBUG: true, // 항상 디버그 모드 활성화
     
     // 변환에서 제외할 필드 목록 (필요한 경우 추가)
-    EXCLUDED_FIELDS: ['access_token', 'refresh_token', 'token_type', 'expires_in']
+    EXCLUDED_FIELDS: []//['access_token', 'refresh_token', 'token_type', 'expires_in']
 };
 
 // 기타 설정

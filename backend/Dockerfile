@@ -9,8 +9,9 @@ RUN apt-get update && \
     curl \
     git \
     && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/share/zoneinfo/Asia/Seoul /etc/localtime \
-    && echo "Asia/Seoul" > /etc/timezone
+    # 시간대 설정
+ENV TZ=UTC
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
