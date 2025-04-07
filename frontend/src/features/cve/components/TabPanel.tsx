@@ -1,8 +1,16 @@
 import React from 'react';
 import { Box } from '@mui/material';
-import PropTypes from 'prop-types';
+import { TabPanelProps } from '../types/cve';
 
-const TabPanel = ({ children, value, index, ...other }) => {
+/**
+ * 탭 패널 컴포넌트 - 선택된 탭의 내용을 표시합니다.
+ *
+ * @param children 탭 패널에 표시할 내용
+ * @param value 현재 선택된 탭 인덱스
+ * @param index 이 패널의 인덱스
+ * @param other 기타 props
+ */
+const TabPanel: React.FC<TabPanelProps> = ({ children, value, index, ...other }) => {
   if (value !== index) return null;  // 선택되지 않은 탭은 렌더링하지 않음
 
   return (
@@ -34,12 +42,6 @@ const TabPanel = ({ children, value, index, ...other }) => {
       </Box>
     </Box>
   );
-};
-
-TabPanel.propTypes = {
-  children: PropTypes.node,
-  index: PropTypes.number.isRequired,
-  value: PropTypes.number.isRequired
 };
 
 export default TabPanel;

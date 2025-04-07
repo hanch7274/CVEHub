@@ -382,14 +382,17 @@ export function useSocket<TData = any, TPayload = any>(
   useEffect(() => {
     const intervalId = setInterval(() => {
       const currentSubscribedCVEs = socketService.getSubscribedCVEs();
-      // 깊은 비교를 통해 변경 사항이 있을 때만 상태 업데이트
-      if (!_.isEqual(currentSubscribedCVEs.sort(), subscribedCVEs.sort())) {
-        setSubscribedCVEs(currentSubscribedCVEs);
-      }
+      // 함수형 업데이트를 사용하여 이전 상태와 비교
+      setSubscribedCVEs(prev => {
+        if (!_.isEqual(currentSubscribedCVEs.sort(), prev.sort())) {
+          return currentSubscribedCVEs;
+        }
+        return prev;
+      });
     }, 1000); // 1초마다 확인
-    
+      
     return () => clearInterval(intervalId);
-  }, [subscribedCVEs]);
+  }, []); // 의존성 배열에서 subscribedCVEs 제거
   
   // 콜백 메모이제이션
   const memoizedCallback = useCallback(data => {

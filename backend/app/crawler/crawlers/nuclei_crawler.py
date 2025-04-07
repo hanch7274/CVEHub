@@ -418,19 +418,41 @@ class NucleiCrawlerService(BaseCrawlerService):
         reference_objects = []
         current_time = datetime.now(ZoneInfo("UTC")).isoformat()
         
-        for ref_url in references:
-            if ref_url:
-                reference_objects.append({
-                    "url": ref_url,
-                    "type": "OTHER",
-                    "description": f"Nuclei Template Reference",
-                    "created_at": current_time,
-                    "created_by": "Nuclei-Crawler",
-                    "last_modified_at": current_time,
-                    "last_modified_by": "Nuclei-Crawler"
-                })
+        # URL 패턴과 해당 타입을 매핑하는 딕셔너리
+        url_type_mapping = {
+            "nvd.nist.gov": "NVD",
+            "exploit.db.com": "Exploit",
+            "nuclei-templates": "Exploit",
+            "metasploit-framework": "Exploit"
+            # 필요시 여기에 더 많은 매핑을 추가할 수 있습니다
+        }
         
-        return reference_objects
+        for ref_url in references:
+            if not ref_url:
+                continue
+                
+            # 기본 타입은 OTHER로 설정
+            ref_type = "OTHER"
+            description = "Nuclei Template Reference"
+            
+            # URL 패턴 매칭
+            for pattern, type_value in url_type_mapping.items():
+                if pattern in ref_url:
+                    ref_type = type_value
+                    description = f"{type_value} Reference"
+                    break
+                    
+            reference_objects.append({
+                "url": ref_url,
+                "type": ref_type,
+                "description": description,
+                "created_at": current_time,
+                "created_by": "Nuclei-Crawler",
+                "last_modified_at": current_time,
+                "last_modified_by": "Nuclei-Crawler"
+            })
+        
+    return reference_objects
 
     def _create_pocs(self, cve_id: str, file_path: str) -> List[Dict[str, Any]]:
         """PoC 정보 생성"""

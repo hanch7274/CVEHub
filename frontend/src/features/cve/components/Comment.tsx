@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, ChangeEvent } from 'react';
 import {
   Box,
   Typography,
@@ -23,24 +23,12 @@ import { ko } from 'date-fns/locale';
 import { StyledListItem } from './CommonStyles';
 import MentionInput from './MentionInput';
 import { highlightMentions } from 'shared/utils/mentionUtils';
+import { CommentProps } from '../types/cve';
 
 /**
- * @param {object} props
- *   - comment: { id, content, createdBy, createdAt, isDeleted, parentId, depth }
- *   - depth: 댓글 깊이 (대댓글이면 1,2…)
- *   - currentUsername: 현재 로그인 유저명
- *   - isAdmin: 관리자 여부
- *   - isEditing: 현재 이 댓글이 "수정 중"인지 여부 (부모에서 관리)
- *   - onEdit, onDelete: 수정/삭제 시 상위에 알리는 콜백
- *   - onReplySubmit: (parentCommentId, content) => {} 형태의 답글 등록 콜백
- *   - onReply: 답글 모드 시작 요청 (예, onReply(comment))
- *   - onReplyCancel: 답글 모드 종료 요청
- *   - replyMode: 부모에서 전달받은 현재 이 댓글이 답글 모드인지 여부
- *   - children: 대댓글 렌더링 시 사용
- *   - onStartEdit: (commentId) => {} 수정 모드 시작
- *   - onFinishEdit: 수정 모드 종료
+ * 댓글 컴포넌트
  */
-const Comment = React.memo(({
+const Comment: React.FC<CommentProps> = React.memo(({
   comment,
   depth = 0,
   currentUsername,
@@ -57,13 +45,13 @@ const Comment = React.memo(({
   onFinishEdit,
 }) => {
   // 수정 모드에서의 로컬 입력 상태
-  const [editContent, setEditContent] = useState(comment.content);
+  const [editContent, setEditContent] = useState<string>(comment.content);
   // 답글 입력 상태
-  const [replyContent, setReplyContent] = useState('');
+  const [replyContent, setReplyContent] = useState<string>('');
   // 삭제 확인 다이얼로그 상태
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState<boolean>(false);
   // 삭제된 댓글 원본 보기 토글
-  const [showOriginal, setShowOriginal] = useState(false);
+  const [showOriginal, setShowOriginal] = useState<boolean>(false);
 
   const isDeleted = comment.isDeleted;
   const isAuthor = currentUsername === comment.createdBy;
@@ -73,15 +61,19 @@ const Comment = React.memo(({
   const formattedDate = useMemo(() => {
     if (!comment.createdAt) return '';
     try {
-      const date = parseISO(comment.createdAt);
+      const date = typeof comment.createdAt === 'string' 
+        ? parseISO(comment.createdAt) 
+        : comment.createdAt;
       return formatDistanceToNow(date, { addSuffix: true, locale: ko });
     } catch {
-      return comment.createdAt;
+      return typeof comment.createdAt === 'string' 
+        ? comment.createdAt 
+        : comment.createdAt.toString();
     }
   }, [comment.createdAt]);
 
   // 수정 모드 토글
-  const handleEditToggle = () => {
+  const handleEditToggle = (): void => {
     if (isEditing) {
       console.log('=== Comment Edit Debug ===');
       console.log('Saving edited comment:', {
@@ -90,7 +82,7 @@ const Comment = React.memo(({
         currentUser: currentUsername
       });
 
-      onEdit?.(comment.id, editContent)
+      onEdit?.(comment.id || '', editContent)
         .then(response => {
           console.log('Edit success:', response);
           onFinishEdit?.();
@@ -104,16 +96,16 @@ const Comment = React.memo(({
         });
     } else {
       setEditContent(comment.content);
-      onStartEdit?.(comment.id);
+      onStartEdit?.(comment.id || '');
     }
   };
 
-  const handleCancelEdit = () => {
+  const handleCancelEdit = (): void => {
     onFinishEdit?.();
   };
 
   // 삭제 다이얼로그
-  const handleDeleteClick = () => {
+  const handleDeleteClick = (): void => {
     console.log('=== Comment Delete Debug ===');
     console.log('Opening delete dialog:', {
       commentId: comment.id,
@@ -123,14 +115,14 @@ const Comment = React.memo(({
     setDeleteDialogOpen(true);
   };
 
-  const handleDeleteConfirm = (permanent = false) => {
+  const handleDeleteConfirm = (permanent: boolean = false): void => {
     console.log('Confirming delete:', {
       commentId: comment.id,
       permanent,
       currentUser: currentUsername
     });
 
-    onDelete?.(comment.id, permanent)
+    onDelete?.(comment.id || '', permanent)
       .then(response => {
         console.log('Delete success:', response);
         setDeleteDialogOpen(false);
@@ -145,7 +137,7 @@ const Comment = React.memo(({
   };
 
   // 답글 아이콘 클릭
-  const handleReplyIconClick = () => {
+  const handleReplyIconClick = (): void => {
     if (replyMode) {
       // 이미 답글 모드 -> 취소
       onReplyCancel?.();
@@ -157,7 +149,7 @@ const Comment = React.memo(({
   };
 
   // 답글 제출
-  const handleReplySubmitLocal = () => {
+  const handleReplySubmitLocal = (): void => {
     if (!replyContent.trim()) return;
     
     console.log('=== Comment Reply Debug ===');
@@ -167,7 +159,7 @@ const Comment = React.memo(({
       currentUser: currentUsername
     });
 
-    onReplySubmit?.(comment.id, replyContent)
+    onReplySubmit?.(comment.id || '', replyContent)
       .then(response => {
         console.log('Reply submission success:', response);
         onReplyCancel?.();
@@ -183,14 +175,14 @@ const Comment = React.memo(({
   };
 
   // 댓글 내용 렌더링
-  const renderContent = () => {
+  const renderContent = (): React.ReactNode => {
     // 수정 모드
     if (isEditing) {
       return (
         <Box sx={{ mt: 1 }}>
           <MentionInput
             value={editContent}
-            onChange={(e) => setEditContent(e.target.value)}
+            onChange={(value: string) => setEditContent(value)}
             placeholder="댓글을 수정하세요..."
           />
           <Stack direction="row" spacing={1} sx={{ mt: 1, justifyContent: 'flex-end' }}>
@@ -322,7 +314,7 @@ const Comment = React.memo(({
         <Box sx={{ mt: 2 }}>
           <MentionInput
             value={replyContent}
-            onChange={(e) => setReplyContent(e.target.value)}
+            onChange={(value: string) => setReplyContent(value)}
             placeholder="답글을 입력하세요..."
           />
           <Stack direction="row" spacing={1} sx={{ mt: 1, justifyContent: 'flex-end' }}>
@@ -394,5 +386,8 @@ const Comment = React.memo(({
          prevProps.isEditing === nextProps.isEditing &&
          prevProps.replyMode === nextProps.replyMode;
 });
+
+// displayName 설정 (디버깅 용이성 향상)
+Comment.displayName = 'Comment';
 
 export default Comment;

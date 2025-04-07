@@ -109,29 +109,50 @@ export const useCVESubscription = (cveId: string) => {
     };
   }, []);
   
-  // 낙관적 UI 업데이트를 위한 구독자 목록 계산 (메모이제이션 적용)
+  // 낙관적 UI 업데이트를 위한 구독자 목록 (메모이제이션 적용)
   const optimisticSubscribers = useMemo(() => {
-    // 현재 구독자 목록
-    const currentSubscribers = [...(state.subscribers || [])];
-    const currentUser = getCurrentUserInfo();
+    // 1. 훅 상태의 구독자 정보
+    let subscribersList = state.isSubscribed ? state.subscribers : [];
     
-    if (!currentUser) return currentSubscribers;
-    
-    // 낙관적 UI 업데이트: 구독 중이라면 현재 사용자를 목록에 추가, 아니라면 제거
-    const hasCurrentUser = currentSubscribers.some(sub => 
-      sub.id === currentUser.id || sub.userId === currentUser.id
-    );
-    
-    if (state.isSubscribed && !hasCurrentUser) {
-      return [...currentSubscribers, currentUser];
-    } else if (!state.isSubscribed && hasCurrentUser) {
-      return currentSubscribers.filter(sub => 
-        sub.id !== currentUser.id && sub.userId !== currentUser.id
+    // 2. 로컬 스토리지에서 구독 정보 확인
+    try {
+      const subscribedCves = JSON.parse(localStorage.getItem('cvehub_subscribed_cves') || '[]');
+      const isLocallySubscribed = Array.isArray(subscribedCves) && subscribedCves.includes(cveId);
+      const currentUser = getCurrentUserInfo();
+      
+      if (!currentUser) {
+        return subscribersList;
+      }
+      
+      // 현재 사용자가 이미 목록에 있는지 확인
+      const hasCurrentUser = subscribersList.some(sub => 
+        sub.id === currentUser.id || sub.userId === currentUser.id
       );
+      
+      // 로컬 스토리지와 상태 간 불일치 감지 및 기록
+      if (isLocallySubscribed !== state.isSubscribed) {
+        logger.debug(`구독 상태 불일치: 로컬=${isLocallySubscribed}, 상태=${state.isSubscribed}, CVE=${cveId}`);
+      }
+      
+      // 로컬에 구독되어 있고 목록에 없으면 사용자 추가
+      if (isLocallySubscribed && !hasCurrentUser) {
+        const updatedList = [...subscribersList, currentUser];
+        return updatedList;
+      }
+      
+      // 구독 해제됐지만 아직 목록에 있으면 제거
+      if (!isLocallySubscribed && hasCurrentUser) {
+        return subscribersList.filter(sub => 
+          sub.id !== currentUser.id && sub.userId !== currentUser.id
+        );
+      }
+      
+      return subscribersList;
+    } catch (error) {
+      logger.error(`로컬 스토리지 구독 정보 처리 오류: ${cveId}`, error);
+      return subscribersList;
     }
-    
-    return currentSubscribers;
-  }, [state.isSubscribed, state.subscribers, getCurrentUserInfo]);
+  }, [state.isSubscribed, state.subscribers, getCurrentUserInfo, cveId, logger]);
   
   // 구독 처리 함수
   const subscribe = useCallback(async (silent = false) => {
@@ -203,6 +224,16 @@ export const useCVESubscription = (cveId: string) => {
       
       // 로컬 서비스에서 구독 상태 제거
       socketService.unsubscribeCVE(cveId);
+      
+      // 로컬 스토리지에서 구독 정보 삭제
+      try {
+        const storedCves = JSON.parse(localStorage.getItem('cvehub_subscribed_cves') || '[]');
+        const updatedCves = Array.isArray(storedCves) ? storedCves.filter(id => id !== cveId) : [];
+        localStorage.setItem('cvehub_subscribed_cves', JSON.stringify(updatedCves));
+        logger.debug(`로컬 스토리지 구독 정보 삭제: ${cveId}`);
+      } catch (err) {
+        logger.error(`로컬 스토리지 구독 정보 삭제 실패: ${cveId}`, err);
+      }
       
       dispatch({ 
         type: 'UNSUBSCRIBE_SUCCESS', 

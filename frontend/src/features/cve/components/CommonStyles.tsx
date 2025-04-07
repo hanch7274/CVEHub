@@ -1,11 +1,11 @@
-// CommonStyles.jsx
+// CommonStyles.tsx
 import { styled } from '@mui/material/styles';
-import { Paper, Button, IconButton, Box } from '@mui/material';
+import { Paper, Button, IconButton, Box, Theme } from '@mui/material';
 
-export const StyledListItem = styled(Paper)(({ theme }) => ({
+export const StyledListItem = styled(Paper)(({ theme }: { theme: Theme }) => ({
   padding: '8px',
   marginBottom: '6px',
-  backgroundColor: theme.palette.background.paper,
+  backgroundColor: '#ffffff',
   borderRadius: theme.shape.borderRadius,
   border: `1px solid ${theme.palette.divider}`,
   '& + &': {
@@ -25,7 +25,7 @@ export const StyledListItem = styled(Paper)(({ theme }) => ({
   }
 }));
 
-export const ActionButton = styled(Button)(({ theme }) => ({
+export const ActionButton = styled(Button)(({ theme }: { theme: Theme }) => ({
   textTransform: 'none',
   borderRadius: theme.shape.borderRadius,
   padding: '4px 12px',
@@ -40,7 +40,7 @@ export const ActionButton = styled(Button)(({ theme }) => ({
   }
 }));
 
-export const ActionIconButton = styled(IconButton)(({ theme }) => ({
+export const ActionIconButton = styled(IconButton)(({ theme }: { theme: Theme }) => ({
   color: theme.palette.text.secondary,
   '&:hover': {
     backgroundColor: theme.palette.action.hover,
@@ -48,25 +48,25 @@ export const ActionIconButton = styled(IconButton)(({ theme }) => ({
   }
 }));
 
-export const ListHeader = styled('div')(({ theme }) => ({
+export const ListHeader = styled('div')(({ theme }: { theme: Theme }) => ({
   display: 'flex',
   justifyContent: 'space-between',
   alignItems: 'center',
   marginBottom: theme.spacing(2)
 }));
 
-export const ChipLabel = styled('span')(({ theme }) => ({
+export const ChipLabel = styled('span')(({ theme }: { theme: Theme }) => ({
   display: 'flex',
   alignItems: 'center',
   gap: theme.spacing(0.5),
   fontSize: '0.75rem'
 }));
 
-export const EmptyState = styled(Paper)(({ theme }) => ({
+export const EmptyState = styled(Paper)(({ theme }: { theme: Theme }) => ({
   padding: theme.spacing(2),
   textAlign: 'center',
   borderRadius: theme.shape.borderRadius * 2,
-  backgroundColor: theme.palette.background.default,
+  backgroundColor: '#ffffff',
   border: `1px dashed ${theme.palette.divider}`,
   color: theme.palette.text.secondary,
   '& .MuiTypography-root': {
@@ -74,7 +74,7 @@ export const EmptyState = styled(Paper)(({ theme }) => ({
   },
 }));
 
-export const TabContentContainer = styled(Box)(({ theme }) => ({
+export const TabContentContainer = styled(Box)(({ theme }: { theme: Theme }) => ({
   display: 'flex',
   flexDirection: 'column',
   height: '100%',
@@ -82,7 +82,7 @@ export const TabContentContainer = styled(Box)(({ theme }) => ({
   overflow: 'hidden'
 }));
 
-export const TabContentScroll = styled(Box)(({ theme }) => ({
+export const TabContentScroll = styled(Box)(({ theme }: { theme: Theme }) => ({
   flex: 1,
   minHeight: 0,
   overflowY: 'auto',

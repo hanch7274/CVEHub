@@ -1,23 +1,36 @@
-// InlineEditText.jsx
-import React, { useState, useEffect, useRef } from 'react';
-import { TextField, Typography, Box } from '@mui/material';
+// InlineEditText.tsx
+import React, { useState, useEffect, useRef, ChangeEvent, KeyboardEvent } from 'react';
+import { TextField, Typography, Box, TextFieldProps } from '@mui/material';
 import { Edit as EditIcon } from '@mui/icons-material';
 
-const InlineEditText = ({
+interface InlineEditTextProps {
+  value: string;
+  onSave: (value: string) => void;
+  placeholder?: string;
+  multiline?: boolean;
+  disabled?: boolean;
+  maxHeight?: string | number;
+  fontSize?: string | number;
+  externalEdit?: boolean; // 외부에서 편집 모드를 제어하는 prop
+  onEditingStart?: () => void;
+  onEditingEnd?: () => void;
+}
+
+const InlineEditText: React.FC<InlineEditTextProps> = ({
   value,
   onSave,
-  placeholder,
+  placeholder = '입력하세요...',
   multiline = false,
   disabled = false,
   maxHeight,
   fontSize = 'inherit',
-  externalEdit = false,         // 외부에서 편집 모드를 제어하는 prop
+  externalEdit = false,
   onEditingStart = () => {},
   onEditingEnd = () => {}
 }) => {
   const [isEditing, setIsEditing] = useState(externalEdit);
   const [editedValue, setEditedValue] = useState(value || '');
-  const textFieldRef = useRef(null);
+  const textFieldRef = useRef<HTMLDivElement | null>(null);
 
   // 외부 prop이 변경되면 내부 상태를 업데이트
   useEffect(() => {
@@ -29,7 +42,7 @@ const InlineEditText = ({
   }, [value]);
 
   // 텍스트 필드의 높이를 조정하는 함수
-  const adjustTextFieldHeight = () => {
+  const adjustTextFieldHeight = (): void => {
     if (multiline && textFieldRef.current) {
       const inputElement = textFieldRef.current.querySelector('textarea');
       if (inputElement) {
@@ -47,14 +60,14 @@ const InlineEditText = ({
     }
   }, [isEditing, editedValue]);
 
-  const handleClick = (e) => {
+  const handleClick = (e: React.MouseEvent): void => {
     if (!disabled && !isEditing) {
       setIsEditing(true);
       onEditingStart();
     }
   };
 
-  const handleBlur = () => {
+  const handleBlur = (): void => {
     if (editedValue !== value) {
       onSave(editedValue);
     }
@@ -62,7 +75,7 @@ const InlineEditText = ({
     onEditingEnd();
   };
 
-  const handleKeyPress = (e) => {
+  const handleKeyPress = (e: KeyboardEvent<HTMLDivElement>): void => {
     if (e.key === 'Enter' && !multiline) {
       if (editedValue !== value) {
         onSave(editedValue);
@@ -72,7 +85,7 @@ const InlineEditText = ({
     }
   };
 
-  const handleChange = (e) => {
+  const handleChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>): void => {
     setEditedValue(e.target.value);
     // 값이 변경될 때마다 높이 조정 (멀티라인인 경우)
     if (multiline) {
@@ -93,7 +106,7 @@ const InlineEditText = ({
     >
       {isEditing ? (
         <TextField
-          ref={textFieldRef}
+          inputRef={textFieldRef}
           fullWidth
           multiline={multiline}
           value={editedValue}

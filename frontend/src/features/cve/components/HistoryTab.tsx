@@ -33,9 +33,10 @@ import {
   Note as NoteIcon
 } from '@mui/icons-material';
 import { formatDateTime, TIME_ZONES } from 'shared/utils/dateUtils';
+import { HistoryTabProps, HistoryItem, HistoryChange } from '../types/cve';
 
 // 필드별 아이콘 매핑
-const FIELD_ICONS = {
+const FIELD_ICONS: Record<string, React.ReactElement> = {
   title: <TitleIcon />,
   description: <DescriptionIcon />,
   status: <AssignmentIcon />,
@@ -47,20 +48,25 @@ const FIELD_ICONS = {
 };
 
 // 액션별 색상 매핑
-const ACTION_COLORS = {
+const ACTION_COLORS: Record<string, 'success' | 'primary' | 'error'> = {
   add: 'success',
   edit: 'primary',
   delete: 'error'
 };
 
 // 액션별 한글 텍스트
-const ACTION_TEXT = {
+const ACTION_TEXT: Record<string, string> = {
   add: '추가',
   edit: '수정',
   delete: '삭제'
 };
 
-const HistoryTab = ({ modificationHistory = [] }) => {
+/**
+ * 수정 이력 탭 컴포넌트
+ * @param props HistoryTabProps
+ * @returns React 컴포넌트
+ */
+const HistoryTab: React.FC<HistoryTabProps> = ({ modificationHistory = [] }) => {
 
   if (!Array.isArray(modificationHistory) || modificationHistory.length === 0) {
     return (
@@ -75,7 +81,7 @@ const HistoryTab = ({ modificationHistory = [] }) => {
   return (
     <Box sx={{ p: 3 }}>
       <Timeline>
-        {modificationHistory.map((history, historyIndex) => (
+        {modificationHistory.map((history: HistoryItem, historyIndex: number) => (
           <TimelineItem key={historyIndex}>
             <TimelineOppositeContent color="text.secondary">
               {formatDateTime(history.modifiedAt || history.lastModifiedAt, undefined, TIME_ZONES.KST)}
@@ -106,7 +112,7 @@ const HistoryTab = ({ modificationHistory = [] }) => {
                   </Typography>
                 </Box>
                 <List dense>
-                  {history.changes?.map((change, changeIndex) => (
+                  {history.changes?.map((change: HistoryChange, changeIndex: number) => (
                     <ListItem 
                       key={changeIndex}
                       sx={{
@@ -117,8 +123,8 @@ const HistoryTab = ({ modificationHistory = [] }) => {
                       }}
                     >
                       <ListItemIcon>
-                        <Tooltip title={change.fieldName}>
-                          {FIELD_ICONS[change.field] || <EditIcon />}
+                        <Tooltip title={change.fieldName || change.field}>
+                          {FIELD_ICONS[change.field] ? FIELD_ICONS[change.field] : <EditIcon />}
                         </Tooltip>
                       </ListItemIcon>
                       <ListItemText
@@ -126,9 +132,9 @@ const HistoryTab = ({ modificationHistory = [] }) => {
                           <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             {change.summary}
                             <Chip
-                              label={ACTION_TEXT[change.action]}
+                              label={ACTION_TEXT[change.action] || change.action}
                               size="small"
-                              color={ACTION_COLORS[change.action]}
+                              color={ACTION_COLORS[change.action] || 'primary'}
                               sx={{ height: 20 }}
                             />
                           </Box>
