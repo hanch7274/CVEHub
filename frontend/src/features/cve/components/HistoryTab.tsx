@@ -42,9 +42,9 @@ const FIELD_ICONS: Record<string, React.ReactElement> = {
   status: <AssignmentIcon />,
   assigned_to: <PersonIcon />,
   notes: <NoteIcon />,
-  snort_rules: <SecurityIcon />,
-  pocs: <CodeIcon />,
-  references: <LinkIcon />
+  snort_rule: <SecurityIcon />,
+  poc: <CodeIcon />,
+  reference: <LinkIcon />
 };
 
 // 액션별 색상 매핑

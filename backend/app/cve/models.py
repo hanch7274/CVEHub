@@ -1,322 +1,127 @@
 """
-CVE 및 Comment를 위한 통합 모델 및 스키마
-모델: 데이터베이스 구조 정의
-스키마: API 요청 및 응답 형식 정의
+자동 생성된 Beanie 모델 파일 - 직접 수정하지 마세요
+생성 시간: 2025-04-09 02:53:22
 """
+from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
-from typing import List, Optional, Literal, Any, Dict, Union
-from beanie import Document, PydanticObjectId
-from pydantic import BaseModel, Field, validator
 from zoneinfo import ZoneInfo
-import re
+from beanie import Document, PydanticObjectId
+from pydantic import Field, BaseModel, validator
 from bson import ObjectId
-from app.common.models.base_models import BaseDocument, BaseSchema, TimestampMixin
+import re
+from app.common.models.base_models import BaseDocument
 
 # ---------- 유틸리티 함수 ----------
 
-def serialize_datetime(dt):
-    """datetime 객체를 ISO 8601 형식의 문자열로 직렬화"""
-    if not dt:
-        return None
-    return dt.replace(tzinfo=ZoneInfo("UTC")).isoformat().replace('+00:00', 'Z')
+def serialize_datetime(dt: datetime) -> str:
+    """날짜를 ISO 8601 형식의 문자열로 직렬화"""
+    return dt.replace(tzinfo=ZoneInfo("UTC")).isoformat().replace('+00:00', 'Z') if dt else None
 
-
-# ---------- 임베디드 모델 (기본 Pydantic 모델) ----------
-
-class Reference(BaseModel):
-    """참조 정보 모델"""
-    url: str = Field(..., description="참조 URL")
-    type: str = Field(default="OTHER", description="참조 타입")
-    description: Optional[str] = Field(None, description="참조 설명")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    created_by: str = Field(..., description="추가한 사용자")
-    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    last_modified_by: str = Field(..., description="마지막 수정자")
-    
-    class Config:
-        json_encoders = {
-            datetime: serialize_datetime
-        }
-
-class PoC(BaseModel):
-    """PoC(Proof of Concept) 모델"""
-    source: str = Field(..., description="PoC 소스")
-    url: str = Field(..., description="PoC URL")
-    description: Optional[str] = Field(None, description="PoC 설명")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    created_by: str = Field(..., description="추가한 사용자")
-    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    last_modified_by: str = Field(..., description="마지막 수정자")
-    
-    class Config:
-        json_encoders = {
-            datetime: serialize_datetime
-        }
-
-class SnortRule(BaseModel):
-    """Snort Rule 모델"""
-    rule: str = Field(..., description="Snort Rule 내용")
-    type: str = Field(..., description="Rule 타입")
-    description: Optional[str] = Field(None, description="Rule 설명")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    created_by: str = Field(..., description="추가한 사용자")
-    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    last_modified_by: str = Field(..., description="마지막 수정자")
-    
-    class Config:
-        json_encoders = {
-            datetime: serialize_datetime
-        }
-
-class Comment(BaseModel):
-    """댓글 모델 - CVE에 임베디드됨"""
-    id: str = Field(default_factory=lambda: str(ObjectId()))
-    content: str
-    created_by: str = Field(..., description="작성자 이름")
-    parent_id: Optional[str] = None
-    depth: int = 0
-    is_deleted: bool = False
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    last_modified_at: Optional[datetime] = None
-    last_modified_by: Optional[str] = None
-    mentions: List[str] = []
-    
-    class Config:
-        json_encoders = {
-            datetime: serialize_datetime
-        }
-    
-    @classmethod
-    def extract_mentions(cls, content: str) -> List[str]:
-        """댓글 내용에서 멘션된 사용자명을 추출"""
-        if not content:
-            return []
-        MENTION_PATTERN = re.compile(r'@(\w+)')
-        matches = MENTION_PATTERN.findall(content)
-        return [f"@{username}" for username in set(matches)]
+# ---------- 임베디드 모델 ----------
 
 class ChangeItem(BaseModel):
     """변경 사항을 표현하는 모델"""
-    field: str  # 변경된 필드명
-    field_name: str  # 필드의 한글명
-    action: Literal["add", "edit", "delete"]  # 변경 유형
-    detail_type: Literal["simple", "detailed"] = "detailed"  # 변경 내역 표시 방식
-    before: Optional[Any] = None  # 변경 전 값
-    after: Optional[Any] = None  # 변경 후 값
-    items: Optional[List[dict]] = None  # 컬렉션 타입 필드의 변경 항목들
-    summary: str  # 변경 요약
-
-class ModificationHistory(BaseModel):
-    """변경 이력 모델"""
-    username: str  # 수정한 사용자 이름
-    modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    changes: List[ChangeItem] = []
-
-
-# ---------- 요청 모델 (API 입력) ----------
-
-class CommentCreate(BaseSchema):
-    """댓글 생성 요청 모델"""
-    content: str = Field(..., description="댓글 내용")
-    parent_id: Optional[str] = Field(None, description="부모 댓글 ID (답글인 경우)")
-    mentions: List[str] = Field(default=[], description="멘션된 사용자 목록")
+    field: str = Field(..., description="변경된 필드명")
+    field_name: str = Field(..., description="필드의 한글명")
+    action: Literal["add", "edit", "delete", "context", "count_change"] = Field(..., description="변경 유형")
+    detail_type: Literal["simple", "detailed"] = Field(default="detailed", description="변경 내역 표시 방식")
+    before: Optional[Any] = Field(None, description="변경 전 값")
+    after: Optional[Any] = Field(None, description="변경 후 값")
+    items: Optional[List[dict]] = Field(None, description="컬렉션 타입 필드의 변경 항목들")
+    summary: str = Field(..., description="변경 요약")
     
-    @validator('content')
-    def validate_content(cls, v):
-        if not v.strip():
-            raise ValueError("댓글 내용은 비워둘 수 없습니다.")
-        return v.strip()
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
 
-class CommentUpdate(BaseSchema):
-    """댓글 수정 요청 모델"""
-    content: str = Field(..., description="수정할 댓글 내용")
-
-# 요청용 임베디드 모델 (시간 및 사용자 메타데이터 필드 선택적)
-class ReferenceRequest(BaseModel):
-    """참조 정보 요청 모델 (프론트엔드용)"""
+class Reference(BaseModel):
+    """Reference 모델"""
     url: str = Field(..., description="참조 URL")
     type: str = Field(default="OTHER", description="참조 타입")
     description: Optional[str] = Field(None, description="참조 설명")
-    created_at: Optional[datetime] = Field(None, description="생성 시간")
-    created_by: Optional[str] = Field(None, description="추가한 사용자")
-    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간")
-    last_modified_by: Optional[str] = Field(None, description="마지막 수정자")
+    created_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간")
+    created_by: str = Field(default="system", description="추가한 사용자")
+    last_modified_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
+    last_modified_by: str = Field(default="system", description="마지막 수정자")
     
     class Config:
         json_encoders = {
             datetime: serialize_datetime
         }
-
-class PoCRequest(BaseModel):
-    """PoC 정보 요청 모델 (프론트엔드용)"""
+    
+class PoC(BaseModel):
+    """PoC 모델"""
+    source: str = Field(..., description="PoC 소스")
     url: str = Field(..., description="PoC URL")
-    source: Optional[str] = Field(default="Github", description="PoC 소스")
     description: Optional[str] = Field(None, description="PoC 설명")
-    created_at: Optional[datetime] = Field(None, description="생성 시간")
-    created_by: Optional[str] = Field(None, description="추가한 사용자")
-    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간")
-    last_modified_by: Optional[str] = Field(None, description="마지막 수정자")
-    
-    class Config:
-        json_encoders = {
-            datetime: serialize_datetime
-        }
-
-class SnortRuleRequest(BaseModel):
-    """Snort 규칙 요청 모델 (프론트엔드용)"""
-    rule: str = Field(..., description="Snort 규칙 문자열")
-    type: str = Field(default="USER_DEFINED", description="규칙 타입")
-    description: Optional[str] = Field(None, description="규칙 설명")
-    created_at: Optional[datetime] = Field(None, description="생성 시간")
-    created_by: Optional[str] = Field(None, description="추가한 사용자")
-    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간")
-    last_modified_by: Optional[str] = Field(None, description="마지막 수정자")
-    
-    class Config:
-        json_encoders = {
-            datetime: serialize_datetime
-        }
-
-class CreateCVERequest(BaseSchema):
-    """CVE 생성 요청 모델"""
-    cve_id: str
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: str = "신규등록"
-    severity: Optional[str] = None
-    references: List[ReferenceRequest] = []
-    pocs: List[PoCRequest] = []
-    snort_rules: List[SnortRuleRequest] = []
-    # 시간 필드를 선택적으로 설정
-    created_at: Optional[datetime] = None
-    created_by: Optional[str] = None
-    last_modified_at: Optional[datetime] = None
-    last_modified_by: Optional[str] = None
-
-class PatchCVERequest(BaseSchema):
-    """CVE 부분 업데이트 요청 모델"""
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: Optional[str] = None
-    severity: Optional[str] = None
-    exploit_status: Optional[str] = None
-    published_date: Optional[datetime] = None
-    references: Optional[List[ReferenceRequest]] = None
-    pocs: Optional[List[PoCRequest]] = None
-    snort_rules: Optional[List[SnortRuleRequest]] = None
-    tags: Optional[List[str]] = None
-    # 시간 필드를 선택적으로 설정
-    created_at: Optional[datetime] = None
-    created_by: Optional[str] = None
-    last_modified_at: Optional[datetime] = None
-    last_modified_by: Optional[str] = None
-    
-    class Config:
-        extra = "allow"
-
-class BulkUpsertCVERequest(BaseSchema):
-    """다중 CVE 업서트 요청 모델"""
-    cves: List[CreateCVERequest]
-    crawler_name: Optional[str] = None
-
-
-# ---------- 응답 모델 (API 출력) ----------
-
-class CommentResponse(BaseSchema):
-    """댓글 응답 모델"""
-    id: str
-    content: str
-    created_by: str
-    parent_id: Optional[str] = None
-    created_at: datetime
-    last_modified_at: Optional[datetime] = None
-    is_deleted: bool = False
-    mentions: List[str] = []
-
-class CVEListItem(BaseSchema):
-    """CVE 목록 아이템 모델"""
-    id: Optional[str]
-    cve_id: str
-    title: Optional[str] = None
-    status: str
-    created_at: datetime
-    last_modified_at: Optional[datetime] = None
-    severity: Optional[str] = None
-
-class CVEListResponse(BaseSchema):
-    """CVE 목록 응답 모델"""
-    total: int
-    items: List[CVEListItem]
-    page: int = 1
-    limit: int = 10
-
-class CVEDetailResponse(BaseSchema):
-    """CVE 상세 응답 모델"""
-    id: Optional[str]
-    cve_id: str
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: str
-    severity: Optional[str] = None
-    created_at: datetime
-    last_modified_at: Optional[datetime] = None
-    references: List[Reference] = []
-    pocs: List[PoC] = []
-    snort_rules: List[SnortRule] = []
-    comments: List[CommentResponse] = []
-    modification_history: List[ModificationHistory] = []
-    created_by: Optional[str] = None
-    last_modified_by: Optional[str] = None
-
-class CVEOperationResponse(BaseSchema):
-    """CVE 작업 결과 응답 모델"""
-    success: bool
-    message: str
-    cve_id: Optional[str] = None
-    data: Optional[Dict[str, Any]] = None
-
-class BulkOperationResponse(BaseSchema):
-    """다중 CVE 작업 결과 응답 모델"""
-    success: Dict[str, Any]
-    errors: Dict[str, Any]
-    total_processed: int
-
-class CVESearchResponse(BaseSchema):
-    """CVE 검색 결과 응답 모델"""
-    total: int
-    items: List[CVEListItem]
-    query: str
-
-
-# ---------- 문서 모델 (데이터베이스 엔티티) ----------
-
-class CVEModel(BaseDocument):
-    """CVE 모델"""
-    cve_id: str = Field(..., description="CVE ID")
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: str = "신규등록"  # 신규등록, 분석중, 릴리즈 완료, 분석불가
-    assigned_to: Optional[str] = None
-    severity: Optional[str] = None  # 심각도 필드
+    created_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간")
     created_by: str = Field(..., description="추가한 사용자")
+    last_modified_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
     last_modified_by: str = Field(..., description="마지막 수정자")
     
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+    
+class SnortRule(BaseModel):
+    """SnortRule 모델"""
+    rule: str = Field(..., description="Snort Rule 내용")
+    type: str = Field(..., description="Rule 타입")
+    description: Optional[str] = Field(None, description="Rule 설명")
+    created_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간")
+    created_by: str = Field(..., description="추가한 사용자")
+    last_modified_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
+    last_modified_by: str = Field(..., description="마지막 수정자")
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+    
+class Comment(BaseModel):
+    """Comment 모델"""
+    id: str = Field(default=lambda: str(ObjectId()), description="댓글 ID")
+    content: str = Field(..., description="댓글 내용")
+    created_by: str = Field(..., description="작성자 이름")
+    parent_id: Optional[str] = Field(default=None, description="부모 댓글 ID")
+    depth: int = Field(default=0, description="댓글 깊이")
+    is_deleted: bool = Field(default=False, description="삭제 여부")
+    created_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간")
+    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간")
+    last_modified_by: Optional[str] = Field(None, description="마지막 수정자")
+    mentions: List[str] = Field(default=[], description="멘션된 사용자 목록")
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+
+# ---------- 문서 모델 ----------
+
+class CVEModel(BaseDocument):
+    """CVE 모델 - 자동 생성됨"""
+    cve_id: str = Field(..., description="CVE ID")
+    title: Optional[str] = Field(None, description="CVE 제목")
+    description: Optional[str] = Field(None, description="CVE 설명")
+    status: str = Field(default="신규등록", description="CVE 상태")
+    assigned_to: Optional[str] = Field(default=None, description="담당자")
+    severity: Optional[str] = Field(None, description="심각도")
+    created_by: str = Field(..., description="추가한 사용자")
+    last_modified_by: Optional[str] = Field(default=None, description="마지막 수정자")
+    is_locked: bool = Field(default=False, description="편집 잠금 여부")
+    locked_by: Optional[str] = Field(None, description="잠금 설정한 사용자")
+    lock_timestamp: Optional[datetime] = Field(None, description="잠금 설정 시간")
+    lock_expires_at: Optional[datetime] = Field(None, description="잠금 만료 시간")
+    notes: Optional[str] = Field(default=None, description="내부 참고사항")
+    nuclei_hash: Optional[str] = Field(default=None, description="Nuclei 템플릿 해시")
+    
     # 임베디드 필드
-    comments: List[Comment] = []
-    pocs: List[PoC] = []
-    snort_rules: List[SnortRule] = Field(default_factory=list)
-    references: List[Reference] = Field(default_factory=list)
-    modification_history: List[ModificationHistory] = []
-    
-    # 편집 잠금 관련 필드
-    is_locked: bool = False
-    locked_by: Optional[str] = None
-    lock_timestamp: Optional[datetime] = None
-    lock_expires_at: Optional[datetime] = None
-    
-    # 기타 필드
-    notes: Optional[str] = None
-    nuclei_hash: Optional[str] = None
+    comment: List[Comment] = Field(default=[])
+    poc: List[PoC] = Field(default=[])
+    snort_rule: List[SnortRule] = Field(default=[])
+    reference: List[Reference] = Field(default=[])
     
     class Settings:
         name = "cves"
@@ -341,3 +146,7 @@ class CVEModel(BaseDocument):
         unique_indexes = [
             [("cve_id", 1)]
         ]
+
+# 리팩토링 호환성을 위한 임시 별칭 - ChangeItem을 ModificationHistory로도 참조 가능하게 함
+# 향후 코드 정리 시 이 별칭은 제거하고 모든 참조를 ChangeItem으로 통일 필요
+ModificationHistory = ChangeItem

@@ -1,0 +1,129 @@
+"""
+자동 생성된 API 스키마 파일 - 직접 수정하지 마세요
+생성 시간: {{ generation_timestamp }}
+"""
+from typing import List, Optional, Dict, Any, Literal
+from datetime import datetime
+from pydantic import BaseModel, Field, validator
+from app.common.models.base_models import BaseSchema, TimestampMixin
+from .models import ChangeItem
+
+# ---------- 요청 모델 임베디드 클래스 ----------
+
+{% for name, model in embedded_models.items() %}
+{% if name != "change_item" and name != "modification_history" and name != "comments" %}
+class {{ normalize_class_name(name) }}Request(BaseModel):
+    """{{ normalize_class_name(name) }} 요청 모델"""
+    {% for field_name, (field_type, desc, default, required, example) in model.items() %}
+    {% if field_name not in ["created_at", "created_by", "last_modified_at", "last_modified_by"] %}
+    {{ field_name }}: {{ field_type }} = Field({% if required and not default %}...{% else %}{% if default %}default={{ default }}{% else %}default=None{% endif %}{% endif %}, description="{{ desc }}")
+    {% endif %}
+    {% endfor %}
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=None).isoformat() if v else None
+        }
+{% endif %}
+{% endfor %}
+
+# ---------- 응답 모델 임베디드 클래스 ----------
+
+{% for name, model in embedded_models.items() %}
+{% if name != "change_item" and name != "modification_history" %}
+class {{ normalize_class_name(name) }}Response(BaseModel):
+    """{{ normalize_class_name(name) }} 응답 모델"""
+    {% for field_name, (field_type, desc, default, required, example) in model.items() %}
+    {% if field_name in ["last_modified_by"] %}
+    {{ field_name }}: Optional[str] = Field(default=None, description="{{ desc }}")
+    {% else %}
+    {{ field_name }}: {{ field_type }} = Field({% if required and not default %}...{% else %}{% if default %}default={{ default }}{% else %}default=None{% endif %}{% endif %}, description="{{ desc }}")
+    {% endif %}
+    {% endfor %}
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=None).isoformat() if v else None
+        }
+        from_attributes = True
+{% endif %}
+{% endfor %}
+
+# ChangeItem 클래스 (별도 정의)
+class ChangeItem(BaseModel):
+    """변경 사항을 표현하는 모델"""
+    {% for field_name, (field_type, desc, default, required, example) in embedded_models["change_item"].items() %}
+    {{ field_name }}: {{ field_type }} = Field({% if required and not default %}...{% else %}{% if default %}default={{ default }}{% else %}default=[]{% endif %}{% endif %}, description="{{ desc }}")
+    {% endfor %}
+
+# ---------- 요청 모델 ----------
+
+class CreateCVERequest(BaseSchema):
+    """CVE 생성 요청 모델"""
+    cve_id: str = Field(..., description="CVE ID")
+    {% for field_name, (field_type, desc, default, required, example) in fields.items() %}
+    {% if field_name != "cve_id" and field_name not in ["created_at", "created_by", "last_modified_at", "last_modified_by", "is_locked", "locked_by", "lock_timestamp", "lock_expires_at"] %}
+    {{ field_name }}: {{ field_type }} = Field({% if required and not default %}...{% else %}{% if default %}default={{ default }}{% else %}default=[]{% endif %}{% endif %}, description="{{ desc }}")
+    {% endif %}
+    {% endfor %}
+    reference: List[{{ normalize_class_name("reference") }}Request] = Field(default=[], description="참조 목록")
+    poc: List[{{ normalize_class_name("poc") }}Request] = Field(default=[], description="PoC 목록")
+    snort_rule: List[{{ normalize_class_name("snort_rule") }}Request] = Field(default=[], description="Snort 규칙 목록")
+
+class PatchCVERequest(BaseSchema):
+    """CVE 부분 업데이트 요청 모델"""
+    {% for field_name, (field_type, desc, default, required, example) in fields.items() %}
+    {% if field_name != "cve_id" and field_name not in ["created_at", "created_by", "last_modified_at", "last_modified_by", "is_locked", "locked_by", "lock_timestamp", "lock_expires_at"] %}
+    {{ field_name }}: Optional[{{ field_type }}] = Field(default=[], description="{{ desc }}")
+    {% endif %}
+    {% endfor %}
+    reference: Optional[List[{{ normalize_class_name("reference") }}Request]] = Field(default=[], description="참조 목록")
+    poc: Optional[List[{{ normalize_class_name("poc") }}Request]] = Field(default=[], description="PoC 목록")
+    snort_rule: Optional[List[{{ normalize_class_name("snort_rule") }}Request]] = Field(default=[], description="Snort 규칙 목록")
+    
+    class Config:
+        extra = "allow"
+
+# ---------- 응답 모델 ----------
+
+class CVEListItem(BaseSchema):
+    """CVE 목록 아이템 모델"""
+    id: Optional[str] = None
+    cve_id: str
+    title: Optional[str] = None
+    status: str
+    created_at: datetime
+    last_modified_at: Optional[datetime] = None
+    severity: Optional[str] = None
+
+class CVEListResponse(BaseSchema):
+    """CVE 목록 응답 모델"""
+    total: int
+    items: List[CVEListItem]
+    page: int = 1
+    limit: int = 10
+
+class CVEDetailResponse(BaseSchema):
+    """CVE 상세 응답 모델"""
+    id: Optional[str] = None
+    cve_id: str
+    {% for field_name, (field_type, desc, default, required, example) in fields.items() %}
+    {% if field_name != "cve_id" %}
+    {% if field_name == "last_modified_by" %}
+    {{ field_name }}: Optional[str] = Field(default=None, description="{{ desc }}")
+    {% else %}
+    {{ field_name }}: {{ field_type }} = Field({% if required and not default %}...{% else %}{% if default %}default={{ default }}{% else %}default=[]{% endif %}{% endif %}, description="{{ desc }}")
+    {% endif %}
+    {% endif %}
+    {% endfor %}
+    reference: List[{{ normalize_class_name("reference") }}Response] = Field(default=[], description="참조 목록")
+    poc: List[{{ normalize_class_name("poc") }}Response] = Field(default=[], description="PoC 목록")
+    snort_rule: List[{{ normalize_class_name("snort_rule") }}Response] = Field(default=[], description="Snort 규칙 목록")
+    comment: List[{{ normalize_class_name("comment") }}Response] = Field(default=[], description="댓글 목록")
+
+class CVEOperationResponse(BaseSchema):
+    """CVE 작업 결과 응답 모델"""
+    success: bool = Field(..., description="작업 성공 여부")
+    message: str = Field(..., description="응답 메시지")
+    cve_id: Optional[str] = Field(default=None, description="작업 대상 CVE ID")
+    data: Optional[Dict[str, Any]] = Field(default=None, description="추가 데이터")

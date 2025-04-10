@@ -39,7 +39,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { QUERY_KEYS } from 'shared/api/queryKeys';
 import { getUser } from 'shared/utils/storage/tokenStorage';
 import { getUtcTimestamp } from 'shared/utils/dateUtils';
-import { ApiResponse } from 'shared/types/api';
+import { ApiResponse } from 'shared/api/types/api';
 import { 
   CVEDetail,
   CVEData, 
@@ -139,9 +139,9 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
     exploitStatus: 'Unknown',
   });
 
-  const [pocs, setPocs] = useState<PoC[]>([]);
-  const [snortRules, setSnortRules] = useState<SnortRule[]>([]);
-  const [references, setReferences] = useState<Reference[]>([]);
+  const [poc, setPoc] = useState<PoC[]>([]);
+  const [snortRule, setSnortRule] = useState<SnortRule[]>([]);
+  const [reference, setReference] = useState<Reference[]>([]);
 
   const [newPoc, setNewPoc] = useState<Omit<PoC, 'id' | 'created_by' | 'last_modified_by'>>({ source: POC_SOURCES.Etc, url: '' });
   const [newSnortRule, setNewSnortRule] = useState<Omit<SnortRule, 'id' | 'created_by' | 'last_modified_by'>>({ rule: '', type: 'USER_DEFINED' });
@@ -168,20 +168,20 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
           tags: (response.data.tags as string[]) || [],
           exploitStatus: (response.data.exploitStatus as string) || '',
           // 배열 형태로 변환할 때는 리턴타입에 맞게 변환하는 것이 중요합니다
-          pocs: Array.isArray(response.data.pocs) 
-            ? (response.data.pocs as any[]).map(poc => ({
+          poc: Array.isArray(response.data.poc) 
+            ? (response.data.poc as any[]).map(poc => ({
                 source: poc.source || '',
                 url: poc.url || ''
               })) 
             : [],
-          snortRules: Array.isArray(response.data.snortRules) 
-            ? (response.data.snortRules as any[]).map(rule => ({
+          snortRule: Array.isArray(response.data.snortRule) 
+            ? (response.data.snortRule as any[]).map(rule => ({
                 rule: rule.rule || '',
                 type: rule.type || ''
               })) 
             : [],
-          references: Array.isArray(response.data.references) 
-            ? (response.data.references as any[]).map(ref => ({
+          reference: Array.isArray(response.data.reference) 
+            ? (response.data.reference as any[]).map(ref => ({
                 url: ref.url || ''
               })) 
             : [],
@@ -221,9 +221,9 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
       tags: [],
       exploitStatus: 'Unknown'
     });
-    setPocs([]);
-    setSnortRules([]);
-    setReferences([]);
+    setPoc([]);
+    setSnortRule([]);
+    setReference([]);
     setNewPoc({ source: POC_SOURCES.Etc, url: '' });
     setNewSnortRule({ rule: '', type: 'USER_DEFINED' });
     setNewReference('');
@@ -234,7 +234,7 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
   // 목록 추가/삭제 핸들러
   const handleAddPoc = (): void => {
     if (!newPoc.url.trim()) return;
-    setPocs(prev => [...prev, {
+    setPoc(prev => [...prev, {
       ...newPoc,
       id: `poc-${Date.now()}`,
       created_by: username,
@@ -244,12 +244,12 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
   };
 
   const handleRemovePoc = (id: string): void => {
-    setPocs(prev => prev.filter(item => item.id !== id));
+    setPoc(prev => prev.filter(item => item.id !== id));
   };
 
   const handleAddSnortRule = (): void => {
     if (!newSnortRule.rule.trim()) return;
-    setSnortRules(prev => [...prev, {
+    setSnortRule(prev => [...prev, {
       ...newSnortRule,
       id: `snort-${Date.now()}`,
       created_by: username,
@@ -259,13 +259,13 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
   };
 
   const handleRemoveSnortRule = (id: string): void => {
-    setSnortRules(prev => prev.filter(item => item.id !== id));
+    setSnortRule(prev => prev.filter(item => item.id !== id));
   };
 
   const handleAddReference = (): void => {
     if (!newReference.trim()) return;
     const utcTime = getUtcTimestamp();
-    setReferences(prev => [...prev, {
+    setReference(prev => [...prev, {
       url: newReference.trim(),
       id: `ref-${Date.now()}`,
       created_at: utcTime,
@@ -277,7 +277,7 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
   };
 
   const handleRemoveReference = (id: string): void => {
-    setReferences(prev => prev.filter(item => item.id !== id));
+    setReference(prev => prev.filter(item => item.id !== id));
   };
 
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
@@ -292,9 +292,9 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
 
     const cveData: CVEData = {
       ...formData,
-      pocs: pocs.map(({ id, ...rest }) => rest),
-      snortRules: snortRules.map(({ id, ...rest }) => rest),
-      references: references.map(({ id, ...rest }) => rest),
+      poc: poc.map(({ id, ...rest }) => rest),
+      snortRule: snortRule.map(({ id, ...rest }) => rest),
+      reference: reference.map(({ id, ...rest }) => rest),
     };
 
     mutate(cveData);
@@ -421,9 +421,9 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
             />
           </Paper>
 
-          {/* PoCs 섹션 */}
+          {/* PoC 섹션 */}
           <Paper elevation={0} sx={{ p: 2.5, borderRadius: antdBorderRadius, border: `1px solid ${antdBorderColor}` }}>
-            <Typography variant="subtitle1" sx={{ mb: 2, fontWeight: 500 }}>Proof of Concepts (PoCs)</Typography>
+            <Typography variant="subtitle1" sx={{ mb: 2, fontWeight: 500 }}>Proof of Concepts (PoC)</Typography>
             <Box sx={{ display: 'flex', gap: 1, mb: 2, alignItems: 'center' }}>
               <FormControl size="small" sx={{ ...inputStyles(theme), width: '25%', minWidth: 150 }}>
                 <InputLabel>Source</InputLabel>
@@ -467,10 +467,10 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
               </Button>
             </Box>
             <Box sx={{ maxHeight: '200px', overflowY: 'auto', p: 1, bgcolor: antdListBgColor, borderRadius: antdBorderRadius, border: `1px solid ${antdBorderColor}` }}>
-              {pocs.length === 0 ? (
+              {poc.length === 0 ? (
                 <Typography variant="body2" color="textSecondary" align="center" sx={{ p: 2 }}>추가된 PoC가 없습니다.</Typography>
               ) : (
-                pocs.map((poc) => (
+                poc.map((poc) => (
                   <Paper key={poc.id} elevation={0} sx={{ p: 1, mb: 1, display: 'flex', gap: 1, alignItems: 'center', borderRadius: '4px', border: `1px solid ${alpha(antdBorderColor, 0.6)}`, '&:last-child': { mb: 0 } }}>
                     <Typography variant="body2" sx={{ width: '25%', fontWeight: 500, flexShrink: 0 }}>{poc.source}</Typography>
                     <Link href={poc.url} target="_blank" rel="noopener noreferrer" variant="body2" sx={{ flexGrow: 1, wordBreak: 'break-all', color: theme.palette.primary.main }}>
@@ -531,10 +531,10 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
               </Button>
             </Box>
             <Box sx={{ maxHeight: '200px', overflowY: 'auto', p: 1, bgcolor: antdListBgColor, borderRadius: antdBorderRadius, border: `1px solid ${antdBorderColor}` }}>
-              {snortRules.length === 0 ? (
+              {snortRule.length === 0 ? (
                 <Typography variant="body2" color="textSecondary" align="center" sx={{ p: 2 }}>추가된 Snort Rule이 없습니다.</Typography>
               ) : (
-                snortRules.map((rule) => (
+                snortRule.map((rule) => (
                   <Paper key={rule.id} elevation={0} sx={{ p: 1, mb: 1, display: 'flex', gap: 1, alignItems: 'center', borderRadius: '4px', border: `1px solid ${alpha(antdBorderColor, 0.6)}`, '&:last-child': { mb: 0 } }}>
                     <Typography variant="body2" sx={{ width: '30%', fontWeight: 500, flexShrink: 0 }}>
                       {SNORT_RULE_TYPE_OPTIONS.find(opt => opt.value === rule.type)?.label || rule.type}
@@ -551,9 +551,9 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
             </Box>
           </Paper>
 
-          {/* References 섹션 */}
+          {/* Reference 섹션 */}
           <Paper elevation={0} sx={{ p: 2.5, borderRadius: antdBorderRadius, border: `1px solid ${antdBorderColor}` }}>
-            <Typography variant="subtitle1" sx={{ mb: 2, fontWeight: 500 }}>References</Typography>
+            <Typography variant="subtitle1" sx={{ mb: 2, fontWeight: 500 }}>Reference</Typography>
             <Box sx={{ display: 'flex', gap: 1, mb: 2, alignItems: 'center' }}>
               <TextField
                 size="small"
@@ -586,10 +586,10 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
               </Button>
             </Box>
             <Box sx={{ maxHeight: '200px', overflowY: 'auto', p: 1, bgcolor: antdListBgColor, borderRadius: antdBorderRadius, border: `1px solid ${antdBorderColor}` }}>
-              {references.length === 0 ? (
+              {reference.length === 0 ? (
                 <Typography variant="body2" color="textSecondary" align="center" sx={{ p: 2 }}>추가된 참조 URL이 없습니다.</Typography>
               ) : (
-                references.map((ref) => (
+                reference.map((ref) => (
                   <Paper key={ref.id} elevation={0} sx={{ p: 1, mb: 1, display: 'flex', gap: 1, alignItems: 'center', borderRadius: '4px', border: `1px solid ${alpha(antdBorderColor, 0.6)}`, '&:last-child': { mb: 0 } }}>
                     <Link href={ref.url} target="_blank" rel="noopener noreferrer" variant="body2" sx={{ flexGrow: 1, wordBreak: 'break-all', color: theme.palette.primary.main }}>
                       {ref.url}

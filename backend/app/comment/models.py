@@ -1,28 +1,30 @@
 """
-댓글 관련 모델 정의 - CVE 모델에서 분리
+자동 생성된 Comment 모델 파일 - 직접 수정하지 마세요
+생성 시간: 2025-04-09 02:53:23
 """
-from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from beanie import Document
+from pydantic import BaseModel, Field
 from bson import ObjectId
 import re
 
+from app.common.models.base_models import BaseDocument
 from app.common.utils.datetime_utils import serialize_datetime
-
 
 class Comment(BaseModel):
     """댓글 모델 - CVE 댓글 기능"""
-    id: str = Field(default_factory=lambda: str(ObjectId()))
-    content: str
+    id: str = Field(default_factory=lambda: str(ObjectId()), description="댓글 ID")
+    content: str = Field(..., description="댓글 내용")
     created_by: str = Field(..., description="작성자 이름")
-    parent_id: Optional[str] = None
-    depth: int = 0
-    is_deleted: bool = False
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    last_modified_at: Optional[datetime] = None
-    last_modified_by: Optional[str] = None
-    mentions: List[str] = []
+    parent_id: Optional[str] = Field(default=None, description="부모 댓글 ID")
+    depth: int = Field(default=0, description="댓글 깊이")
+    is_deleted: bool = Field(default=False, description="삭제 여부")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간")
+    last_modified_at: Optional[datetime] = Field(default=None, description="마지막 수정 시간")
+    last_modified_by: Optional[str] = Field(default=None, description="마지막 수정자")
+    mentions: List[str] = Field(default_factory=list, description="멘션된 사용자 목록")
     
     class Config:
         json_encoders = {
@@ -50,19 +52,3 @@ class Comment(BaseModel):
         
         # 중복 제거 및 정규화 - 소문자로 변환하여 일관성 유지
         return [f"@{username}" for username in set(matches)]
-
-
-class CommentCreate(BaseModel):
-    """댓글 생성 요청 모델"""
-    content: str
-    parent_id: Optional[str] = None
-
-
-class CommentUpdate(BaseModel):
-    """댓글 수정 요청 모델"""
-    content: str
-
-
-class CommentResponse(Comment):
-    """댓글 응답 모델"""
-    pass

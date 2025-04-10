@@ -14,18 +14,18 @@ import {
 } from 'lodash';
 import { 
   CVEDetail, 
-  CVECreateRequest, 
+  CVEData, 
   CVEUpdateRequest, 
   OperationResponse 
 } from '../types/cve';
 import { QUERY_KEYS } from 'shared/api/queryKeys'
-import { ApiResponse, ApiError } from 'shared/types/api';
+import { ApiResponse, ApiError } from 'shared/api/types/api';
 import logger from 'shared/utils/logging';
 import { SOCKET_EVENTS } from 'core/socket/services/constants';
 /**
  * CVE 생성 요청 타입
  */
-export type CreateCVERequest = CVECreateRequest;
+export type CreateCVERequest = CVEData;
 
 /**
  * CVE 업데이트 요청 타입
@@ -400,13 +400,13 @@ export const useUpdateCVEField = (
       logger.info('useUpdateCVEField', '필드 업데이트 요청', { cveId, fieldName, fieldValue });
       
       // PoC 필드 업데이트 시 last_modified_at과 last_modified_by 필드 자동 설정
-      if (fieldName === 'pocs' && isArray(fieldValue)) {
+      if (fieldName === 'poc' && isArray(fieldValue)) {
         // 현재 시간과 사용자 정보 설정
         const now = new Date().toISOString();
         const currentUser = localStorage.getItem('username') || 'unknown';
         
         // 각 PoC 항목에 last_modified_at과 last_modified_by 필드 설정
-        const updatedPocs = fieldValue.map(poc => {
+        const updatedPoc = fieldValue.map(poc => {
           // 새로 추가된 PoC인 경우 (last_modified_at이 없는 경우)
           if (!poc.last_modified_at) {
             return {
@@ -420,10 +420,10 @@ export const useUpdateCVEField = (
         
         logger.info('useUpdateCVEField', 'PoC 필드 자동 업데이트', { 
           cveId, 
-          pocsCount: updatedPocs.length 
+          pocCount: updatedPoc.length 
         });
         
-        return customService.updateCVEField(cveId, fieldName, updatedPocs);
+        return customService.updateCVEField(cveId, fieldName, updatedPoc);
       }
       
       return customService.updateCVEField(cveId, fieldName, fieldValue);
@@ -441,7 +441,7 @@ export const useUpdateCVEField = (
         
         // PoC 필드 업데이트 시 낙관적 업데이트에도 last_modified_at과 last_modified_by 필드 설정
         let updatedFieldValue = fieldValue;
-        if (fieldName === 'pocs' && isArray(fieldValue)) {
+        if (fieldName === 'poc' && isArray(fieldValue)) {
           const now = new Date().toISOString();
           const currentUser = localStorage.getItem('username') || 'unknown';
           

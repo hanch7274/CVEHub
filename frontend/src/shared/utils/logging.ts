@@ -130,7 +130,7 @@ class LoggingService {
 
   constructor() {
     // 기본 로그 레벨을 ERROR로 설정 (ERROR 레벨만 출력)
-    this.logLevel = LOG_LEVEL.ERROR;
+    this.logLevel = LOG_LEVEL.DEBUG;
     this.enabled = true;
     this.ignorePatterns = [
       'ping', 

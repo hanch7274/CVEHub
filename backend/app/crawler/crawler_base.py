@@ -276,25 +276,7 @@ class BaseCrawlerService(ABC, LoggingMixin):
         result["status"] = "신규등록"
         result["source"] = result.get("source", self.crawler_id)
         
-        # 변경 이력 생성
-        changes = [{
-            "field": "cve_id",
-            "field_name": "CVE ID",
-            "action": "add",
-            "summary": f"{cve_id} 등록됨",
-            "old_value": None,
-            "new_value": cve_id
-        }]
-        
-        # 수정 이력 객체 생성
-        mod_history = {
-            "username": creator,
-            "modified_at": now,
-            "changes": changes
-        }
-        
-        # 수정 이력 추가
-        result["modification_history"] = [mod_history]
+        # 변경 이력 관련 코드 제거 (activity로 대체 예정)
         
         return result
         

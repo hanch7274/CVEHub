@@ -1562,7 +1562,8 @@ from starlette.exceptions import HTTPException
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
 from app.system.models import SystemConfig
 from .database import init_db, get_database
-from app.cve.models import CVEModel, CreateCVERequest, PatchCVERequest
+from app.cve.models import CVEModel
+from app.cve.schemas import CreateCVERequest, PatchCVERequest
 from app.api import api_router  # 새 위치에서 임포트
 from app.core.scheduler import CrawlerScheduler
 
@@ -1758,6 +1759,686 @@ class CustomJSONResponse(JSONResponse):
 # 기본 JSONResponse를 커스텀 JSONResponse로 교체
 app.router.default_response_class = CustomJSONResponse
 
+
+
+============================================================
+File: /home/CVEHub/backend/app/tools/test_import_patch.py
+------------------------------------------------------------
+# app/tools/test_import_patch.py
+"""
+마이그레이션 테스트용 임포트 패치 스크립트
+"""
+import sys
+import types
+from pathlib import Path
+
+# 가짜 models 모듈 생성
+models_module = types.ModuleType('app.cve.models')
+
+# generated_models.py에서 모든 심볼 가져오기
+import app.cve.generated_models as generated_models
+for name in dir(generated_models):
+    if not name.startswith('__'):
+        setattr(models_module, name, getattr(generated_models, name))
+
+# 시스템에 모듈 등록
+sys.modules['app.cve.models'] = models_module
+
+print("임포트 패치 적용 완료 - app.cve.models는 이제 generated_models.py를 참조합니다.")
+
+
+============================================================
+File: /home/CVEHub/backend/app/tools/generate_all.py
+------------------------------------------------------------
+"""
+모든 코드 생성 도구를 실행하는 통합 스크립트
+"""
+import subprocess
+import sys
+import os
+from pathlib import Path
+
+def create_directories():
+    """필요한 디렉토리 생성"""
+    directories = [
+        Path(__file__).parent.parent / "schemas",
+        Path(__file__).parent / "templates",
+        Path(__file__).parent.parent.parent / "src" / "shared" / "types" / "generated",
+        Path(__file__).parent.parent / "comment"  # 댓글 디렉토리 추가
+    ]
+    
+    for directory in directories:
+        directory.mkdir(parents=True, exist_ok=True)
+        print(f"디렉토리 생성/확인: {directory}")
+
+def main():
+    """모든 생성 스크립트 실행"""
+    # 작업 경로 출력
+    print(f"현재 작업 디렉토리: {os.getcwd()}")
+    
+    # 필요한 디렉토리 생성
+    create_directories()
+    
+    print("스키마 기반 코드 생성을 시작합니다...")
+    
+    # Beanie 모델 생성
+    print("\n1. 백엔드 모델 생성 중...")
+    try:
+        subprocess.run([sys.executable, "-m", "app.tools.cve_model_generator"], check=True)
+        print("✅ 백엔드 모델 생성 완료")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ 백엔드 모델 생성 실패: {e}")
+    
+    # Pydantic 스키마 생성
+    print("\n2. API 스키마 생성 중...")
+    try:
+        subprocess.run([sys.executable, "-m", "app.tools.cve_schema_generator"], check=True)
+        print("✅ API 스키마 생성 완료")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ API 스키마 생성 실패: {e}")
+    
+    # TypeScript 인터페이스 생성
+    print("\n3. TypeScript 타입 생성 중...")
+    try:
+        subprocess.run([sys.executable, "-m", "app.tools.typescript_generator"], check=True)
+        print("✅ TypeScript 타입 생성 완료")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ TypeScript 타입 생성 실패: {e}")
+    
+    # Comment 모델 및 스키마 생성
+    print("\n4. Comment 모델 및 스키마 생성 중...")
+    try:
+        subprocess.run([sys.executable, "-m", "app.tools.comment_generator"], check=True)
+        print("✅ Comment 모델 및 스키마 생성 완료")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Comment 모델 및 스키마 생성 실패: {e}")
+    
+    print("\n모든 코드 생성이 완료되었습니다!")
+
+if __name__ == "__main__":
+    main()
+
+
+============================================================
+File: /home/CVEHub/backend/app/tools/cve_model_generator.py
+------------------------------------------------------------
+"""
+스키마 정의에서 Beanie 모델을 자동 생성하는 유틸리티
+"""
+import sys
+import os
+from pathlib import Path
+import jinja2
+from datetime import datetime
+import importlib
+import inspect
+import re
+import importlib.util
+
+# 템플릿 디렉토리 설정
+template_dir = Path(__file__).parent / "templates"
+env = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(template_dir),
+    trim_blocks=True,
+    lstrip_blocks=True
+)
+
+# 스키마 이름 변환 함수 정의
+def normalize_class_name(name):
+    """
+    임베디드 모델 이름을 일관된 규칙으로 변환
+    - 매핑 테이블을 통한 명시적 클래스명 변환
+    - snake_case를 PascalCase로 변환
+    """
+    # 단수형 이름으로 변환 (복수형인 경우)
+    singular_name = name[:-1] if name.endswith('s') else name
+    
+    # 명시적 매핑 테이블 (단수형 키 사용)
+    class_name_map = {
+        "comment": "Comment",
+        "poc": "PoC",
+        "reference": "Reference",
+        "snort_rule": "SnortRule",
+        "change_item": "ChangeItem"
+    }
+    
+    # 매핑 테이블에 있으면 해당 이름 반환
+    if singular_name in class_name_map:
+        return class_name_map[singular_name]
+    
+    # 기본 변환 로직: snake_case를 PascalCase로 변환
+    return ''.join(word.capitalize() for word in singular_name.split('_'))
+
+def get_serialize_datetime_function():
+    """
+    날짜 직렬화 함수 정의 반환
+    models.py와 동일한 방식의 직렬화 함수 사용
+    """
+    return """
+def serialize_datetime(dt):
+    \"\"\"datetime 객체를 ISO 8601 형식의 문자열로 직렬화\"\"\"
+    if not dt:
+        return None
+    return dt.replace(tzinfo=ZoneInfo("UTC")).isoformat().replace('+00:00', 'Z')
+"""
+
+def extract_methods_from_model(model_class):
+    """
+    모델 클래스에서 메서드 추출
+    """
+    methods = {}
+    
+    # 클래스의 모든 속성 검사
+    for name, method in inspect.getmembers(model_class, predicate=inspect.isfunction):
+        if not name.startswith('__'):  # 매직 메서드 제외
+            # 메서드 소스 코드와 데코레이터 정보 저장
+            methods[name] = {
+                'source': inspect.getsource(method),
+                'decorators': [d for d in getattr(method, '__decorators__', [])]
+            }
+    
+    return methods
+
+def generate_beanie_model():
+    """CVESchemaDefinition에서 Beanie 모델 클래스 생성"""
+    # CVESchemaDefinition 동적 임포트
+    try:
+        cve_schema_module = importlib.import_module('app.schemas.cve_schema')
+        schema = cve_schema_module.CVESchemaDefinition()
+        
+        # 기존 모델 클래스 임포트 시도 (메서드 추출용)
+        model_classes = {}
+        try:
+            # 직접 import 하지 않고 importlib.util을 사용하여 모듈 존재 여부 확인
+            module_spec = importlib.util.find_spec('app.cve.models')
+            
+            if module_spec is not None:
+                # 순환 참조를 피하기 위해 동적으로 임포트
+                models_module = importlib.import_module('app.cve.models')
+                model_classes = {
+                    name: cls for name, cls in inspect.getmembers(models_module, predicate=inspect.isclass)
+                    if not name.startswith('__') and name not in ['BaseModel', 'Document', 'BaseDocument']
+                }
+                print("기존 모델에서 메서드 추출 성공")
+            else:
+                print("models.py 모듈을 찾을 수 없음 (메서드 추출 생략)")
+                
+        except (ImportError, AttributeError) as e:
+            print(f"기존 모델 클래스 임포트 실패 (메서드 추출 생략): {e}")
+            
+    except (ImportError, AttributeError) as e:
+        print(f"CVESchemaDefinition 임포트 실패: {e}")
+        return
+    
+    # 임베디드 모델 클래스명 정규화
+    normalized_models = {}
+    methods_by_class = {}
+    
+    for name, model in schema.embedded_models.items():
+        if name != "modification_history":
+            normalized_name = normalize_class_name(name)
+            normalized_models[normalized_name] = model
+            
+            # 기존 클래스에서 메서드 추출 시도
+            if normalized_name in model_classes:
+                methods_by_class[normalized_name] = extract_methods_from_model(model_classes[normalized_name])
+    
+    # 임베디드 모델 의존성 그래프 생성 (ChangeItem과 같은 특수 케이스 처리)
+    dependency_order = ["ChangeItem"]  # 특정 순서가 필요한 클래스
+    
+    # 나머지 클래스들 추가
+    for name in normalized_models.keys():
+        if name not in dependency_order:
+            dependency_order.append(name)
+    
+    template = env.get_template("cve_model.py.jinja2")
+    
+    output = template.render(
+        fields=schema.fields,
+        embedded_models=schema.embedded_models,
+        normalized_models=normalized_models,
+        dependency_order=dependency_order,
+        methods_by_class=methods_by_class,
+        generation_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        serialize_datetime_function=get_serialize_datetime_function(),
+        normalize_class_name=normalize_class_name
+    )
+    
+    # 출력 파일 경로
+    output_path = Path(__file__).parent.parent / "cve" / "models.py"
+    
+    # 출력 디렉토리 확인
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # 파일 생성
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(output)
+    
+    print(f"Beanie 모델 생성 완료: {output_path}")
+
+if __name__ == "__main__":
+    generate_beanie_model()
+
+
+============================================================
+File: /home/CVEHub/backend/app/tools/__init__.py
+------------------------------------------------------------
+
+
+
+============================================================
+File: /home/CVEHub/backend/app/tools/typescript_generator.py
+------------------------------------------------------------
+"""
+스키마 정의에서 TypeScript 인터페이스를 자동 생성하는 유틸리티
+"""
+import sys
+import os
+from pathlib import Path
+import jinja2
+from datetime import datetime
+import importlib
+import re
+
+# 템플릿 디렉토리 설정
+template_dir = Path(__file__).parent / "templates"
+env = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(template_dir),
+    trim_blocks=True,
+    lstrip_blocks=True
+)
+
+# snake_case를 camelCase로 변환하는 필터 추가
+def snake_to_camel(value):
+    components = value.split('_')
+    return components[0] + ''.join(x.title() for x in components[1:])
+
+# Python 타입을 TypeScript 타입으로 변환하는 필터 추가
+def python_to_ts(value):
+    # 기본 타입 매핑
+    type_map = {
+        "str": "string",
+        "int": "number",
+        "float": "number",
+        "bool": "boolean",
+        "datetime": "string | Date",
+        "dict": "Record<string, any>",
+        "Dict": "Record<string, any>",
+        "List": "Array",
+        "Optional": "",
+        "Any": "any",
+        "Literal": "",
+        "PydanticObjectId": "string",
+        "ObjectId": "string",
+    }
+    
+    # value에서 타입 문자열 추출
+    value = str(value).replace('"', '')
+    
+    # Optional 처리
+    if "Optional[" in value:
+        inner_type = value[9:-1]  # "Optional[type]"에서 "type" 추출
+        return python_to_ts(inner_type)
+    
+    # List 처리
+    if "List[" in value:
+        inner_type = value[5:-1]  # "List[type]"에서 "type" 추출
+        return f"Array<{python_to_ts(inner_type)}>"
+    
+    # Literal 처리
+    if "Literal[" in value:
+        # "Literal["add", "edit", "delete"]" 형태 처리
+        inner_values = value[8:-1].split(", ")
+        inner_values = [v.strip('"\'') for v in inner_values]
+        return " | ".join([f'"{v}"' for v in inner_values])
+    
+    # 기본 타입 변환
+    for py, ts in type_map.items():
+        if py in value:
+            return value.replace(py, ts)
+    
+    # 기타 처리되지 않은 타입
+    return "any"
+
+# Jinja2 환경에 필터 등록
+env.filters['camelcase'] = snake_to_camel
+env.filters['python_to_ts'] = python_to_ts
+
+def generate_typescript_interfaces():
+    """CVESchemaDefinition에서 TypeScript 인터페이스 생성"""
+    # CVESchemaDefinition 동적 임포트
+    try:
+        cve_schema_module = importlib.import_module('app.schemas.cve_schema')
+        schema = cve_schema_module.CVESchemaDefinition()
+    except (ImportError, AttributeError) as e:
+        print(f"CVESchemaDefinition 임포트 실패: {e}")
+        return
+    
+    template = env.get_template("ts_interfaces.ts.jinja2")
+    
+    # 모델 설명 사전 준비
+    descriptions = {
+        "references": "참조 정보",
+        "pocs": "Proof of Concept 코드",
+        "snort_rules": "Snort 침입 탐지 규칙",
+        "comments": "CVE 관련 댓글",
+        "modification_history": "변경 이력",
+        "change_item": "변경 항목"
+    }
+    
+    output = template.render(
+        fields=schema.fields,
+        embedded_models=schema.embedded_models,
+        descriptions=descriptions,
+        generation_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+    
+    # 출력 파일 경로 (프론트엔드 디렉토리로 설정)
+    frontend_dir = Path("/home/CVEHub/frontend")  # 실제 프론트엔드 디렉토리 경로로 수정
+    output_path = frontend_dir / "src" / "features" / "cve" / "types" / "generated" / "cve.ts"
+    
+    # 출력 디렉토리 확인 및 생성
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # 파일 생성
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(output)
+    
+    print(f"TypeScript 인터페이스 생성 완료: {output_path}")
+
+def format_type_name(name):
+    """타입 이름 포맷팅 - snake_case를 PascalCase로 변환, 대소문자 조정"""
+    # snort_rules -> SnortRule, pocs -> PoC 등의 변환
+    special_cases = {
+        'pocs': 'PoC',
+        'poc': 'PoC',
+        'snort_rules': 'SnortRule',
+        'snort_rule': 'SnortRule',
+        'nort_rule': 'SnortRule', # 오타 수정
+        'references': 'Reference',
+        'reference': 'Reference',
+        'comments': 'Comment',
+        'comment': 'Comment',
+        'modification_history': 'ModificationHistory',
+        'change_item': 'ChangeItem'
+    }
+    
+    if name.lower() in special_cases:
+        return special_cases[name.lower()]
+        
+    # 일반적인 snake_case -> PascalCase 변환
+    words = name.split('_')
+    return ''.join(word.capitalize() for word in words)
+
+# Jinja2 환경에 필터 등록
+env.filters['format_type_name'] = format_type_name
+
+if __name__ == "__main__":
+    generate_typescript_interfaces()
+
+
+============================================================
+File: /home/CVEHub/backend/app/tools/comment_generator.py
+------------------------------------------------------------
+"""
+Comment 모델 및 스키마 생성 유틸리티
+"""
+from pathlib import Path
+import jinja2
+from datetime import datetime
+import importlib
+
+# 템플릿 디렉토리 설정
+template_dir = Path(__file__).parent / "templates"
+env = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(template_dir),
+    trim_blocks=True,
+    lstrip_blocks=True
+)
+
+def generate_comment_model():
+    """Comment 모델 생성"""
+    try:
+        # CommentSchemaDefinition 동적 임포트
+        comment_schema_module = importlib.import_module('app.schemas.comment_schema')
+        schema = comment_schema_module.CommentSchemaDefinition()
+    except (ImportError, AttributeError) as e:
+        print(f"CommentSchemaDefinition 임포트 실패: {e}")
+        return
+    
+    template = env.get_template("comment_model.py.jinja2")
+    
+    output = template.render(
+        fields=schema.fields,
+        embedded_models=schema.embedded_models,
+        generation_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+    
+    # 출력 파일 경로
+    output_path = Path(__file__).parent.parent / "comment" / "models.py"
+    
+    # 출력 디렉토리 확인
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # 파일 생성
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(output)
+    
+    print(f"Comment 모델 생성 완료: {output_path}")
+
+def generate_comment_schemas():
+    """Comment API 스키마 생성"""
+    try:
+        # CommentSchemaDefinition 동적 임포트
+        comment_schema_module = importlib.import_module('app.schemas.comment_schema')
+        schema = comment_schema_module.CommentSchemaDefinition()
+    except (ImportError, AttributeError) as e:
+        print(f"CommentSchemaDefinition 임포트 실패: {e}")
+        return
+    
+    template = env.get_template("comment_schemas.py.jinja2")
+    
+    output = template.render(
+        fields=schema.fields,
+        embedded_models=schema.embedded_models,
+        generation_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+    
+    # 출력 파일 경로
+    output_path = Path(__file__).parent.parent / "comment" / "schemas.py"
+    
+    # 출력 디렉토리 확인
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # 파일 생성
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(output)
+    
+    print(f"Comment API 스키마 생성 완료: {output_path}")
+
+if __name__ == "__main__":
+    generate_comment_model()
+    generate_comment_schemas()
+
+
+
+============================================================
+File: /home/CVEHub/backend/app/tools/bridge_generator.py
+------------------------------------------------------------
+# app/tools/bridge_generator.py
+import sys
+import os
+from pathlib import Path
+import re
+
+def generate_bridge_file():
+    """
+    generated/cve.ts 파일을 분석하여 bridge.ts 파일 생성
+    """
+    frontend_dir = Path("../frontend")
+    generated_path = frontend_dir / "src" / "features" / "cve" / "types" / "generated" / "cve.ts"
+    
+    if not generated_path.exists():
+        print(f"생성된 파일이 존재하지 않습니다: {generated_path}")
+        return False
+    
+    # 생성된 파일에서 인터페이스 추출
+    with open(generated_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # 인터페이스 이름 추출
+    interface_pattern = r'export\s+interface\s+Generated(\w+)'
+    interfaces = re.findall(interface_pattern, content)
+    
+    # bridge.ts 파일 생성
+    bridge_content = """/**
+ * 스키마 중앙화 시스템의 브릿지 파일
+ * 자동 생성된 인터페이스와 기존 코드 연결
+ */
+
+import {
+"""
+    
+    # 임포트 구문 생성
+    for interface in interfaces:
+        bridge_content += f"  Generated{interface},\n"
+    
+    bridge_content += """} from './generated/cve';
+
+// 기본 확장 인터페이스 정의
+"""
+    
+    # 확장 인터페이스 생성
+    special_cases = {
+        "CVEDetail": """export interface CVEDetail extends Omit<GeneratedCVEDetail, 'references' | 'pocs' | 'snortRules' | 'modificationHistory' | 'comments'> {
+  id?: string;
+  references: Reference[];
+  pocs: PoC[];
+  snortRules: SnortRule[];
+  modificationHistory: ModificationHistory[];
+  comments?: Comment[];
+  createdAt?: string | Date;
+  lastModifiedAt?: string | Date;
+  [key: string]: unknown;
+}""",
+        "PoC": """export interface PoC extends Omit<GeneratedPoC, 'source'> {
+  id?: string;
+  code: string; // 'source' 대신 'code' 필드 사용
+  language?: string;
+  [key: string]: unknown;
+}""",
+        "Comment": """export interface Comment extends Omit<GeneratedComment, 'id'> {
+  id?: string;
+  children?: Comment[];
+  [key: string]: unknown;
+}"""
+    }
+    
+    for interface in interfaces:
+        if interface in special_cases:
+            bridge_content += f"\n{special_cases[interface]}\n"
+        else:
+            bridge_content += f"""
+export interface {interface} extends Generated{interface} {{
+  id?: string;
+  [key: string]: unknown;
+}}
+"""
+    
+    # 파일 저장
+    bridge_path = frontend_dir / "src" / "features" / "cve" / "types" / "bridge.ts"
+    with open(bridge_path, 'w', encoding='utf-8') as f:
+        f.write(bridge_content)
+    
+    print(f"브릿지 파일 생성 완료: {bridge_path}")
+    return True
+
+if __name__ == "__main__":
+    generate_bridge_file()
+
+
+============================================================
+File: /home/CVEHub/backend/app/tools/cve_schema_generator.py
+------------------------------------------------------------
+"""
+스키마 정의에서 API 스키마(Pydantic 모델)를 자동 생성하는 유틸리티
+"""
+import sys
+import os
+from pathlib import Path
+import jinja2
+from datetime import datetime
+import importlib
+
+# 템플릿 디렉토리 설정
+template_dir = Path(__file__).parent / "templates"
+env = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(template_dir),
+    trim_blocks=True,
+    lstrip_blocks=True
+)
+
+# 스키마 이름 변환 함수 정의
+def normalize_class_name(name):
+    """
+    임베디드 모델 이름을 일관된 규칙으로 변환
+    - 매핑 테이블을 통한 명시적 클래스명 변환
+    - snake_case를 PascalCase로 변환
+    """
+    # 단수형 이름으로 변환 (복수형인 경우)
+    singular_name = name[:-1] if name.endswith('s') else name
+    
+    # 명시적 매핑 테이블 (단수형 키 사용)
+    class_name_map = {
+        "comment": "Comment",
+        "poc": "PoC",
+        "reference": "Reference",
+        "snort_rule": "SnortRule",
+        "change_item": "ChangeItem"
+    }
+    
+    # 매핑 테이블에 있으면 해당 이름 반환
+    if singular_name in class_name_map:
+        return class_name_map[singular_name]
+    
+    # 매핑 테이블에 없으면 PascalCase로 변환
+    return ''.join(word.capitalize() for word in singular_name.split('_'))
+
+def generate_api_schemas():
+    """CVESchemaDefinition에서 API 스키마 클래스 생성"""
+    # CVESchemaDefinition 동적 임포트
+    try:
+        cve_schema_module = importlib.import_module('app.schemas.cve_schema')
+        schema = cve_schema_module.CVESchemaDefinition()
+    except (ImportError, AttributeError) as e:
+        print(f"CVESchemaDefinition 임포트 실패: {e}")
+        return
+    
+    # 템플릿에 클래스명 변환 함수 제공
+    env.globals['normalize_class_name'] = normalize_class_name
+    
+    template = env.get_template("cve_schemas.py.jinja2")
+    
+    output = template.render(
+        fields=schema.fields,
+        embedded_models=schema.embedded_models,
+        generation_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+    
+    # 출력 파일 경로
+    output_path = Path(__file__).parent.parent / "cve" / "schemas.py"
+    
+    # 출력 디렉토리 확인
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # 파일 생성
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(output)
+    
+    print(f"API 스키마 생성 완료: {output_path}")
+
+if __name__ == "__main__":
+    generate_api_schemas()
 
 
 ============================================================
@@ -2604,6 +3285,154 @@ class ActivityService:
             logger.error(f"변경 사항 추적 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
             return None
+
+
+============================================================
+File: /home/CVEHub/backend/app/schemas/cve_schema.py
+------------------------------------------------------------
+"""
+CVE 중앙 스키마 정의 파일
+모든 CVE 관련 필드와 구조는 이 파일에서 정의됩니다.
+"""
+from typing import Dict, Tuple, List, Optional, Literal, Any
+from app.schemas.base import SchemaDefinition
+
+class CVESchemaDefinition(SchemaDefinition):
+    """CVE 스키마 정의 - 모든 CVE 관련 필드의 중앙 소스"""
+    
+    # 기본 필드
+    fields: Dict[str, Tuple[str, str, Optional[str], bool, Any]] = {
+        # 필드명: (타입, 설명, 기본값, 필수여부, 예시값)
+        "cve_id": ("str", "CVE ID", None, True, "CVE-2023-1234"),
+        "title": ("Optional[str]", "CVE 제목", None, False, "원격 코드 실행 취약점"),
+        "description": ("Optional[str]", "CVE 설명", None, False, "이 취약점은..."),
+        "status": ("str", "CVE 상태", "\"신규등록\"", True, "신규등록"),
+        "assigned_to": ("Optional[str]", "담당자", None, False, "jdoe"),
+        "severity": ("Optional[str]", "심각도", None, False, "높음"),
+        "created_by": ("str", "추가한 사용자", None, True, "admin"),
+        "last_modified_by": ("str", "마지막 수정자", None, True, "admin"),
+        
+        # 락 관련 필드
+        "is_locked": ("bool", "편집 잠금 여부", "False", False, False),
+        "locked_by": ("Optional[str]", "잠금 설정한 사용자", None, False, "admin"),
+        "lock_timestamp": ("Optional[datetime]", "잠금 설정 시간", None, False, "2023-01-01T12:00:00Z"),
+        "lock_expires_at": ("Optional[datetime]", "잠금 만료 시간", None, False, "2023-01-01T13:00:00Z"),
+        
+        # 기타 메타데이터
+        "notes": ("Optional[str]", "내부 참고사항", None, False, "패치 확인 필요"),
+        "nuclei_hash": ("Optional[str]", "Nuclei 템플릿 해시", None, False, "a1b2c3d4"),
+    }
+    
+    # 임베디드 모델 정의
+    embedded_models: Dict[str, Dict[str, Tuple[str, str, Optional[str], bool, Any]]] = {
+        "reference": {
+            "url": ("str", "참조 URL", None, True, "https://example.com"),
+            "type": ("str", "참조 타입", "\"OTHER\"", False, "OTHER"),
+            "description": ("Optional[str]", "참조 설명", None, False, "관련 문서"),
+            "created_at": ("datetime", "생성 시간", "lambda: datetime.now(ZoneInfo(\"UTC\"))", True, "2023-01-01T12:00:00Z"),
+            "created_by": ("str", "추가한 사용자", None, True, "admin"),
+            "last_modified_at": ("datetime", "마지막 수정 시간", "lambda: datetime.now(ZoneInfo(\"UTC\"))", True, "2023-01-01T12:00:00Z"),
+            "last_modified_by": ("str", "마지막 수정자", None, True, "admin"),
+        },
+        "poc": {
+            "source": ("str", "PoC 소스", None, True, "Github"),
+            "url": ("str", "PoC URL", None, True, "https://github.com/example"),
+            "description": ("Optional[str]", "PoC 설명", None, False, "재현 코드"),
+            "created_at": ("datetime", "생성 시간", "lambda: datetime.now(ZoneInfo(\"UTC\"))", True, "2023-01-01T12:00:00Z"),
+            "created_by": ("str", "추가한 사용자", None, True, "admin"),
+            "last_modified_at": ("datetime", "마지막 수정 시간", "lambda: datetime.now(ZoneInfo(\"UTC\"))", True, "2023-01-01T12:00:00Z"),
+            "last_modified_by": ("str", "마지막 수정자", None, True, "admin"),
+        },
+        "snort_rule": {
+            "rule": ("str", "Snort Rule 내용", None, True, "alert tcp any any -> any any (msg:\"Example\";)"),
+            "type": ("str", "Rule 타입", None, True, "EXPLOIT"),
+            "description": ("Optional[str]", "Rule 설명", None, False, "악성 트래픽 감지"),
+            "created_at": ("datetime", "생성 시간", "lambda: datetime.now(ZoneInfo(\"UTC\"))", True, "2023-01-01T12:00:00Z"),
+            "created_by": ("str", "추가한 사용자", None, True, "admin"),
+            "last_modified_at": ("datetime", "마지막 수정 시간", "lambda: datetime.now(ZoneInfo(\"UTC\"))", True, "2023-01-01T12:00:00Z"),
+            "last_modified_by": ("str", "마지막 수정자", None, True, "admin"),
+        },
+        "comment": {
+            "id": ("str", "댓글 ID", "lambda: str(ObjectId())", True, "507f1f77bcf86cd799439011"),
+            "content": ("str", "댓글 내용", None, True, "이 취약점의 영향 범위는..."),
+            "created_by": ("str", "작성자 이름", None, True, "admin"),
+            "parent_id": ("Optional[str]", "부모 댓글 ID", "None", False, "507f1f77bcf86cd799439011"),
+            "depth": ("int", "댓글 깊이", "0", False, 0),
+            "is_deleted": ("bool", "삭제 여부", "False", False, False),
+            "created_at": ("datetime", "생성 시간", "lambda: datetime.now(ZoneInfo(\"UTC\"))", True, "2023-01-01T12:00:00Z"),
+            "last_modified_at": ("Optional[datetime]", "마지막 수정 시간", None, False, "2023-01-01T13:00:00Z"),
+            "last_modified_by": ("Optional[str]", "마지막 수정자", None, False, "admin"),
+            "mentions": ("List[str]", "멘션된 사용자 목록", "[]", False, ["@user1", "@user2"]),
+        },
+        "change_item": {
+            "field": ("str", "변경된 필드명", None, True, "title"),
+            "field_name": ("str", "필드의 한글명", None, True, "제목"),
+            "action": ("Literal[\"add\", \"edit\", \"delete\"]", "변경 유형", None, True, "edit"),
+            "detail_type": ("Literal[\"simple\", \"detailed\"]", "변경 내역 표시 방식", "\"detailed\"", False, "detailed"),
+            "before": ("Optional[Any]", "변경 전 값", None, False, "이전 제목"),
+            "after": ("Optional[Any]", "변경 후 값", None, False, "새 제목"),
+            "items": ("Optional[List[dict]]", "컬렉션 타입 필드의 변경 항목들", None, False, [{"url": "https://example.com"}]),
+            "summary": ("str", "변경 요약", None, True, "제목이 변경되었습니다"),
+        },
+    }
+
+
+============================================================
+File: /home/CVEHub/backend/app/schemas/comment_schema.py
+------------------------------------------------------------
+"""
+댓글 스키마 정의
+"""
+from typing import Dict, Tuple, Optional, Any, List
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from app.schemas.base import SchemaDefinition
+
+
+class CommentSchemaDefinition(SchemaDefinition):
+    """댓글 스키마 정의 클래스"""
+    
+    fields: Dict[str, Tuple[str, str, Optional[str], bool, Any]] = {
+        "id": ("str", "댓글 ID", "lambda: str(ObjectId())", True, "5f7f6a7b8c9d0e1f2a3b4c5d"),
+        "content": ("str", "댓글 내용", None, True, "이것은 테스트 댓글입니다."),
+        "created_by": ("str", "작성자 이름", None, True, "admin"),
+        "parent_id": ("Optional[str]", "부모 댓글 ID", "None", False, None),
+        "depth": ("int", "댓글 깊이", "0", True, 0),
+        "is_deleted": ("bool", "삭제 여부", "False", True, False),
+        "created_at": ("datetime", "생성 시간", "lambda: datetime.now(ZoneInfo(\"UTC\"))", True, "2023-01-01T12:00:00Z"),
+        "last_modified_at": ("Optional[datetime]", "마지막 수정 시간", "None", False, None),
+        "last_modified_by": ("Optional[str]", "마지막 수정자", "None", False, None),
+        "mentions": ("List[str]", "멘션된 사용자 목록", "[]", True, []),
+    }
+    
+    embedded_models: Dict[str, Dict[str, Tuple[str, str, Optional[str], bool, Any]]] = {}
+
+
+
+============================================================
+File: /home/CVEHub/backend/app/schemas/__init__.py
+------------------------------------------------------------
+
+
+
+============================================================
+File: /home/CVEHub/backend/app/schemas/base.py
+------------------------------------------------------------
+"""
+스키마 정의를 위한 기본 클래스 및 유틸리티
+"""
+from typing import Dict, Any, Tuple, Optional, List
+from pydantic import BaseModel, Field
+
+class SchemaDefinition(BaseModel):
+    """스키마 정의를 위한 기본 클래스"""
+    # 타입 어노테이션을 명시적으로 지정
+    fields: Dict[str, Tuple[str, str, Optional[str], bool, Any]] = {}
+    embedded_models: Dict[str, Dict[str, Tuple[str, str, Optional[str], bool, Any]]] = {}
+    
+    class Config:
+        arbitrary_types_allowed = True
 
 
 ============================================================
@@ -3870,34 +4699,243 @@ async def clear_cache(
 
 
 ============================================================
+File: /home/CVEHub/backend/app/cve/schemas.py
+------------------------------------------------------------
+"""
+자동 생성된 API 스키마 파일 - 직접 수정하지 마세요
+생성 시간: 2025-04-08 01:27:21
+"""
+from typing import List, Optional, Dict, Any, Literal
+from datetime import datetime
+from pydantic import BaseModel, Field, validator
+from app.common.models.base_models import BaseSchema, TimestampMixin
+from .models import ChangeItem
+
+# ---------- 요청 모델 임베디드 클래스 ----------
+
+class ReferenceRequest(BaseModel):
+    """Reference 요청 모델"""
+    url: str = Field(..., description="참조 URL")
+    type: str = Field(default="OTHER", description="참조 타입")
+    description: Optional[str] = Field(default=None, description="참조 설명")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=None).isoformat() if v else None
+        }
+class PoCRequest(BaseModel):
+    """PoC 요청 모델"""
+    source: str = Field(..., description="PoC 소스")
+    url: str = Field(..., description="PoC URL")
+    description: Optional[str] = Field(default=None, description="PoC 설명")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=None).isoformat() if v else None
+        }
+class SnortRuleRequest(BaseModel):
+    """SnortRule 요청 모델"""
+    rule: str = Field(..., description="Snort Rule 내용")
+    type: str = Field(..., description="Rule 타입")
+    description: Optional[str] = Field(default=None, description="Rule 설명")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=None).isoformat() if v else None
+        }
+class CommentRequest(BaseModel):
+    """Comment 요청 모델"""
+    id: str = Field(default=lambda: str(ObjectId()), description="댓글 ID")
+    content: str = Field(..., description="댓글 내용")
+    parent_id: Optional[str] = Field(default=None, description="부모 댓글 ID")
+    depth: int = Field(default=0, description="댓글 깊이")
+    is_deleted: bool = Field(default=False, description="삭제 여부")
+    mentions: List[str] = Field(default=[], description="멘션된 사용자 목록")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=None).isoformat() if v else None
+        }
+
+# ---------- 응답 모델 임베디드 클래스 ----------
+
+class ReferenceResponse(BaseModel):
+    """Reference 응답 모델"""
+    url: str = Field(..., description="참조 URL")
+    type: str = Field(default="OTHER", description="참조 타입")
+    description: Optional[str] = Field(default=None, description="참조 설명")
+    created_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간")
+    created_by: str = Field(..., description="추가한 사용자")
+    last_modified_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
+    last_modified_by: str = Field(..., description="마지막 수정자")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=None).isoformat() if v else None
+        }
+        from_attributes = True
+class PoCResponse(BaseModel):
+    """PoC 응답 모델"""
+    source: str = Field(..., description="PoC 소스")
+    url: str = Field(..., description="PoC URL")
+    description: Optional[str] = Field(default=None, description="PoC 설명")
+    created_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간")
+    created_by: str = Field(..., description="추가한 사용자")
+    last_modified_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
+    last_modified_by: str = Field(..., description="마지막 수정자")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=None).isoformat() if v else None
+        }
+        from_attributes = True
+class SnortRuleResponse(BaseModel):
+    """SnortRule 응답 모델"""
+    rule: str = Field(..., description="Snort Rule 내용")
+    type: str = Field(..., description="Rule 타입")
+    description: Optional[str] = Field(default=None, description="Rule 설명")
+    created_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간")
+    created_by: str = Field(..., description="추가한 사용자")
+    last_modified_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
+    last_modified_by: str = Field(..., description="마지막 수정자")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=None).isoformat() if v else None
+        }
+        from_attributes = True
+class CommentResponse(BaseModel):
+    """Comment 응답 모델"""
+    id: str = Field(default=lambda: str(ObjectId()), description="댓글 ID")
+    content: str = Field(..., description="댓글 내용")
+    created_by: str = Field(..., description="작성자 이름")
+    parent_id: Optional[str] = Field(default=None, description="부모 댓글 ID")
+    depth: int = Field(default=0, description="댓글 깊이")
+    is_deleted: bool = Field(default=False, description="삭제 여부")
+    created_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간")
+    last_modified_at: Optional[datetime] = Field(default=None, description="마지막 수정 시간")
+    last_modified_by: Optional[str] = Field(default=None, description="마지막 수정자")
+    mentions: List[str] = Field(default=[], description="멘션된 사용자 목록")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=None).isoformat() if v else None
+        }
+        from_attributes = True
+
+# ChangeItem 클래스 (별도 정의)
+class ChangeItem(BaseModel):
+    """변경 사항을 표현하는 모델"""
+    field: str = Field(..., description="변경된 필드명")
+    field_name: str = Field(..., description="필드의 한글명")
+    action: Literal["add", "edit", "delete"] = Field(..., description="변경 유형")
+    detail_type: Literal["simple", "detailed"] = Field(default="detailed", description="변경 내역 표시 방식")
+    before: Optional[Any] = Field(default=None, description="변경 전 값")
+    after: Optional[Any] = Field(default=None, description="변경 후 값")
+    items: Optional[List[dict]] = Field(default=None, description="컬렉션 타입 필드의 변경 항목들")
+    summary: str = Field(..., description="변경 요약")
+
+# ---------- 요청 모델 ----------
+
+class CreateCVERequest(BaseSchema):
+    """CVE 생성 요청 모델"""
+    cve_id: str = Field(..., description="CVE ID")
+    title: Optional[str] = Field(default=None, description="CVE 제목")
+    description: Optional[str] = Field(default=None, description="CVE 설명")
+    status: str = Field(default="신규등록", description="CVE 상태")
+    assigned_to: Optional[str] = Field(default=None, description="담당자")
+    severity: Optional[str] = Field(default=None, description="심각도")
+    notes: Optional[str] = Field(default=None, description="내부 참고사항")
+    nuclei_hash: Optional[str] = Field(default=None, description="Nuclei 템플릿 해시")
+    reference: List[ReferenceRequest] = []
+    poc: List[PoCRequest] = []
+    snort_rule: List[SnortRuleRequest] = []
+
+class PatchCVERequest(BaseSchema):
+    """CVE 부분 업데이트 요청 모델"""
+    title: Optional[Optional[str]] = Field(None, description="CVE 제목")
+    description: Optional[Optional[str]] = Field(None, description="CVE 설명")
+    status: Optional[str] = Field(None, description="CVE 상태")
+    assigned_to: Optional[Optional[str]] = Field(None, description="담당자")
+    severity: Optional[Optional[str]] = Field(None, description="심각도")
+    notes: Optional[Optional[str]] = Field(None, description="내부 참고사항")
+    nuclei_hash: Optional[Optional[str]] = Field(None, description="Nuclei 템플릿 해시")
+    reference: Optional[List[ReferenceRequest]] = None
+    poc: Optional[List[PoCRequest]] = None
+    snort_rule: Optional[List[SnortRuleRequest]] = None
+    
+    class Config:
+        extra = "allow"
+
+# ---------- 응답 모델 ----------
+
+class CVEListItem(BaseSchema):
+    """CVE 목록 아이템 모델"""
+    id: Optional[str] = None
+    cve_id: str
+    title: Optional[str] = None
+    status: str
+    created_at: datetime
+    last_modified_at: Optional[datetime] = None
+    severity: Optional[str] = None
+
+class CVEListResponse(BaseSchema):
+    """CVE 목록 응답 모델"""
+    total: int
+    items: List[CVEListItem]
+    page: int = 1
+    limit: int = 10
+
+class CVEDetailResponse(BaseSchema):
+    """CVE 상세 응답 모델"""
+    id: Optional[str] = None
+    cve_id: str
+    title: Optional[str] = Field(default=None, description="CVE 제목")
+    description: Optional[str] = Field(default=None, description="CVE 설명")
+    status: str = Field(default="신규등록", description="CVE 상태")
+    assigned_to: Optional[str] = Field(default=None, description="담당자")
+    severity: Optional[str] = Field(default=None, description="심각도")
+    created_by: str = Field(..., description="추가한 사용자")
+    last_modified_by: str = Field(..., description="마지막 수정자")
+    is_locked: bool = Field(default=False, description="편집 잠금 여부")
+    locked_by: Optional[str] = Field(default=None, description="잠금 설정한 사용자")
+    lock_timestamp: Optional[datetime] = Field(default=None, description="잠금 설정 시간")
+    lock_expires_at: Optional[datetime] = Field(default=None, description="잠금 만료 시간")
+    notes: Optional[str] = Field(default=None, description="내부 참고사항")
+    nuclei_hash: Optional[str] = Field(default=None, description="Nuclei 템플릿 해시")
+    reference: List[ReferenceResponse] = []
+    poc: List[PoCResponse] = []
+    snort_rule: List[SnortRuleResponse] = []
+    comment: List[CommentResponse] = []
+
+class CVEOperationResponse(BaseSchema):
+    """CVE 작업 결과 응답 모델"""
+    success: bool = Field(..., description="작업 성공 여부")
+    message: str = Field(..., description="응답 메시지")
+    cve_id: Optional[str] = Field(default=None, description="작업 대상 CVE ID")
+    data: Optional[Dict[str, Any]] = Field(default=None, description="추가 데이터")
+
+
+============================================================
 File: /home/CVEHub/backend/app/cve/router.py
 ------------------------------------------------------------
 """
-CVE 및 Comment API 라우터 - 모든 CVE 및 댓글 관련 엔드포인트 통합
+댓글 관련 API 라우터 - CVE 라우터에서 분리
 """
-from fastapi import APIRouter, HTTPException, Query, Path, status, Depends, Response, BackgroundTasks
-from typing import Dict, Any, Optional, Union, List
-from datetime import datetime
+from fastapi import APIRouter, HTTPException, Depends, Query, Path, status, BackgroundTasks
+from typing import List, Optional, Dict, Any, Union
 import logging
 import traceback
-import json
 import functools
-from pydantic import ValidationError
 
-from app.cve.models import (
-    CVEModel, CVEListResponse, CVEDetailResponse, CVEOperationResponse,
-    BulkOperationResponse, CVESearchResponse, CreateCVERequest, PatchCVERequest,
-    BulkUpsertCVERequest, CommentCreate, CommentUpdate, CommentResponse
-)
 from app.auth.models import User
+from app.auth.service import get_current_user
+# 수정: import 올바른 경로에서 가져오기
+from app.comment.schemas import CommentCreate, CommentUpdate, CommentResponse, CommentListResponse, CommentOperationResponse
+from app.comment.service import CommentService
+from app.core.dependencies import get_comment_service
 from app.cve.service import CVEService
 from app.core.dependencies import get_cve_service
-from app.auth.service import get_current_user, get_current_admin_user
-from app.socketio.manager import socketio_manager, WSMessageType, DateTimeEncoder
-from app.core.cache import (
-    get_cache, cache_cve_detail, cache_cve_list, 
-    invalidate_cve_caches, CACHE_KEY_PREFIXES
-)
 from app.core.config import get_settings
 
 # 로거 설정
@@ -3906,12 +4944,11 @@ logger = logging.getLogger(__name__)
 # 설정 가져오기
 settings = get_settings()
 
-# 기본 라우터
+# 댓글 라우터
 router = APIRouter()
 
 # 예외 타입별 HTTP 상태 코드 매핑
 exception_status_map = {
-    ValidationError: status.HTTP_400_BAD_REQUEST,
     ValueError: status.HTTP_400_BAD_REQUEST,
     KeyError: status.HTTP_404_NOT_FOUND,
     IndexError: status.HTTP_404_NOT_FOUND,
@@ -3922,7 +4959,6 @@ exception_status_map = {
 
 # 예외 타입별 에러 메시지 매핑
 exception_message_map = {
-    ValidationError: "유효하지 않은 데이터 형식입니다",
     ValueError: "잘못된 값이 제공되었습니다",
     KeyError: "요청한 항목을 찾을 수 없습니다",
     IndexError: "색인이 범위를 벗어났습니다",
@@ -3931,8 +4967,8 @@ exception_message_map = {
     NotImplementedError: "이 기능은 아직 구현되지 않았습니다",
 }
 
-def cve_api_error_handler(func):
-    """CVE API 엔드포인트 예외 처리 데코레이터"""
+def comment_api_error_handler(func):
+    """댓글 API 엔드포인트 예외 처리 데코레이터"""
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         try:
@@ -3943,7 +4979,7 @@ def cve_api_error_handler(func):
         except Exception as e:
             # 로깅
             endpoint = func.__name__
-            logger.error(f"CVE API 오류 ({endpoint}): {str(e)}")
+            logger.error(f"댓글 API 오류 ({endpoint}): {str(e)}")
             if "current_user" in kwargs:
                 user = kwargs["current_user"]
                 logger.error(f"사용자: {user.username} (ID: {user.id})")
@@ -3974,544 +5010,433 @@ def cve_api_error_handler(func):
             )
     return wrapper
 
-# ----- CVE 기본 엔드포인트 -----
 
-@router.get("/total-count", response_model=dict)
-@cve_api_error_handler
-async def get_total_cve_count(
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """데이터베이스에 존재하는 전체 CVE 개수를 반환합니다."""
-    logger.info(f"사용자 '{current_user.username}'이(가) 전체 CVE 개수 요청")
-    count = await cve_service.get_total_cve_count()
-    logger.info(f"전체 CVE 개수 조회 완료: {count}")
-    return {"count": count}
-
-@router.get("/list", response_model=CVEListResponse)
-@cve_api_error_handler
-async def get_cve_list(
-    page: int = Query(1, ge=1),
-    limit: int = Query(10, ge=1, le=100),
-    severity: Optional[str] = None,
-    search: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """
-    CVE 목록을 가져옵니다 (캐싱 적용)
-    
-    Args:
-        page: 페이지 번호 (1부터 시작)
-        limit: 페이지당 항목 수
-        severity: 심각도 필터
-        search: 검색어
-        current_user: 현재 인증된 사용자
-        cve_service: CVE 서비스 인스턴스
-        
-    Returns:
-        CVE 목록 정보 (total, items, page, limit)
-    """
-    logger.info(f"사용자 '{current_user.username}'이(가) CVE 목록 요청. 페이지: {page}, 한도: {limit}, 검색어: {search or 'None'}")
-    
-    # 쿼리 파라미터로 캐시 키 생성
-    query_params = {
-        "page": page,
-        "limit": limit,
-        "severity": severity or "",
-        "search": search or ""
-    }
-    
-    cache_key = f"{CACHE_KEY_PREFIXES['cve_list']}{page}_{limit}_{severity or 'all'}_{search or 'none'}"
-    
-    # 캐시에서 먼저 조회
-    cached_data = await get_cache(cache_key)
-    if cached_data:
-        logger.debug(f"캐시에서 CVE 목록 로드: {cache_key}")
-        return cached_data
-    
-    # 캐시에 없으면 DB에서 조회
-    start_time = datetime.now()
-    result = await cve_service.get_cve_list(
-        page=page, 
-        limit=limit,
-        severity=severity,
-        search=search
-    )
-    
-    # 성능 측정 및 로깅
-    elapsed_time = (datetime.now() - start_time).total_seconds()
-    logger.info(f"CVE 목록 검색 완료. 소요 시간: {elapsed_time:.3f}초, 총 항목: {result.get('total', 0)}")
-    
-    # 시간 필드 디버깅 로그 추가
-    if result.get('items') and len(result['items']) > 0:
-        sample_item = result['items'][0]
-        if 'created_at' in sample_item:
-            logger.debug(f"[시간 디버깅] CVE 목록 첫 항목의 created_at: {sample_item['created_at']} (타입: {type(sample_item['created_at']).__name__})")
-        if 'last_modified_at' in sample_item:
-            logger.debug(f"[시간 디버깅] CVE 목록 첫 항목의 last_modified_at: {sample_item['last_modified_at']} (타입: {type(sample_item['last_modified_at']).__name__})")
-        
-        # UTC 시간 변환 테스트
-        current_utc = datetime.now().isoformat()
-        logger.debug(f"[시간 디버깅] 현재 시간(UTC): {current_utc}")
-    
-    # 결과 캐싱
-    await cache_cve_list(query_params, result)
-    
-    return result
-
-# ----- CVE 통계 API 엔드포인트 -----
-
-@router.get("/stats", response_model=Dict[str, int])
-@cve_api_error_handler
-async def get_cve_stats(
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """CVE 통계 정보를 가져옵니다."""
-    logger.info("CVE 통계 정보 요청")
-    
-    # 통계 계산
-    stats = await cve_service.get_cve_stats()
-    
-    logger.info("CVE 통계 정보 제공 완료")
-    return stats
-
-@router.get("/{cve_id}", response_model=CVEDetailResponse)
-@cve_api_error_handler
-async def get_cve_detail(
-    cve_id: str,
-    bypass_cache: bool = Query(False, description="캐시를 우회하고 항상 데이터베이스에서 조회합니다."),
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """
-    CVE ID로 CVE 상세 정보를 조회합니다.
-    
-    Args:
-        cve_id: 조회할 CVE ID
-        bypass_cache: 캐시를 우회할지 여부
-        current_user: 현재 인증된 사용자
-        cve_service: CVE 서비스 인스턴스
-        
-    Returns:
-        CVE 상세 정보
-    """
-    # 라우터에서 직접 콘솔에 출력하는 print 로그 추가
-    print(f"##### API 라우터: GET /cves/{cve_id} 호출됨, bypass_cache={bypass_cache} #####")
-    
-    logger.info(f"사용자 '{current_user.username}'이(가) CVE '{cve_id}' 상세 정보 요청")
-    
-    cache_key = f"{CACHE_KEY_PREFIXES['cve_detail']}{cve_id}"
-    
-    # 캐시 우회 옵션이 없으면 캐시에서 조회
-    if not bypass_cache:
-        cached_data = await get_cache(cache_key)
-        if cached_data:
-            print(f"##### 캐시에서 CVE 상세 정보 로드: {cache_key} #####")
-            logger.debug(f"캐시에서 CVE 상세 정보 로드: {cache_key}")
-            return cached_data
-        else:
-            print(f"##### 캐시에 데이터 없음: {cache_key} #####")
-    else:
-        print(f"##### 캐시 우회 옵션 활성화됨 #####")
-    
-    # 캐시에 없거나 우회 옵션이 설정된 경우 DB에서 조회
-    print(f"##### cve_service.get_cve_detail({cve_id}) 호출 시작 #####")
-    result = await cve_service.get_cve_detail(cve_id, include_details=True)
-    print(f"##### cve_service.get_cve_detail({cve_id}) 호출 완료, 결과 있음: {result is not None} #####")
-    
-    # 결과가 None인 경우 404 오류 반환
-    if result is None:
-        logger.warning(f"CVE '{cve_id}' 정보를 찾을 수 없음")
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"CVE ID '{cve_id}'를 찾을 수 없습니다."
-        )
-    
-    # 결과 캐싱
-    await cache_cve_detail(cve_id, result)
-    
-    return result
-
-@router.get("/{cve_id}", response_model=CVEDetailResponse)
-@cve_api_error_handler
-async def get_cve_detail(
-    cve_id: str,
-    bypass_cache: bool = Query(False, description="캐시를 우회하고 항상 데이터베이스에서 조회합니다."),
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """CVE ID로 CVE 상세 정보를 조회합니다."""
-    # 기존 구현 유지
-
-@router.head("/{cve_id}")
-@cve_api_error_handler
-async def head_cve(
-    cve_id: str,
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """
-    CVE의 메타데이터만 반환하는 HEAD 요청 처리
-    클라이언트 캐싱을 위해 Last-Modified 헤더 제공
-    """
-    cve = await cve_service.get_cve_detail(cve_id, include_details=True)
-    if not cve:
-        raise HTTPException(status_code=404, detail=f"CVE ID {cve_id} not found")
-    
-    response = Response()
-    
-    # Last-Modified 헤더 설정
-    if 'last_modified_at' in cve and cve['last_modified_at']:
-        last_modified = cve['last_modified_at'].strftime("%a, %d %b %Y %H:%M:%S GMT")
-        response.headers["Last-Modified"] = last_modified
-    
-    return response
-
-@router.post("/", response_model=CVEDetailResponse)
-@cve_api_error_handler
-async def create_cve(
-    cve_data: CreateCVERequest,
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """새로운 CVE를 생성합니다."""
-    logger.info(f"CVE 생성 요청: cve_id={cve_data.cve_id}, 사용자={current_user.username}")
-    
-    # 이미 존재하는 CVE인지 확인 (중복 확인 중 오류가 발생해도 생성 시도를 계속 진행)
-    try:
-        # 대소문자 구분 없이 정확히 일치하는 CVE 검색
-        existing_cve = await cve_service.repository.find_by_cve_id(cve_data.cve_id)
-        
-        if existing_cve:
-            logger.warning(f"중복 CVE 생성 시도: {cve_data.cve_id} (이미 존재함: {existing_cve.cve_id})")
-            raise HTTPException(
-                status_code=409,
-                detail=f"CVE ID {cve_data.cve_id}는 이미 존재합니다."
-            )
-    except Exception as e:
-        if not isinstance(e, HTTPException):
-            logger.error(f"중복 CVE 확인 중 오류 발생: {str(e)}")
-            # 중복 확인 중 오류가 발생했지만 계속 진행 (생성 시 DB 레벨에서 다시 검증됨)
-    
-    # 현재 사용자 정보 추가
-    creator = current_user.username
-    
-    # CVE 생성
-    cve = await cve_service.create_cve(cve_data, creator)
-    if not cve:
-        raise HTTPException(
-            status_code=500,
-            detail="CVE 생성 중 오류가 발생했습니다."
-        )
-        
-    # 모델을 딕셔너리로 변환
-    cve_dict = cve.dict() if hasattr(cve, 'dict') else cve
-    
-    # id 필드가 문자열인지 확인하고 아니면 변환
-    if 'id' in cve_dict and cve_dict['id'] is not None and not isinstance(cve_dict['id'], str):
-        logger.debug(f"id 필드 타입 변환: {type(cve_dict['id'])} -> str")
-        cve_dict['id'] = str(cve_dict['id'])
-    
-    # 소켓 알림 전송
-    await send_cve_notification("add", cve_dict)
-    
-    # 캐시 무효화
-    await invalidate_cve_caches(cve_data.cve_id)
-    
-    return cve_dict
-
-@router.patch("/{cve_id}", response_model=CVEDetailResponse)
-@cve_api_error_handler
-async def update_cve(
-    cve_id: str,
-    update_data: PatchCVERequest,
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """기존 CVE를 수정합니다."""
-    logger.info(f"CVE 업데이트 요청: cve_id={cve_id}, 사용자={current_user.username}")
-    logger.debug(f"업데이트 요청 데이터: {update_data.dict(exclude_unset=True)}")
-    
-    # cve_id 형식 확인 로깅
-    is_object_id = len(cve_id) == 24 and all(c in '0123456789abcdef' for c in cve_id)
-    is_cve_format = cve_id.startswith("CVE-") and len(cve_id) > 4
-    logger.debug(f"cve_id 형식: {cve_id}, ObjectId 형식: {is_object_id}, CVE 형식: {is_cve_format}")
-    
-    # CVE 존재 확인
-    existing_cve = await cve_service.get_cve_detail(cve_id, include_details=True)
-    if not existing_cve:
-        logger.warning(f"업데이트할 CVE를 찾을 수 없음: {cve_id}")
-        
-        # 다른 방식으로 조회 시도
-        if is_cve_format:
-            logger.debug(f"대소문자 구분 없이 조회 시도")
-            try:
-                # 대소문자 구분 없이 조회 시도
-                alt_cve = await cve_service.get_cve_detail(cve_id, include_details=True)
-                if alt_cve:
-                    logger.info(f"대소문자 구분 없이 CVE 찾음: {alt_cve.get('cve_id', '')}")
-                    existing_cve = alt_cve
-            except Exception as e:
-                logger.error(f"대소문자 구분 없이 조회 중 오류: {str(e)}")
-        
-        if not existing_cve:
-            error_msg = f"CVE ID {cve_id}를 찾을 수 없습니다."
-            logger.error(error_msg)
-            raise HTTPException(
-                status_code=404,
-                detail=error_msg
-            )
-    
-    logger.debug(f"기존 CVE 정보: id={existing_cve.get('id', '')}, cve_id={existing_cve.get('cve_id', '')}")
-    
-    # 업데이트 데이터 준비
-    update_dict = update_data.dict(exclude_unset=True)
-    logger.debug(f"업데이트 데이터 (필터링 후): {update_dict}")
-    
-    # 업데이트된 필드 추적
-    updated_fields = list(update_dict.keys())
-    field_key = "general"  # 기본값
-    
-    # 특정 필드 업데이트 감지
-    if len(updated_fields) == 1:
-        if "pocs" in updated_fields:
-            field_key = "poc"
-        elif "snort_rules" in updated_fields:
-            field_key = "snortRules"
-        elif "references" in updated_fields:
-            field_key = "references"
-        elif "status" in updated_fields:
-            field_key = "status"
-        elif "title" in updated_fields:
-            field_key = "title"
-        elif "comments" in updated_fields:
-            field_key = "comments"
-    
-    # 업데이트 처리
-    updated_cve = await cve_service.update_cve(
-        cve_id=cve_id,
-        update_data=update_dict,
-        updated_by=current_user.username
-    )
-    
-    if not updated_cve:
-        error_msg = f"CVE ID {cve_id} 업데이트 실패"
-        logger.error(error_msg)
-        raise HTTPException(
-            status_code=500,
-            detail=error_msg
-        )
-    
-    logger.info(f"CVE 업데이트 성공: {cve_id}, 업데이트된 필드: {field_key}")
-    
-    # 소켓 알림 전송 - 업데이트된 필드 정보 포함
-    await send_cve_notification("update", updated_cve, field_key=field_key, updated_fields=updated_fields)
-    
-    # 캐시 무효화
-    await invalidate_cve_caches(cve_id)
-    
-    return updated_cve
-
-@router.delete("/{cve_id}", response_model=CVEOperationResponse)
-@cve_api_error_handler
-async def delete_cve(
-    cve_id: str,
-    current_user: User = Depends(get_current_admin_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """CVE를 삭제합니다 (관리자 전용)."""
-    logger.info(f"사용자 '{current_user.username}'이(가) CVE '{cve_id}' 삭제 요청")
-    
-    deleted = await cve_service.delete_cve(cve_id)
-    if not deleted:
-        raise HTTPException(
-            status_code=404,
-            detail=f"CVE ID {cve_id}를 찾을 수 없습니다."
-        )
-    
-    # 소켓 알림 전송
-    await send_cve_notification("delete", cve_id=cve_id)
-    
-    # 캐시 무효화
-    await invalidate_cve_caches(cve_id)
-    
-    logger.info(f"CVE '{cve_id}' 삭제 완료")
-    return {"success": True, "message": f"CVE ID {cve_id}가 삭제되었습니다."}
-
-# ----- 댓글 관련 엔드포인트 -----
-
-@router.post("/{cve_id}/comments", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
-@cve_api_error_handler
+@router.post("/{cve_id}/comments", response_model=CommentOperationResponse)
+@comment_api_error_handler
 async def create_comment(
     cve_id: str,
     comment_data: CommentCreate,
     current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
+    comment_service: CommentService = Depends(get_comment_service),
+    cve_service: CVEService = Depends(get_cve_service),
+    background_tasks: BackgroundTasks = None
 ):
     """새 댓글을 생성합니다."""
-    logger.info(f"CVE {cve_id}에 사용자 {current_user.username}의 댓글 생성")
+    logger.info(f"댓글 생성 요청: {cve_id}")
     
-    comment, message = await cve_service.create_comment(
-        cve_id=cve_id,
-        content=comment_data.content,
-        user=current_user,
-        parent_id=comment_data.parent_id,
-        mentions=comment_data.mentions
-    )
+    # 현재 사용자 정보 추가
+    comment_dict = comment_data.dict()
+    comment_dict["created_by"] = current_user.username
     
-    if not comment:
-        logger.error(f"댓글 생성 실패: {message}")
+    # 댓글 생성
+    comment_id = await comment_service.create_comment(cve_id, comment_dict)
+    
+    if not comment_id:
+        message = f"댓글 생성 실패: CVE ID {cve_id}를 찾을 수 없거나 댓글을 추가할 수 없습니다."
+        logger.error(message)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
     
-    logger.info(f"댓글 생성 성공: {comment.id}")
-    return comment
+    # CVE 캐시 무효화 (백그라운드 작업)
+    if background_tasks:
+        background_tasks.add_task(cve_service.invalidate_cve_cache, cve_id)
+    
+    logger.info(f"댓글 생성 성공: {comment_id}")
+    return CommentOperationResponse(
+        success=True,
+        message="댓글이 성공적으로 생성되었습니다.",
+        comment_id=comment_id
+    )
 
-@router.put("/{cve_id}/comments/{comment_id}", response_model=CommentResponse)
-@cve_api_error_handler
+
+@router.put("/{cve_id}/comments/{comment_id}", response_model=CommentOperationResponse)
+@comment_api_error_handler
 async def update_comment(
     cve_id: str,
     comment_id: str,
     comment_data: CommentUpdate,
     current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
+    comment_service: CommentService = Depends(get_comment_service),
+    cve_service: CVEService = Depends(get_cve_service),
+    background_tasks: BackgroundTasks = None
 ):
     """댓글을 수정합니다."""
-    logger.info(f"CVE {cve_id}의 댓글 {comment_id} 사용자 {current_user.username}에 의한 수정")
+    logger.info(f"댓글 수정 요청: {comment_id} (CVE: {cve_id})")
     
-    comment, message = await cve_service.update_comment(
-        cve_id=cve_id,
-        comment_id=comment_id,
-        content=comment_data.content,
-        user=current_user
-    )
+    # 현재 사용자 정보 추가
+    comment_dict = comment_data.dict()
+    comment_dict["last_modified_by"] = current_user.username
     
-    if not comment:
-        logger.error(f"댓글 수정 실패: {message}")
+    # 댓글 수정
+    success = await comment_service.update_comment(cve_id, comment_id, comment_dict, current_user.username)
+    
+    if not success:
+        message = f"댓글 수정 실패: CVE ID {cve_id} 또는 댓글 ID {comment_id}를 찾을 수 없거나 권한이 없습니다."
+        logger.error(message)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
     
+    # CVE 캐시 무효화 (백그라운드 작업)
+    if background_tasks:
+        background_tasks.add_task(cve_service.invalidate_cve_cache, cve_id)
+    
     logger.info(f"댓글 수정 성공: {comment_id}")
-    return comment
+    return CommentOperationResponse(
+        success=True,
+        message="댓글이 성공적으로 수정되었습니다.",
+        comment_id=comment_id
+    )
 
-@router.delete("/{cve_id}/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
-@cve_api_error_handler
+
+@router.delete("/{cve_id}/comments/{comment_id}", response_model=CommentOperationResponse)
+@comment_api_error_handler
 async def delete_comment(
     cve_id: str,
     comment_id: str,
     permanent: bool = False,
     current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
+    comment_service: CommentService = Depends(get_comment_service),
+    cve_service: CVEService = Depends(get_cve_service),
+    background_tasks: BackgroundTasks = None
 ):
     """댓글을 삭제합니다."""
-    logger.info(f"CVE {cve_id}의 댓글 {comment_id} 사용자 {current_user.username}에 의한 삭제")
+    logger.info(f"댓글 삭제 요청: {comment_id} (CVE: {cve_id}, 영구삭제: {permanent})")
     
-    success, message = await cve_service.delete_comment(
-        cve_id=cve_id,
-        comment_id=comment_id,
-        user=current_user,
-        permanent=permanent
-    )
+    # 댓글 삭제
+    success = await comment_service.delete_comment(cve_id, comment_id, current_user.username, permanent)
     
     if not success:
-        logger.error(f"댓글 삭제 실패: {message}")
+        message = f"댓글 삭제 실패: CVE ID {cve_id} 또는 댓글 ID {comment_id}를 찾을 수 없거나 권한이 없습니다."
+        logger.error(message)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
     
+    # CVE 캐시 무효화 (백그라운드 작업)
+    if background_tasks:
+        background_tasks.add_task(cve_service.invalidate_cve_cache, cve_id)
+    
     logger.info(f"댓글 삭제 성공: {comment_id}")
-    return {"message": "댓글이 성공적으로 삭제되었습니다."}
+    return CommentOperationResponse(
+        success=True,
+        message="댓글이 성공적으로 삭제되었습니다.",
+        comment_id=comment_id,
+        data={"permanent": permanent}
+    )
+
 
 @router.get("/{cve_id}/comments", response_model=List[CommentResponse])
-@cve_api_error_handler
+@comment_api_error_handler
 async def get_comments(
     cve_id: str,
     current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
+    comment_service: CommentService = Depends(get_comment_service)
 ):
     """CVE의 모든 댓글을 조회합니다."""
     logger.info(f"CVE {cve_id}의 댓글 조회")
     
-    comments = await cve_service.get_comments(cve_id)
+    comments = await comment_service.get_comments(cve_id)
     
     logger.info(f"CVE {cve_id}의 댓글 {len(comments)}개 조회됨")
     return comments
 
+
 @router.get("/{cve_id}/comments/count", response_model=int)
-@cve_api_error_handler
+@comment_api_error_handler
 async def get_comment_count(
     cve_id: str,
     current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
+    comment_service: CommentService = Depends(get_comment_service)
 ):
     """CVE의 활성화된 댓글 수를 반환합니다."""
     logger.info(f"CVE {cve_id}의 댓글 수 요청")
     
-    count = await cve_service.count_active_comments(cve_id)
+    count = await comment_service.count_active_comments(cve_id)
     
     logger.info(f"CVE {cve_id}의 댓글 수: {count}")
     return count
 
-# ----- WebSocket 알림 전송 유틸리티 함수 -----
 
-async def send_cve_notification(type: str, cve: Optional[Union[CVEModel, Dict[str, Any]]] = None, cve_id: Optional[str] = None, message: Optional[str] = None, field_key: Optional[str] = None, updated_fields: Optional[list] = None):
-    """WebSocket을 통해 CVE 관련 알림을 전송합니다."""
-    try:
-        if type == "add" or type == "update":
-            if cve:
-                # cve_id 추출 (객체 또는 딕셔너리에서)
-                if hasattr(cve, "cve_id"):
-                    # CVEModel 객체인 경우
-                    notification_cve_id = cve.cve_id
-                    cve_data = json.loads(json.dumps(cve.dict(), cls=DateTimeEncoder))
-                elif isinstance(cve, dict) and "cve_id" in cve:
-                    # 딕셔너리인 경우
-                    notification_cve_id = cve["cve_id"]
-                    cve_data = json.loads(json.dumps(cve, cls=DateTimeEncoder))
-                else:
-                    # cve_id를 직접 사용
-                    notification_cve_id = cve_id
-                    cve_data = cve
-                
-                data = {
-                    "event": f"cve_{type}d",  # "cve_added" 또는 "cve_updated"
-                    "cve_id": notification_cve_id,
-                    "data": cve_data,
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-                if field_key:
-                    data["field_key"] = field_key
-                if updated_fields:
-                    data["updated_fields"] = updated_fields
-                
-                if type == "add":
-                    message_type = WSMessageType.CVE_CREATED
-                else:
-                    message_type = WSMessageType.CVE_UPDATED
-                    
-                await socketio_manager.broadcast_cve_update(
-                    cve_id=data["cve_id"],
-                    data=data,
-                    event_type=message_type
-                )
-                logger.info(f"Sent WebSocket notification: {type} for CVE {data['cve_id']}")
-                
-        elif type == "delete":
-            data = {
-                "event": "cve_deleted",
-                "cve_id": cve_id,
-                "message": message or f"CVE {cve_id} deleted",
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            await socketio_manager.broadcast_cve_update(
-                cve_id=cve_id,
-                data=data,
-                event_type=WSMessageType.CVE_DELETED
-            )
-            logger.info(f"Sent WebSocket notification: delete for CVE {cve_id}")
-            
-    except Exception as e:
-        logger.error(f"Error sending WebSocket notification: {str(e)}")
-        logger.error(traceback.format_exc())
+============================================================
+File: /home/CVEHub/backend/app/cve/__init__.py
+------------------------------------------------------------
 
+
+
+============================================================
+File: /home/CVEHub/backend/app/cve/models_bak.py
+------------------------------------------------------------
+"""
+CVE 및 Comment를 위한 통합 모델 및 스키마
+모델: 데이터베이스 구조 정의
+스키마: API 요청 및 응답 형식 정의
+"""
+from datetime import datetime
+from typing import List, Optional, Literal, Any, Dict, Union
+from beanie import Document, PydanticObjectId
+from pydantic import BaseModel, Field, validator
+from zoneinfo import ZoneInfo
+import re
+from bson import ObjectId
+from app.common.models.base_models import BaseDocument, BaseSchema, TimestampMixin
+
+# 생성된 모델 임포트 (주석 처리되어 있음)
+from app.cve.generated_models import CVEModel as GeneratedCVEModel
+# from app.cve.generated_schemas import CreateCVERequest, PatchCVERequest, CVEDetailResponse
+
+
+# ---------- 유틸리티 함수 ----------
+
+def serialize_datetime(dt):
+    """datetime 객체를 ISO 8601 형식의 문자열로 직렬화"""
+    if not dt:
+        return None
+    return dt.replace(tzinfo=ZoneInfo("UTC")).isoformat().replace('+00:00', 'Z')
+
+
+# ---------- 임베디드 모델 (기본 Pydantic 모델) ----------
+
+class Reference(BaseModel):
+    """참조 정보 모델"""
+    url: str = Field(..., description="참조 URL")
+    type: str = Field(default="OTHER", description="참조 타입")
+    description: Optional[str] = Field(None, description="참조 설명")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    created_by: str = Field(..., description="추가한 사용자")
+    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    last_modified_by: str = Field(..., description="마지막 수정자")
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+
+class PoC(BaseModel):
+    """PoC(Proof of Concept) 모델"""
+    source: str = Field(..., description="PoC 소스")
+    url: str = Field(..., description="PoC URL")
+    description: Optional[str] = Field(None, description="PoC 설명")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    created_by: str = Field(..., description="추가한 사용자")
+    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    last_modified_by: str = Field(..., description="마지막 수정자")
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+
+class SnortRule(BaseModel):
+    """Snort Rule 모델"""
+    rule: str = Field(..., description="Snort Rule 내용")
+    type: str = Field(..., description="Rule 타입")
+    description: Optional[str] = Field(None, description="Rule 설명")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    created_by: str = Field(..., description="추가한 사용자")
+    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    last_modified_by: str = Field(..., description="마지막 수정자")
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+
+class Comment(BaseModel):
+    """댓글 모델 - CVE에 임베디드됨"""
+    id: str = Field(default_factory=lambda: str(ObjectId()))
+    content: str
+    created_by: str = Field(..., description="작성자 이름")
+    parent_id: Optional[str] = None
+    depth: int = 0
+    is_deleted: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    last_modified_at: Optional[datetime] = None
+    last_modified_by: Optional[str] = None
+    mentions: List[str] = []
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+    
+    @classmethod
+    def extract_mentions(cls, content: str) -> List[str]:
+        """댓글 내용에서 멘션된 사용자명을 추출"""
+        if not content:
+            return []
+        MENTION_PATTERN = re.compile(r'@(\w+)')
+        matches = MENTION_PATTERN.findall(content)
+        return [f"@{username}" for username in set(matches)]
+
+class ChangeItem(BaseModel):
+    """변경 사항을 표현하는 모델"""
+    field: str  # 변경된 필드명
+    field_name: str  # 필드의 한글명
+    action: Literal["add", "edit", "delete"]  # 변경 유형
+    detail_type: Literal["simple", "detailed"] = "detailed"  # 변경 내역 표시 방식
+    before: Optional[Any] = None  # 변경 전 값
+    after: Optional[Any] = None  # 변경 후 값
+    items: Optional[List[dict]] = None  # 컬렉션 타입 필드의 변경 항목들
+    summary: str  # 변경 요약
+
+class ModificationHistory(BaseModel):
+    """변경 이력 모델"""
+    username: str  # 수정한 사용자 이름
+    modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
+    changes: List[ChangeItem] = []
+
+
+# ---------- 요청 모델 (API 입력) ----------
+
+class CommentCreate(BaseSchema):
+    """댓글 생성 요청 모델"""
+    content: str = Field(..., description="댓글 내용")
+    parent_id: Optional[str] = Field(None, description="부모 댓글 ID (답글인 경우)")
+    mentions: List[str] = Field(default=[], description="멘션된 사용자 목록")
+    
+    @validator('content')
+    def validate_content(cls, v):
+        if not v.strip():
+            raise ValueError("댓글 내용은 비워둘 수 없습니다.")
+        return v.strip()
+
+class CommentUpdate(BaseSchema):
+    """댓글 수정 요청 모델"""
+    content: str = Field(..., description="수정할 댓글 내용")
+
+# 요청용 임베디드 모델 (시간 및 사용자 메타데이터 필드 선택적)
+class ReferenceRequest(BaseModel):
+    """참조 정보 요청 모델 (프론트엔드용)"""
+    url: str = Field(..., description="참조 URL")
+    type: str = Field(default="OTHER", description="참조 타입")
+    description: Optional[str] = Field(None, description="참조 설명")
+    created_at: Optional[datetime] = Field(None, description="생성 시간")
+    created_by: Optional[str] = Field(None, description="추가한 사용자")
+    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간")
+    last_modified_by: Optional[str] = Field(None, description="마지막 수정자")
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+
+class PoCRequest(BaseModel):
+    """PoC 정보 요청 모델 (프론트엔드용)"""
+    url: str = Field(..., description="PoC URL")
+    source: Optional[str] = Field(default="Github", description="PoC 소스")
+    description: Optional[str] = Field(None, description="PoC 설명")
+    created_at: Optional[datetime] = Field(None, description="생성 시간")
+    created_by: Optional[str] = Field(None, description="추가한 사용자")
+    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간")
+    last_modified_by: Optional[str] = Field(None, description="마지막 수정자")
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+
+class SnortRuleRequest(BaseModel):
+    """Snort 규칙 요청 모델 (프론트엔드용)"""
+    rule: str = Field(..., description="Snort 규칙 문자열")
+    type: str = Field(default="USER_DEFINED", description="규칙 타입")
+    description: Optional[str] = Field(None, description="규칙 설명")
+    created_at: Optional[datetime] = Field(None, description="생성 시간")
+    created_by: Optional[str] = Field(None, description="추가한 사용자")
+    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간")
+    last_modified_by: Optional[str] = Field(None, description="마지막 수정자")
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+
+class CreateCVERequest(BaseSchema):
+    """CVE 생성 요청 모델"""
+    cve_id: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: str = "신규등록"
+    severity: Optional[str] = None
+    references: List[ReferenceRequest] = []
+    pocs: List[PoCRequest] = []
+    snort_rules: List[SnortRuleRequest] = []
+    # 시간 필드를 선택적으로 설정
+    created_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    last_modified_at: Optional[datetime] = None
+    last_modified_by: Optional[str] = None
+
+class PatchCVERequest(BaseSchema):
+    """CVE 부분 업데이트 요청 모델"""
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    severity: Optional[str] = None
+    exploit_status: Optional[str] = None
+    published_date: Optional[datetime] = None
+    references: Optional[List[ReferenceRequest]] = None
+    pocs: Optional[List[PoCRequest]] = None
+    snort_rules: Optional[List[SnortRuleRequest]] = None
+    tags: Optional[List[str]] = None
+    # 시간 필드를 선택적으로 설정
+    created_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    last_modified_at: Optional[datetime] = None
+    last_modified_by: Optional[str] = None
+    
+    class Config:
+        extra = "allow"
+
+# ---------- 응답 모델 (API 출력) ----------
+
+class CommentResponse(BaseSchema):
+    """댓글 응답 모델"""
+    id: str
+    content: str
+    created_by: str
+    parent_id: Optional[str] = None
+    created_at: datetime
+    last_modified_at: Optional[datetime] = None
+    is_deleted: bool = False
+    mentions: List[str] = []
+
+class CVEListItem(BaseSchema):
+    """CVE 목록 아이템 모델"""
+    id: Optional[str]
+    cve_id: str
+    title: Optional[str] = None
+    status: str
+    created_at: datetime
+    last_modified_at: Optional[datetime] = None
+    severity: Optional[str] = None
+
+class CVEListResponse(BaseSchema):
+    """CVE 목록 응답 모델"""
+    total: int
+    items: List[CVEListItem]
+    page: int = 1
+    limit: int = 10
+
+class CVEDetailResponse(BaseSchema):
+    """CVE 상세 응답 모델"""
+    id: Optional[str]
+    cve_id: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: str
+    severity: Optional[str] = None
+    created_at: datetime
+    last_modified_at: Optional[datetime] = None
+    references: List[Reference] = []
+    pocs: List[PoC] = []
+    snort_rules: List[SnortRule] = []
+    comments: List[CommentResponse] = []
+    modification_history: List[ModificationHistory] = []
+    created_by: Optional[str] = None
+    last_modified_by: Optional[str] = None
+
+class CVEOperationResponse(BaseSchema):
+    """CVE 작업 결과 응답 모델"""
+    success: bool
+    message: str
+    cve_id: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
 
 
 ============================================================
@@ -4521,7 +5446,8 @@ from typing import List, Optional, Dict, Any, Union, Tuple
 from datetime import datetime
 from beanie import PydanticObjectId
 from ..common.repositories.base import BaseRepository
-from .models import CVEModel, CreateCVERequest, PatchCVERequest
+from .models import CVEModel
+from .schemas import CreateCVERequest, PatchCVERequest
 from app.database import get_database
 from fastapi.logger import logger
 from bson import ObjectId
@@ -5178,324 +6104,135 @@ def create_basic_cve_data(
 File: /home/CVEHub/backend/app/cve/models.py
 ------------------------------------------------------------
 """
-CVE 및 Comment를 위한 통합 모델 및 스키마
-모델: 데이터베이스 구조 정의
-스키마: API 요청 및 응답 형식 정의
+자동 생성된 Beanie 모델 파일 - 직접 수정하지 마세요
+생성 시간: 2025-04-08 01:27:21
 """
+from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
-from typing import List, Optional, Literal, Any, Dict, Union
-from beanie import Document, PydanticObjectId
-from pydantic import BaseModel, Field, validator
 from zoneinfo import ZoneInfo
-import re
+from beanie import Document, PydanticObjectId
+from pydantic import Field, BaseModel, validator
 from bson import ObjectId
-from app.common.models.base_models import BaseDocument, BaseSchema, TimestampMixin
+import re
+from app.common.models.base_models import BaseDocument
 
 # ---------- 유틸리티 함수 ----------
 
-def serialize_datetime(dt):
-    """datetime 객체를 ISO 8601 형식의 문자열로 직렬화"""
-    if not dt:
-        return None
-    return dt.replace(tzinfo=ZoneInfo("UTC")).isoformat().replace('+00:00', 'Z')
+def serialize_datetime(dt: datetime) -> str:
+    """날짜를 ISO 8601 형식의 문자열로 직렬화"""
+    return dt.replace(tzinfo=ZoneInfo("UTC")).isoformat().replace('+00:00', 'Z') if dt else None
 
+# ---------- 임베디드 모델 ----------
 
-# ---------- 임베디드 모델 (기본 Pydantic 모델) ----------
-
-class Reference(BaseModel):
-    """참조 정보 모델"""
-    url: str = Field(..., description="참조 URL")
-    type: str = Field(default="OTHER", description="참조 타입")
-    description: Optional[str] = Field(None, description="참조 설명")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    created_by: str = Field(..., description="추가한 사용자")
-    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    last_modified_by: str = Field(..., description="마지막 수정자")
-    
-    class Config:
-        json_encoders = {
-            datetime: serialize_datetime
-        }
-
-class PoC(BaseModel):
-    """PoC(Proof of Concept) 모델"""
-    source: str = Field(..., description="PoC 소스")
-    url: str = Field(..., description="PoC URL")
-    description: Optional[str] = Field(None, description="PoC 설명")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    created_by: str = Field(..., description="추가한 사용자")
-    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    last_modified_by: str = Field(..., description="마지막 수정자")
-    
-    class Config:
-        json_encoders = {
-            datetime: serialize_datetime
-        }
-
-class SnortRule(BaseModel):
-    """Snort Rule 모델"""
-    rule: str = Field(..., description="Snort Rule 내용")
-    type: str = Field(..., description="Rule 타입")
-    description: Optional[str] = Field(None, description="Rule 설명")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    created_by: str = Field(..., description="추가한 사용자")
-    last_modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    last_modified_by: str = Field(..., description="마지막 수정자")
-    
-    class Config:
-        json_encoders = {
-            datetime: serialize_datetime
-        }
-
-class Comment(BaseModel):
-    """댓글 모델 - CVE에 임베디드됨"""
-    id: str = Field(default_factory=lambda: str(ObjectId()))
-    content: str
-    created_by: str = Field(..., description="작성자 이름")
-    parent_id: Optional[str] = None
-    depth: int = 0
-    is_deleted: bool = False
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    last_modified_at: Optional[datetime] = None
-    last_modified_by: Optional[str] = None
-    mentions: List[str] = []
-    
-    class Config:
-        json_encoders = {
-            datetime: serialize_datetime
-        }
-    
-    @classmethod
-    def extract_mentions(cls, content: str) -> List[str]:
-        """댓글 내용에서 멘션된 사용자명을 추출"""
-        if not content:
-            return []
-        MENTION_PATTERN = re.compile(r'@(\w+)')
-        matches = MENTION_PATTERN.findall(content)
-        return [f"@{username}" for username in set(matches)]
-
+# 의존성 순서에 따라 모델 정의
 class ChangeItem(BaseModel):
     """변경 사항을 표현하는 모델"""
-    field: str  # 변경된 필드명
-    field_name: str  # 필드의 한글명
-    action: Literal["add", "edit", "delete"]  # 변경 유형
-    detail_type: Literal["simple", "detailed"] = "detailed"  # 변경 내역 표시 방식
-    before: Optional[Any] = None  # 변경 전 값
-    after: Optional[Any] = None  # 변경 후 값
-    items: Optional[List[dict]] = None  # 컬렉션 타입 필드의 변경 항목들
-    summary: str  # 변경 요약
-
-class ModificationHistory(BaseModel):
-    """변경 이력 모델"""
-    username: str  # 수정한 사용자 이름
-    modified_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    changes: List[ChangeItem] = []
-
-
-# ---------- 요청 모델 (API 입력) ----------
-
-class CommentCreate(BaseSchema):
-    """댓글 생성 요청 모델"""
-    content: str = Field(..., description="댓글 내용")
-    parent_id: Optional[str] = Field(None, description="부모 댓글 ID (답글인 경우)")
-    mentions: List[str] = Field(default=[], description="멘션된 사용자 목록")
-    
-    @validator('content')
-    def validate_content(cls, v):
-        if not v.strip():
-            raise ValueError("댓글 내용은 비워둘 수 없습니다.")
-        return v.strip()
-
-class CommentUpdate(BaseSchema):
-    """댓글 수정 요청 모델"""
-    content: str = Field(..., description="수정할 댓글 내용")
-
-# 요청용 임베디드 모델 (시간 및 사용자 메타데이터 필드 선택적)
-class ReferenceRequest(BaseModel):
-    """참조 정보 요청 모델 (프론트엔드용)"""
-    url: str = Field(..., description="참조 URL")
-    type: str = Field(default="OTHER", description="참조 타입")
-    description: Optional[str] = Field(None, description="참조 설명")
-    created_at: Optional[datetime] = Field(None, description="생성 시간")
-    created_by: Optional[str] = Field(None, description="추가한 사용자")
-    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간")
-    last_modified_by: Optional[str] = Field(None, description="마지막 수정자")
+    field: str = Field(..., description="변경된 필드명"),
+    field_name: str = Field(..., description="필드의 한글명"),
+    action: Literal["add", "edit", "delete"] = Field(..., description="변경 유형"),
+    detail_type: Literal["simple", "detailed"] = Field(default="detailed", description="변경 내역 표시 방식"),
+    before: Optional[Any] = Field(None, description="변경 전 값"),
+    after: Optional[Any] = Field(None, description="변경 후 값"),
+    items: Optional[List[dict]] = Field(None, description="컬렉션 타입 필드의 변경 항목들"),
+    summary: str = Field(..., description="변경 요약"),
     
     class Config:
         json_encoders = {
             datetime: serialize_datetime
         }
 
-class PoCRequest(BaseModel):
-    """PoC 정보 요청 모델 (프론트엔드용)"""
-    url: str = Field(..., description="PoC URL")
-    source: Optional[str] = Field(default="Github", description="PoC 소스")
-    description: Optional[str] = Field(None, description="PoC 설명")
-    created_at: Optional[datetime] = Field(None, description="생성 시간")
-    created_by: Optional[str] = Field(None, description="추가한 사용자")
-    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간")
-    last_modified_by: Optional[str] = Field(None, description="마지막 수정자")
+class Reference(BaseModel):
+    """Reference 모델"""
+    url: str = Field(..., description="참조 URL"),
+    type: str = Field(default="OTHER", description="참조 타입"),
+    description: Optional[str] = Field(None, description="참조 설명"),
+    created_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간"),
+    created_by: str = Field(..., description="추가한 사용자"),
+    last_modified_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간"),
+    last_modified_by: str = Field(..., description="마지막 수정자"),
     
     class Config:
         json_encoders = {
             datetime: serialize_datetime
         }
+    
 
-class SnortRuleRequest(BaseModel):
-    """Snort 규칙 요청 모델 (프론트엔드용)"""
-    rule: str = Field(..., description="Snort 규칙 문자열")
-    type: str = Field(default="USER_DEFINED", description="규칙 타입")
-    description: Optional[str] = Field(None, description="규칙 설명")
-    created_at: Optional[datetime] = Field(None, description="생성 시간")
-    created_by: Optional[str] = Field(None, description="추가한 사용자")
-    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간")
-    last_modified_by: Optional[str] = Field(None, description="마지막 수정자")
+class PoC(BaseModel):
+    """PoC 모델"""
+    source: str = Field(..., description="PoC 소스"),
+    url: str = Field(..., description="PoC URL"),
+    description: Optional[str] = Field(None, description="PoC 설명"),
+    created_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간"),
+    created_by: str = Field(..., description="추가한 사용자"),
+    last_modified_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간"),
+    last_modified_by: str = Field(..., description="마지막 수정자"),
     
     class Config:
         json_encoders = {
             datetime: serialize_datetime
         }
+    
 
-class CreateCVERequest(BaseSchema):
-    """CVE 생성 요청 모델"""
-    cve_id: str
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: str = "신규등록"
-    severity: Optional[str] = None
-    references: List[ReferenceRequest] = []
-    pocs: List[PoCRequest] = []
-    snort_rules: List[SnortRuleRequest] = []
-    # 시간 필드를 선택적으로 설정
-    created_at: Optional[datetime] = None
-    created_by: Optional[str] = None
-    last_modified_at: Optional[datetime] = None
-    last_modified_by: Optional[str] = None
-
-class PatchCVERequest(BaseSchema):
-    """CVE 부분 업데이트 요청 모델"""
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: Optional[str] = None
-    severity: Optional[str] = None
-    exploit_status: Optional[str] = None
-    published_date: Optional[datetime] = None
-    references: Optional[List[ReferenceRequest]] = None
-    pocs: Optional[List[PoCRequest]] = None
-    snort_rules: Optional[List[SnortRuleRequest]] = None
-    tags: Optional[List[str]] = None
-    # 시간 필드를 선택적으로 설정
-    created_at: Optional[datetime] = None
-    created_by: Optional[str] = None
-    last_modified_at: Optional[datetime] = None
-    last_modified_by: Optional[str] = None
+class SnortRule(BaseModel):
+    """SnortRule 모델"""
+    rule: str = Field(..., description="Snort Rule 내용"),
+    type: str = Field(..., description="Rule 타입"),
+    description: Optional[str] = Field(None, description="Rule 설명"),
+    created_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간"),
+    created_by: str = Field(..., description="추가한 사용자"),
+    last_modified_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간"),
+    last_modified_by: str = Field(..., description="마지막 수정자"),
     
     class Config:
-        extra = "allow"
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+    
 
-class BulkUpsertCVERequest(BaseSchema):
-    """다중 CVE 업서트 요청 모델"""
-    cves: List[CreateCVERequest]
-    crawler_name: Optional[str] = None
-
-
-# ---------- 응답 모델 (API 출력) ----------
-
-class CommentResponse(BaseSchema):
-    """댓글 응답 모델"""
-    id: str
-    content: str
-    created_by: str
-    parent_id: Optional[str] = None
-    created_at: datetime
-    last_modified_at: Optional[datetime] = None
-    is_deleted: bool = False
-    mentions: List[str] = []
-
-class CVEListItem(BaseSchema):
-    """CVE 목록 아이템 모델"""
-    id: Optional[str]
-    cve_id: str
-    title: Optional[str] = None
-    status: str
-    created_at: datetime
-    last_modified_at: Optional[datetime] = None
-    severity: Optional[str] = None
-
-class CVEListResponse(BaseSchema):
-    """CVE 목록 응답 모델"""
-    total: int
-    items: List[CVEListItem]
-    page: int = 1
-    limit: int = 10
-
-class CVEDetailResponse(BaseSchema):
-    """CVE 상세 응답 모델"""
-    id: Optional[str]
-    cve_id: str
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: str
-    severity: Optional[str] = None
-    created_at: datetime
-    last_modified_at: Optional[datetime] = None
-    references: List[Reference] = []
-    pocs: List[PoC] = []
-    snort_rules: List[SnortRule] = []
-    comments: List[CommentResponse] = []
-    modification_history: List[ModificationHistory] = []
-    created_by: Optional[str] = None
-    last_modified_by: Optional[str] = None
-
-class CVEOperationResponse(BaseSchema):
-    """CVE 작업 결과 응답 모델"""
-    success: bool
-    message: str
-    cve_id: Optional[str] = None
-    data: Optional[Dict[str, Any]] = None
-
-class BulkOperationResponse(BaseSchema):
-    """다중 CVE 작업 결과 응답 모델"""
-    success: Dict[str, Any]
-    errors: Dict[str, Any]
-    total_processed: int
-
-class CVESearchResponse(BaseSchema):
-    """CVE 검색 결과 응답 모델"""
-    total: int
-    items: List[CVEListItem]
-    query: str
+class Comment(BaseModel):
+    """Comment 모델"""
+    id: str = Field(default=lambda: str(ObjectId()), description="댓글 ID"),
+    content: str = Field(..., description="댓글 내용"),
+    created_by: str = Field(..., description="작성자 이름"),
+    parent_id: Optional[str] = Field(default=None, description="부모 댓글 ID"),
+    depth: int = Field(default=0, description="댓글 깊이"),
+    is_deleted: bool = Field(default=False, description="삭제 여부"),
+    created_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간"),
+    last_modified_at: Optional[datetime] = Field(None, description="마지막 수정 시간"),
+    last_modified_by: Optional[str] = Field(None, description="마지막 수정자"),
+    mentions: List[str] = Field(default=[], description="멘션된 사용자 목록"),
+    
+    class Config:
+        json_encoders = {
+            datetime: serialize_datetime
+        }
+    
 
 
-# ---------- 문서 모델 (데이터베이스 엔티티) ----------
+# ---------- 문서 모델 ----------
 
 class CVEModel(BaseDocument):
-    """CVE 모델"""
-    cve_id: str = Field(..., description="CVE ID")
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: str = "신규등록"  # 신규등록, 분석중, 릴리즈 완료, 분석불가
-    assigned_to: Optional[str] = None
-    severity: Optional[str] = None  # 심각도 필드
-    created_by: str = Field(..., description="추가한 사용자")
-    last_modified_by: str = Field(..., description="마지막 수정자")
+    """CVE 모델 - 자동 생성됨"""
+    cve_id: str = Field(..., description="CVE ID"),
+    title: Optional[str] = Field(None, description="CVE 제목"),
+    description: Optional[str] = Field(None, description="CVE 설명"),
+    status: str = Field(default="신규등록", description="CVE 상태"),
+    assigned_to: Optional[str] = Field(None, description="담당자"),
+    severity: Optional[str] = Field(None, description="심각도"),
+    created_by: str = Field(..., description="추가한 사용자"),
+    last_modified_by: str = Field(..., description="마지막 수정자"),
+    is_locked: bool = Field(default=False, description="편집 잠금 여부"),
+    locked_by: Optional[str] = Field(None, description="잠금 설정한 사용자"),
+    lock_timestamp: Optional[datetime] = Field(None, description="잠금 설정 시간"),
+    lock_expires_at: Optional[datetime] = Field(None, description="잠금 만료 시간"),
+    notes: Optional[str] = Field(None, description="내부 참고사항"),
+    nuclei_hash: Optional[str] = Field(None, description="Nuclei 템플릿 해시"),
     
     # 임베디드 필드
-    comments: List[Comment] = []
-    pocs: List[PoC] = []
-    snort_rules: List[SnortRule] = Field(default_factory=list)
-    references: List[Reference] = Field(default_factory=list)
-    modification_history: List[ModificationHistory] = []
-    
-    # 편집 잠금 관련 필드
-    is_locked: bool = False
-    locked_by: Optional[str] = None
-    lock_timestamp: Optional[datetime] = None
-    lock_expires_at: Optional[datetime] = None
-    
-    # 기타 필드
-    notes: Optional[str] = None
-    nuclei_hash: Optional[str] = None
+    comment: List[Comment] = Field(default_factory=list),
+    poc: List[PoC] = Field(default_factory=list),
+    snort_rule: List[SnortRule] = Field(default_factory=list),
+    reference: List[Reference] = Field(default_factory=list),
     
     class Settings:
         name = "cves"
@@ -5545,10 +6282,12 @@ from bson import ObjectId
 from functools import wraps
 
 from app.cve.models import (
-    CVEModel, Reference, PoC, SnortRule, ModificationHistory, ChangeItem,
+    CVEModel, ChangeItem
+)
+from app.cve.schemas import (
     CreateCVERequest, PatchCVERequest
 )
-from app.activity.models import ActivityAction, ActivityTargetType, UserActivity
+from app.activity.models import ActivityAction, ActivityTargetType
 from app.activity.service import ActivityService
 from app.cve.repository import CVERepository
 from app.common.utils.datetime_utils import get_utc_now, format_datetime, normalize_datetime_fields
@@ -6220,7 +6959,8 @@ class CVEService:
         # 변경 이력 추가
         changes = self._extract_complex_changes(existing_cve, processed_data)
         if changes:
-            processed_data = self._add_modification_history(existing_cve, processed_data, changes, updated_by)
+            #processed_data = self._add_modification_history(existing_cve, processed_data, changes, updated_by)
+            pass
         
         return processed_data
 
@@ -6237,6 +6977,7 @@ class CVEService:
         Returns:
             dict: 변경 이력이 추가된 업데이트 데이터
         """
+        """
         # 변경 이력 데이터 생성
         modification_history = ModificationHistory(
             username=updated_by or "system",
@@ -6249,7 +6990,7 @@ class CVEService:
         
         # 업데이트 데이터에 추가
         update_data["modification_history"] = existing_history + [modification_history.dict()]
-        
+        """
         return update_data
 
 
@@ -6715,6 +7456,12 @@ class SystemConfig(Document):
         except Exception as e:
             logger.error(f"크롤러 업데이트 시간 저장 중 오류 발생 - crawler_type: {crawler_type}, 오류: {str(e)}", exc_info=True)
             return {} 
+
+
+============================================================
+File: /home/CVEHub/backend/app/__init__.py
+------------------------------------------------------------
+
 
 
 ============================================================
@@ -8456,6 +9203,79 @@ class BaseService(ABC, Generic[T]):
 
 
 ============================================================
+File: /home/CVEHub/backend/app/comment/schemas.py
+------------------------------------------------------------
+"""
+자동 생성된 Comment API 스키마 파일 - 직접 수정하지 마세요
+생성 시간: 2025-04-08 01:27:22
+"""
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+from pydantic import BaseModel, Field, validator
+from app.common.models.base_models import BaseSchema
+
+# ---------- 요청 모델 ----------
+
+class CommentCreate(BaseSchema):
+    """댓글 생성 요청 모델"""
+    content: str = Field(..., description="댓글 내용")
+    parent_id: Optional[str] = Field(default=None, description="부모 댓글 ID")
+    mentions: List[str] = Field(default_factory=list, description="멘션된 사용자 목록")
+    
+    @validator('content')
+    def validate_content(cls, v):
+        if not v.strip():
+            raise ValueError("댓글 내용은 비워둘 수 없습니다.")
+        return v.strip()
+
+class CommentUpdate(BaseSchema):
+    """댓글 수정 요청 모델"""
+    content: str = Field(..., description="댓글 내용")
+    
+    @validator('content')
+    def validate_content(cls, v):
+        if not v.strip():
+            raise ValueError("댓글 내용은 비워둘 수 없습니다.")
+        return v.strip()
+
+# ---------- 응답 모델 ----------
+
+class CommentResponse(BaseSchema):
+    """댓글 응답 모델"""
+    id: str = Field(..., description="댓글 ID")
+    content: str = Field(..., description="댓글 내용")
+    created_by: str = Field(..., description="작성자 이름")
+    parent_id: Optional[str] = Field(default=None, description="부모 댓글 ID")
+    depth: int = Field(default=0, description="댓글 깊이")
+    is_deleted: bool = Field(default=False, description="삭제 여부")
+    created_at: datetime = Field(..., description="생성 시간")
+    last_modified_at: Optional[datetime] = Field(default=None, description="마지막 수정 시간")
+    last_modified_by: Optional[str] = Field(default=None, description="마지막 수정자")
+    mentions: List[str] = Field(default_factory=list, description="멘션된 사용자 목록")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.replace(tzinfo=None).isoformat() if v else None
+        }
+        from_attributes = True
+
+#페이지네이션 구현을 위해 남겨둠
+class CommentListResponse(BaseSchema):
+    """댓글 목록 응답 모델"""
+    total: int = Field(..., description="총 댓글 수")
+    items: List[CommentResponse] = Field(..., description="댓글 목록")
+    page: int = Field(default=1, description="현재 페이지")
+    limit: int = Field(default=10, description="페이지당 항목 수")
+
+class CommentOperationResponse(BaseSchema):
+    """댓글 작업 결과 응답 모델"""
+    success: bool = Field(..., description="작업 성공 여부")
+    message: str = Field(..., description="응답 메시지")
+    comment_id: Optional[str] = Field(default=None, description="작업 대상 댓글 ID")
+    data: Optional[Dict[str, Any]] = Field(default=None, description="추가 데이터")
+
+
+============================================================
 File: /home/CVEHub/backend/app/comment/router.py
 ------------------------------------------------------------
 """
@@ -8469,7 +9289,7 @@ import functools
 
 from app.auth.models import User
 from app.auth.service import get_current_user
-from app.comment.models import CommentCreate, CommentUpdate, CommentResponse
+from app.comment.schemas import CommentCreate, CommentUpdate, CommentResponse
 from app.comment.service import CommentService
 from app.core.dependencies import get_comment_service
 from app.cve.service import CVEService
@@ -8695,8 +9515,7 @@ import time
 
 from fastapi.logger import logger
 from app.database import get_database
-from app.common.repositories.base import BaseRepository
-from app.comment.models import Comment, CommentCreate, CommentUpdate
+from app.comment.models import Comment
 
 
 def log_db_operation(operation_name):
@@ -8929,30 +9748,32 @@ class CommentRepository:
 File: /home/CVEHub/backend/app/comment/models.py
 ------------------------------------------------------------
 """
-댓글 관련 모델 정의 - CVE 모델에서 분리
+자동 생성된 Comment 모델 파일 - 직접 수정하지 마세요
+생성 시간: 2025-04-08 01:27:22
 """
-from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from beanie import Document
+from pydantic import BaseModel, Field
 from bson import ObjectId
 import re
 
+from app.common.models.base_models import BaseDocument
 from app.common.utils.datetime_utils import serialize_datetime
-
 
 class Comment(BaseModel):
     """댓글 모델 - CVE 댓글 기능"""
-    id: str = Field(default_factory=lambda: str(ObjectId()))
-    content: str
+    id: str = Field(default_factory=lambda: str(ObjectId()), description="댓글 ID")
+    content: str = Field(..., description="댓글 내용")
     created_by: str = Field(..., description="작성자 이름")
-    parent_id: Optional[str] = None
-    depth: int = 0
-    is_deleted: bool = False
-    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")))
-    last_modified_at: Optional[datetime] = None
-    last_modified_by: Optional[str] = None
-    mentions: List[str] = []
+    parent_id: Optional[str] = Field(default=None, description="부모 댓글 ID")
+    depth: int = Field(default=0, description="댓글 깊이")
+    is_deleted: bool = Field(default=False, description="삭제 여부")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간")
+    last_modified_at: Optional[datetime] = Field(default=None, description="마지막 수정 시간")
+    last_modified_by: Optional[str] = Field(default=None, description="마지막 수정자")
+    mentions: List[str] = Field(default_factory=list, description="멘션된 사용자 목록")
     
     class Config:
         json_encoders = {
@@ -8982,30 +9803,13 @@ class Comment(BaseModel):
         return [f"@{username}" for username in set(matches)]
 
 
-class CommentCreate(BaseModel):
-    """댓글 생성 요청 모델"""
-    content: str
-    parent_id: Optional[str] = None
-
-
-class CommentUpdate(BaseModel):
-    """댓글 수정 요청 모델"""
-    content: str
-
-
-class CommentResponse(Comment):
-    """댓글 응답 모델"""
-    pass
-
-
-
 ============================================================
 File: /home/CVEHub/backend/app/comment/service.py
 ------------------------------------------------------------
 #app/comment/service.py
 """
 댓글 관련 서비스 구현
-댓글 생성, 수정, 삭제 및 조회 기능 제공
+댓글 생성, 수정, 삭제 및 조회, 멘션 처리 기능 제공
 """
 from typing import List, Optional, Tuple, Dict, Any, Union
 from datetime import datetime
@@ -9015,7 +9819,10 @@ import traceback
 import asyncio
 from bson import ObjectId
 
-from app.cve.models import CVEModel, Comment
+# 수정: 임포트 경로 변경
+from app.comment.models import Comment
+from app.comment.schemas import CommentCreate, CommentUpdate, CommentResponse
+from app.cve.models import CVEModel
 from app.notification.models import Notification
 from app.auth.models import User
 from app.activity.models import ActivityAction, ActivityTargetType, ChangeItem
@@ -9123,18 +9930,8 @@ class CommentService:
     async def count_active_comments(self, cve_id: str) -> int:
         """CVE의 활성화된 댓글 수를 계산합니다."""
         try:
-            # 최적화: 전체 CVE 가져오지 않고 댓글만 조회
-            projection = {"comments": 1}
-            cve = await self.repository.find_by_cve_id_with_projection(cve_id, projection)
-            
-            if not cve or not hasattr(cve, 'comments'):
-                logger.error(f"CVE를 찾을 수 없거나 댓글이 없음: {cve_id}")
-                return 0
-                
-            # 삭제되지 않은 댓글 수 계산
-            active_comments = [c for c in cve.comments if not c.is_deleted]
-            logger.info(f"CVE {cve_id}의 활성 댓글 수: {len(active_comments)}개")
-            return len(active_comments)
+            # 리포지토리 메서드 사용
+            return await self.repository.count_active_comments(cve_id)
         except Exception as e:
             logger.error(f"활성 댓글 수 계산 중 오류: {str(e)}")
             return 0
@@ -9155,14 +9952,16 @@ class CommentService:
         except Exception as e:
             logger.error(f"댓글 업데이트 전송 중 오류: {str(e)}")
     
-    async def create_comment(self, cve_id: str, content: str, user: User, 
-                           parent_id: Optional[str] = None, 
-                           mentions: List[str] = None) -> Tuple[Optional[Comment], str]:
+    async def create_comment(self, cve_id: str, comment_data: dict) -> str:
         """새 댓글을 생성합니다."""
         try:
             # 댓글 트리 구조 확인 (depth 제한)
             MAX_COMMENT_DEPTH = 10
             depth = 0
+            content = comment_data.get("content")
+            created_by = comment_data.get("created_by")
+            parent_id = comment_data.get("parent_id")
+            mentions = comment_data.get("mentions", [])
             
             # 최적화: 부모 댓글 정보만 선택적으로 조회
             if parent_id:
@@ -9174,7 +9973,7 @@ class CommentService:
                 
                 if not parent or not parent.comments:
                     logger.error(f"부모 댓글을 찾을 수 없음: {parent_id}")
-                    return None, f"부모 댓글을 찾을 수 없습니다: {parent_id}"
+                    return None
                 
                 # 부모 댓글 깊이 계산
                 parent_comment = parent.comments[0]
@@ -9182,14 +9981,14 @@ class CommentService:
                 
                 if depth >= MAX_COMMENT_DEPTH:
                     logger.error(f"최대 댓글 깊이에 도달: {MAX_COMMENT_DEPTH}")
-                    return None, f"최대 댓글 깊이({MAX_COMMENT_DEPTH})에 도달했습니다."
+                    return None
             
             # 댓글 생성
             now = datetime.now(ZoneInfo("UTC"))
             comment = Comment(
                 id=str(ObjectId()),
                 content=content,
-                created_by=user.username,
+                created_by=created_by,
                 parent_id=parent_id,
                 depth=depth,  # 계산된 깊이 저장
                 created_at=now,
@@ -9200,27 +9999,28 @@ class CommentService:
             )
             
             # repository의 add_comment 메서드 사용
-            result = await self.repository.add_comment(cve_id, comment.dict())
+            comment_id = await self.repository.add_comment(cve_id, comment.dict())
             
-            if not result:
+            if not comment_id:
                 logger.error(f"댓글 추가 실패: {cve_id}")
-                return None, "댓글을 추가할 수 없습니다. CVE를 찾을 수 없거나 DB 오류가 발생했습니다."
+                return None
             
             # 멘션 처리
-            await self.process_mentions(
-                content=content,
-                cve_id=cve_id,
-                comment_id=comment.id,
-                sender=user,
-                mentioned_usernames=mentions
-            )
+            if current_user := await User.find_one({"username": created_by}):
+                await self.process_mentions(
+                    content=content,
+                    cve_id=cve_id,
+                    comment_id=comment.id,
+                    sender=current_user,
+                    mentioned_usernames=mentions
+                )
             
             # 댓글 수 업데이트 전송
             await self.send_comment_update(cve_id)
             
             # 활동 추적 유틸리티 메서드 사용
             await self._track_comment_activity(
-                user.username,
+                created_by,
                 cve_id,
                 comment.id,
                 ActivityAction.COMMENT,
@@ -9228,13 +10028,13 @@ class CommentService:
                 parent_id=parent_id
             )
             
-            return comment, "댓글이 성공적으로 생성되었습니다."
+            return comment_id
         except Exception as e:
             logger.error(f"댓글 생성 중 오류: {str(e)}")
             logger.error(traceback.format_exc())
-            return None, f"댓글 생성 중 오류가 발생했습니다: {str(e)}"
+            return None
     
-    async def update_comment(self, cve_id: str, comment_id: str, content: str, user: User) -> Tuple[Optional[Comment], str]:
+    async def update_comment(self, cve_id: str, comment_id: str, comment_data: dict, username: str) -> bool:
         """댓글을 수정합니다."""
         try:
             # 최적화: 필요한 정보만 조회
@@ -9248,70 +10048,60 @@ class CommentService:
             
             if not cve or not cve.comments:
                 logger.error(f"댓글을 찾을 수 없음: {comment_id}")
-                return None, f"댓글을 찾을 수 없습니다: {comment_id}"
+                return False
             
             # 첫 번째 일치하는 댓글 (comments.$ 연산자 결과)
             comment = cve.comments[0]
             
             # 권한 확인
-            if comment.created_by != user.username and not user.is_admin:
-                logger.error(f"사용자 {user.username}의 댓글 {comment_id} 수정 권한 없음")
-                return None, "댓글 수정 권한이 없습니다."
+            current_user = await User.find_one({"username": username})
+            if not current_user:
+                logger.error(f"사용자를 찾을 수 없음: {username}")
+                return False
+                
+            if comment.created_by != username and not current_user.is_admin:
+                logger.error(f"사용자 {username}의 댓글 {comment_id} 수정 권한 없음")
+                return False
             
             # 댓글이 삭제되었는지 확인
             if comment.is_deleted:
                 logger.error(f"삭제된 댓글 수정 불가: {comment_id}")
-                return None, "삭제된 댓글은 수정할 수 없습니다."
+                return False
             
             # 변경 전 내용 저장 (변경 감지용)
             old_content = comment.content
-            old_mentions = set(comment.mentions) if comment.mentions else set()
             
-            # 새 멘션 추출
-            new_mentions = set(Comment.extract_mentions(content))
+            content = comment_data.get("content")
             
             # repository의 update_comment 메서드 사용
-            now = datetime.now(ZoneInfo("UTC"))
             update_data = {
                 "content": content,
-                "last_modified_at": now,
-                "last_modified_by": user.username,
-                "mentions": list(new_mentions)
+                "last_modified_at": datetime.now(ZoneInfo("UTC")),
+                "last_modified_by": username
             }
             result = await self.repository.update_comment(cve_id, comment_id, update_data)
             
             if not result:
                 logger.error(f"댓글 수정 실패: {comment_id}")
-                return None, "댓글 수정에 실패했습니다"
+                return False
             
-            # 수정된 댓글 객체 생성 (응답용)
-            updated_comment = Comment(
-                id=comment.id,
-                content=content,
-                created_by=comment.created_by,
-                created_at=comment.created_at,
-                parent_id=comment.parent_id,
-                depth=comment.depth,
-                is_deleted=False,
-                last_modified_at=now,
-                last_modified_by=user.username,
-                mentions=list(new_mentions)
-            )
+            # 멘션 처리
+            new_mentions = Comment.extract_mentions(content)
+            old_mentions = set(comment.mentions) if comment.mentions else set()
+            added_mentions = set(new_mentions) - old_mentions
             
-            # 멘션 처리 (새 멘션이 추가된 경우만)
-            added_mentions = new_mentions - old_mentions
-            if added_mentions:
+            if added_mentions and current_user:
                 await self.process_mentions(
                     content=content,
                     cve_id=cve_id,
                     comment_id=comment_id,
-                    sender=user,
+                    sender=current_user,
                     mentioned_usernames=list(added_mentions)
                 )
             
             # 활동 추적
             await self._track_comment_activity(
-                user.username,
+                username,
                 cve_id,
                 comment_id,
                 ActivityAction.COMMENT_UPDATE,
@@ -9320,13 +10110,13 @@ class CommentService:
                 cve_title=cve.title
             )
             
-            return updated_comment, "댓글이 성공적으로 수정되었습니다."
+            return True
         except Exception as e:
             logger.error(f"댓글 수정 중 오류: {str(e)}")
             logger.error(traceback.format_exc())
-            return None, f"댓글 수정 중 오류가 발생했습니다: {str(e)}"
+            return False
     
-    async def delete_comment(self, cve_id: str, comment_id: str, user: User, permanent: bool = False) -> Tuple[bool, str]:
+    async def delete_comment(self, cve_id: str, comment_id: str, username: str, permanent: bool = False) -> bool:
         """댓글을 삭제합니다."""
         try:
             # 최적화: 필요한 정보만 조회
@@ -9340,19 +10130,24 @@ class CommentService:
             
             if not cve or not cve.comments:
                 logger.error(f"댓글을 찾을 수 없음: {comment_id}")
-                return False, f"댓글을 찾을 수 없습니다: {comment_id}"
+                return False
             
             # 첫 번째 일치하는 댓글 (comments.$ 연산자 결과)
             comment = cve.comments[0]
             
             # 권한 확인
-            if comment.created_by != user.username and not user.is_admin:
-                logger.error(f"사용자 {user.username}의 댓글 {comment_id} 삭제 권한 없음")
-                return False, "댓글 삭제 권한이 없습니다."
+            current_user = await User.find_one({"username": username})
+            if not current_user:
+                logger.error(f"사용자를 찾을 수 없음: {username}")
+                return False
+                
+            if comment.created_by != username and not current_user.is_admin:
+                logger.error(f"사용자 {username}의 댓글 {comment_id} 삭제 권한 없음")
+                return False
             
-            if permanent and not user.is_admin:
+            if permanent and not current_user.is_admin:
                 logger.error("관리자만 영구 삭제 가능")
-                return False, "영구 삭제는 관리자만 가능합니다."
+                return False
             
             comment_content = comment.content
             
@@ -9361,14 +10156,14 @@ class CommentService:
             
             if not result:
                 logger.error(f"댓글 삭제 실패: {comment_id}")
-                return False, "댓글 삭제에 실패했습니다"
+                return False
             
             # 댓글 수 업데이트 전송
             await self.send_comment_update(cve_id)
             
             # 활동 추적
             await self._track_comment_activity(
-                user.username,
+                username,
                 cve_id,
                 comment_id,
                 ActivityAction.COMMENT_DELETE,
@@ -9377,30 +10172,20 @@ class CommentService:
                 permanent=permanent
             )
             
-            return True, "댓글이 성공적으로 삭제되었습니다."
+            return True
         except Exception as e:
             logger.error(f"댓글 삭제 중 오류: {str(e)}")
             logger.error(traceback.format_exc())
-            return False, f"댓글 삭제 중 오류가 발생했습니다: {str(e)}"
+            return False
     
-    async def get_comments(self, cve_id: str, include_deleted: bool = False) -> List[Comment]:
+    async def get_comments(self, cve_id: str, include_deleted: bool = False) -> List[CommentResponse]:
         """CVE의 모든 댓글을 조회합니다."""
         try:
-            # 최적화: 댓글 필드만 조회
-            projection = {"comments": 1}
-            cve = await self.repository.find_by_cve_id_with_projection(cve_id, projection)
+            # 리포지토리 메서드 사용
+            comments = await self.repository.get_comments(cve_id, include_deleted)
             
-            if not cve:
-                logger.error(f"CVE를 찾을 수 없음: {cve_id}")
-                return []
-            
-            # 삭제된 댓글 필터링 (필요한 경우)
-            comments = cve.comments
-            if not include_deleted:
-                comments = [c for c in comments if not c.is_deleted]
-            
-            # 댓글 정렬 (생성 시간순)
-            return sorted(comments, key=lambda x: x.created_at)
+            # CommentResponse 모델로 변환하여 반환
+            return [CommentResponse(**comment.dict()) for comment in comments]
         except Exception as e:
             logger.error(f"댓글 조회 중 오류: {str(e)}")
             logger.error(traceback.format_exc())
@@ -9690,7 +10475,6 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.auth.models import User
-from app.cve.models import CreateCVERequest
 from app.auth.service import get_current_admin_user, get_current_user
 from app.core.dependencies import get_crawler_service
 from app.crawler.service import CrawlerService

@@ -2,6 +2,18 @@
  * CVE 관련 타입 정의 파일
  */
 
+// 생성된 타입 임포트
+import {
+  GeneratedCVEDetail,
+  GeneratedPoC,
+  GeneratedReference,
+  GeneratedSnortRule,
+  GeneratedComment,
+  GeneratedModificationHistory,
+  GeneratedChangeItem,
+  // 필요한 다른 생성된 타입들...
+} from './generated/cve';
+
 // 다른 타입 파일에서 중복된 타입 임포트
 import { CommentProps as ImportedCommentProps } from './CommentTypes';
 import { CommentsTabProps as ImportedCommentsTabProps } from './CommentTypes';
@@ -20,7 +32,7 @@ export type TabPanelProps = ImportedTabPanelProps;
 
 /**
  * CVE 기본 정보 인터페이스
- */
+*/
 export interface CVEBase {
   id?: string;
   cveId: string;
@@ -46,9 +58,9 @@ export interface CVEListResponse {
  */
 export interface CVEDetail extends CVEBase {
   description?: string;
-  references: Reference[];
-  pocs: PoC[];
-  snortRules: SnortRule[];
+  reference: Reference[];
+  poc: PoC[];
+  snortRule: SnortRule[];
   modificationHistory: ModificationHistory[];
   createdBy?: string;
   lastModifiedBy?: string;
@@ -70,88 +82,75 @@ export interface CVEDetailData {
   fromCache?: boolean;
   _cachedAt?: number | string;
   cachedAt?: number | string;
-  pocs?: unknown[];
   poc?: unknown[];
-  PoCs?: unknown[];
+  PoC?: unknown[];
   pocList?: unknown[];
-  snortRules?: unknown[];
-  snort_rules?: unknown[];
-  references?: unknown[];
-  refs?: unknown[];
+  snortRule?: unknown[];
+  snort_rule?: unknown[];
+  reference?: unknown[];
+  ref?: unknown[];
   comments?: Comment[];
   [key: string]: unknown;
 }
 
 /**
  * 참고자료 인터페이스
+ * 중앙화된 타입 정의를 확장
  */
-export interface Reference {
+export interface Reference extends GeneratedReference {
   id?: string;
-  url: string;
-  description?: string;
-  addedBy?: string;
-  addedAt?: string | Date;
   // CVEData 타입과의 호환성을 위한 인덱스 시그니처 추가
   [key: string]: unknown;
 }
 
 /**
  * PoC (Proof of Concept) 인터페이스
+ * 중앙화된 타입 정의를 확장
  */
-export interface PoC {
+export interface PoC extends Omit<GeneratedPoC, 'source'> {
   id?: string;
   code: string;
-  language: string;
-  description?: string;
-  addedBy?: string;
-  addedAt?: string | Date;
+  language?: string;
   // CVEData 타입과의 호환성을 위한 인덱스 시그니처 추가
   [key: string]: unknown;
 }
 
 /**
- * Snort 규칙 인터페이스
+ * Snort Rule 인터페이스
+ * 중앙화된 타입 정의를 확장
  */
-export interface SnortRule {
+export interface SnortRule extends GeneratedSnortRule {
   id?: string;
-  rule: string;
-  description?: string;
-  addedBy?: string;
-  addedAt?: string | Date;
   // CVEData 타입과의 호환성을 위한 인덱스 시그니처 추가
   [key: string]: unknown;
 }
 
 /**
- * 수정 이력 인터페이스
+ * 수정 기록 항목 인터페이스
+ * 중앙화된 타입 정의를 확장
  */
-export interface ModificationHistory {
+export interface ChangeItem extends GeneratedChangeItem {
+  // 호환성을 위한 인덱스 시그니처
+  [key: string]: unknown;
+}
+
+/**
+ * 수정 기록 인터페이스
+ * 중앙화된 타입 정의를 확장
+ */
+export interface ModificationHistory extends GeneratedModificationHistory {
   id?: string;
-  field: string;
-  oldValue?: any;
-  newValue?: any;
-  modifiedBy: string;
-  modifiedAt: string | Date;
+  // 호환성을 위한 인덱스 시그니처
+  [key: string]: unknown;
 }
 
 /**
  * 댓글 인터페이스
+ * 중앙화된 타입 정의를 확장
  */
-export interface Comment {
+export interface Comment extends Omit<GeneratedComment, 'id'> {
   id?: string;
-  content?: string;
-  author?: unknown;
-  created_at?: string | Date;
-  updated_at?: string | Date;
-  createdAt?: string | Date;
-  updatedAt?: string | Date;
-  createdBy?: string;
-  isDeleted?: boolean;
-  is_deleted?: boolean;
-  children?: Comment[];
-  parentId?: string;
-  depth?: number;
-  lastModifiedAt?: string | Date;
+  // 호환성을 위한 인덱스 시그니처
   [key: string]: unknown;
 }
 
@@ -193,8 +192,8 @@ export interface Subscriber {
 export interface RefreshTriggers {
   general: number;
   poc: number;
-  snortRules: number;
-  references: number;
+  snortRule: number;
+  reference: number;
   comments: number;
   history: number;
 }
@@ -204,8 +203,8 @@ export interface RefreshTriggers {
  */
 export interface TabCounts {
   poc: number;
-  snortRules: number;
-  references: number;
+  snortRule: number;
+  reference: number;
   comments: number;
 }
 
@@ -276,18 +275,6 @@ export interface CVEFilterOptions {
 }
 
 /**
- * CVE 생성 요청 인터페이스
- */
-export interface CVECreateRequest {
-  cveId: string;
-  title?: string;
-  description?: string;
-  status: string;
-  severity?: string;
-  references?: Reference[];
-}
-
-/**
  * CVE 업데이트 요청 인터페이스
  */
 export interface CVEUpdateRequest {
@@ -295,9 +282,9 @@ export interface CVEUpdateRequest {
   description?: string;
   status?: string;
   severity?: string;
-  references?: Reference[];
-  pocs?: PoC[];
-  snortRules?: SnortRule[];
+  reference?: Reference[];
+  poc?: PoC[];
+  snortRule?: SnortRule[];
 }
 
 /**
@@ -361,19 +348,19 @@ export interface SnortRuleFile {
 export interface ReferenceFile {
   id?: string;
   url: string;
-  created_at?: string;
-  created_by?: string;
-  last_modified_at?: string | null;
-  last_modified_by?: string;
+  createdAt?: string;
+  createdBy?: string;
+  lastModifiedAt?: string | null;
+  lastModifiedBy?: string;
 }
 
 /**
  * CVE 데이터 인터페이스 (CreateCVE 컴포넌트용)
  */
 export interface CVEData extends FormData {
-  pocs: Omit<PoCFile, 'id'>[];
-  snortRules: Omit<SnortRuleFile, 'id'>[];
-  references: Omit<ReferenceFile, 'id'>[];
+  poc: Omit<PoCFile, 'id'>[];
+  snortRule: Omit<SnortRuleFile, 'id'>[];
+  reference: Omit<ReferenceFile, 'id'>[];
 }
 
 /**
@@ -397,9 +384,9 @@ export interface GenericDataTabBaseProps {
 }
 
 /**
- * SnortRulesTab 컴포넌트의 프롭스 인터페이스
+ * SnortRuleTab 컴포넌트의 프롭스 인터페이스
  */
-export interface SnortRulesTabProps extends GenericDataTabBaseProps {}
+export interface SnortRuleTabProps extends GenericDataTabBaseProps {}
 
 /**
  * PoCTab 컴포넌트의 프롭스 인터페이스
@@ -407,9 +394,9 @@ export interface SnortRulesTabProps extends GenericDataTabBaseProps {}
 export interface PoCTabProps extends GenericDataTabBaseProps {}
 
 /**
- * ReferencesTab 컴포넌트의 프롭스 인터페이스
+ * ReferenceTab 컴포넌트의 프롭스 인터페이스
  */
-export interface ReferencesTabProps extends GenericDataTabBaseProps {}
+export interface ReferenceTabProps extends GenericDataTabBaseProps {}
 
 /**
  * GenericDataTab 프롭스 인터페이스

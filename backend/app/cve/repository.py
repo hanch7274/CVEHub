@@ -2,7 +2,8 @@ from typing import List, Optional, Dict, Any, Union, Tuple
 from datetime import datetime
 from beanie import PydanticObjectId
 from ..common.repositories.base import BaseRepository
-from .models import CVEModel, CreateCVERequest, PatchCVERequest
+from .models import CVEModel
+from .schemas import CreateCVERequest, PatchCVERequest
 from app.database import get_database
 from fastapi.logger import logger
 from bson import ObjectId
@@ -10,6 +11,7 @@ import traceback
 import functools
 import time
 import re
+from zoneinfo import ZoneInfo
 
 def log_db_operation(operation_name):
     """
@@ -144,15 +146,19 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
             
             if not document:
                 return None
-                
+            
+            # 모델로 변환 전에 필수 필드 확인 및 설정
+            document = self._ensure_document_fields(document)
+            
             # 모델로 변환
             try:
                 return CVEModel(**document)
             except Exception as validation_error:
                 logger.error(f"CVE 모델 변환 중 검증 오류: {str(validation_error)}")
-                # 오류 세부 정보 로깅
-                for error in getattr(validation_error, 'errors', []):
-                    logger.error(f"검증 오류 상세: {error}")
+                # ValidationError의 errors 메서드 사용
+                if hasattr(validation_error, 'errors') and callable(validation_error.errors):
+                    for error in validation_error.errors():
+                        logger.error(f"검증 오류 상세: {error}")
                 return None
         except Exception as e:
             logger.error(f"CVE ID 조회 중 오류: {str(e)}")
@@ -402,7 +408,7 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
     async def add_poc(self, cve_id: str, poc_data: dict) -> Optional[CVEModel]:
         """CVE에 PoC를 추가합니다."""
         try:
-            return await self.update_document(cve_id, {"pocs": poc_data}, update_type="push")
+            return await self.update_document(cve_id, {"poc": poc_data}, update_type="push")
         except Exception as e:
             logger.error(f"PoC 추가 중 오류 발생: {str(e)}")
             return None
@@ -411,7 +417,7 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
     async def add_snort_rule(self, cve_id: str, rule_data: dict) -> Optional[CVEModel]:
         """CVE에 Snort Rule을 추가합니다."""
         try:
-            return await self.update_document(cve_id, {"snort_rules": rule_data}, update_type="push")
+            return await self.update_document(cve_id, {"snort_rule": rule_data}, update_type="push")
         except Exception as e:
             logger.error(f"Snort Rule 추가 중 오류 발생: {str(e)}")
             return None
@@ -489,7 +495,7 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
         """CVE의 Snort Rule을 삭제합니다."""
         try:
             query = {"cve_id": {"$regex": f"^{re.escape(cve_id)}$", "$options": "i"}}
-            pull_query = {"$pull": {"snort_rules": {"id": rule_id}}}
+            pull_query = {"$pull": {"snort_rule": {"id": rule_id}}}
             
             result = await self.collection.update_one(query, pull_query)
             
@@ -530,3 +536,57 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
             logger.error(f"CVE 삭제 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
             return False
+
+    def _ensure_document_fields(self, document):
+        """
+        문서에 필수 필드가 있는지 확인하고 없으면 추가합니다.
+        
+        Args:
+            document: MongoDB에서 가져온 문서
+        
+        Returns:
+            필수 필드가 추가된 문서
+        """
+        if not document:
+            return document
+        
+        # 현재 시간과 기본 사용자명
+        current_time = datetime.now(ZoneInfo("UTC"))
+        default_username = "system"
+        
+        # 문서 자체의 필수 필드 확인
+        if "created_at" not in document or document["created_at"] is None:
+            document["created_at"] = current_time
+        
+        if "created_by" not in document or document["created_by"] is None:
+            document["created_by"] = default_username
+        
+        if "last_modified_at" not in document or document["last_modified_at"] is None:
+            document["last_modified_at"] = current_time
+        
+        if "last_modified_by" not in document or document["last_modified_by"] is None:
+            document["last_modified_by"] = default_username
+        
+        # 중첩 필드 처리
+        for field in ["reference", "poc", "snort_rule"]:
+            if field in document and document[field] is not None and isinstance(document[field], list):
+                for i, item in enumerate(document[field]):
+                    if not item or not isinstance(item, dict):
+                        continue
+                    
+                    # 각 항목의 필수 필드 확인
+                    if "created_at" not in item or item["created_at"] is None:
+                        item["created_at"] = current_time
+                    
+                    if "created_by" not in item or item["created_by"] is None:
+                        item["created_by"] = default_username
+                    
+                    if "last_modified_at" not in item or item["last_modified_at"] is None:
+                        item["last_modified_at"] = current_time
+                    
+                    if "last_modified_by" not in item or item["last_modified_by"] is None:
+                        item["last_modified_by"] = default_username
+                    
+                    document[field][i] = item
+        
+        return document

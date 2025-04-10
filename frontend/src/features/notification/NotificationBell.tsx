@@ -15,7 +15,7 @@ import {
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import { useNotifications, useUnreadCount, useMarkAsRead, useMarkAllAsRead } from '../../features/notification/hooks/useNotifications';
 import CVEDetail from '../cve/CVEDetail';
-import { NotificationBellProps } from '../../shared/types/components';
+import { NotificationBellProps } from '../../shared/api/types/components';
 /**
  * 알림 종 컴포넌트 - RxJS 마이그레이션 버전
  * 

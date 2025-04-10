@@ -12,7 +12,7 @@ import {
   clearCache
 } from '../services/cacheService';
 import { formatDateTime, TIME_ZONES } from 'shared/utils/dateUtils';
-import { ApiResponse } from 'shared/types/api';
+import { ApiResponse } from 'shared/api/types/api';
 import { useSocket } from 'core/socket/hooks/useSocket';
 import _ from 'lodash';
 import logger from 'shared/utils/logging';

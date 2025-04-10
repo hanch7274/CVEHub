@@ -264,6 +264,26 @@ class SocketService implements ISocketIOService {
       // 이벤트 핸들러 설정
       this._setupEventHandlers();
       
+      // 모든 이벤트를 캡처하는 로깅 시스템 (디버깅용)
+      if (process.env.NODE_ENV === 'development') {
+        // Socket.IO v4 이상에서 제공하는 onAny 메서드를 사용하여 모든 이벤트를 캡처
+        if (typeof this.socket.onAny === 'function') {
+          this.socket.onAny((eventName, ...args) => {
+            // 특정 이벤트 필터링 (heartbeat와 같은 불필요한 이벤트 제외)
+            if (eventName !== 'ping' && eventName !== 'pong') {
+              logger.info('💬 RAW_SOCKET_EVENT', `원시 소켓 이벤트 수신: ${eventName}`, {
+                event: eventName,
+                data: args.length > 0 ? args[0] : null,
+                timestamp: new Date().toISOString()
+              });
+            }
+          });
+          logger.info('SocketService', '모든 이벤트 모니터링 설정 완료 (onAny)');
+        } else {
+          logger.warn('SocketService', 'onAny 메서드를 사용할 수 없습니다. Socket.IO v4 이상이 필요합니다.');
+        }
+      }
+      
       return this.socket;
       
     } catch (error: any) {
@@ -358,13 +378,13 @@ class SocketService implements ISocketIOService {
       // 소켓이 있는 경우 이벤트 리스너 등록
       if (this.socket) {
         this.socket.on(event, (data: any) => {
-          // 디버깅: 원본 데이터 로깅 (구독 관련 이벤트만)
-          if (event === SOCKET_EVENTS.SUBSCRIPTION_STATUS || event === SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED) {
-            logger.debug('Socket.on', `[${event}] 원본 데이터 수신:`, {
-              원본데이터: data,
-              timestamp: new Date().toISOString()
-            });
-          }
+          // 모든 소켓 이벤트 로깅 (레벨 상향)
+          logger.info('Socket.on', `[${event}] 이벤트 수신:`, {
+            event_name: event,
+            raw_data: data,
+            data_type: typeof data,
+            timestamp: new Date().toISOString()
+          });
           
           // 데이터 케이스 변환 처리
           const convertedData = this._convertDataCasing(data, {
@@ -372,11 +392,23 @@ class SocketService implements ISocketIOService {
             sourceName: `소켓이벤트[${event}]`
           });
           
-          // 디버깅: 변환된 데이터 로깅 (구독 관련 이벤트만)
+          // 변환된 데이터 로깅 (구독 관련 이벤트는 상세히)
           if (event === SOCKET_EVENTS.SUBSCRIPTION_STATUS || event === SOCKET_EVENTS.CVE_SUBSCRIBERS_UPDATED) {
-            logger.debug('Socket.on', `[${event}] 변환 후 데이터:`, {
-              변환데이터: convertedData, 
-              timestamp: new Date().toISOString()
+            logger.info('Socket.on', `[${event}] 케이스 변환 후:`, {
+              변환전: data,
+              변환후: convertedData, 
+              필드비교: {
+                subscribed: {
+                  원본: data.subscribed,
+                  변환후: convertedData.subscribed
+                },
+                subscribers: {
+                  원본타입: Array.isArray(data.subscribers) ? 'array' : typeof data.subscribers,
+                  변환후타입: Array.isArray(convertedData.subscribers) ? 'array' : typeof convertedData.subscribers,
+                  원본길이: Array.isArray(data.subscribers) ? data.subscribers.length : 'N/A',
+                  변환후길이: Array.isArray(convertedData.subscribers) ? convertedData.subscribers.length : 'N/A'
+                }
+              }
             });
           }
           
@@ -1206,6 +1238,13 @@ class SocketService implements ISocketIOService {
   // 페이지 가시성 변경 처리
   private _handleVisibilityChange(): void {
     if (document.visibilityState === 'visible') {
+      // 인증 토큰이 있을 때만 연결 시도
+      const accessToken = getAccessToken();
+      if (!accessToken) {
+        logger.info('SocketService', '인증 토큰이 없어 소켓 연결을 시도하지 않습니다.');
+        return;
+      }
+      
       if (!this.isConnected) {
         logger.info('SocketService', '페이지 가시성 변경됨: 연결 시도');
         this._attemptReconnect();
@@ -1231,6 +1270,13 @@ class SocketService implements ISocketIOService {
   private _attemptReconnect(): void {
     if (this.autoReconnectEnabled) {
       if (this.currentReconnectAttempts < this.maxReconnectAttempts) {
+        // 인증 토큰이 있을 때만 연결 시도
+        const accessToken = getAccessToken();
+        if (!accessToken) {
+          logger.info('SocketService', '인증 토큰이 없어 재연결을 중단합니다.');
+          return;
+        }
+        
         logger.info('SocketService', '재연결 시도...');
         this.currentReconnectAttempts++;
         this.connect();
@@ -1264,5 +1310,23 @@ class SocketService implements ISocketIOService {
 
 // 싱글톤 인스턴스 생성
 const socketService = new SocketService();
+
+// 개발 환경에서 디버깅용 로그 추가
+if (process.env.NODE_ENV === 'development') {
+  const socket = socketService.getSocket();
+  if (socket && typeof socket.onAny === 'function') {
+    socket.onAny((eventName, ...args) => {
+      // 특정 이벤트 필터링 (heartbeat와 같은 불필요한 이벤트 제외)
+      if (eventName !== 'ping' && eventName !== 'pong') {
+        logger.info('💬 RAW_SOCKET_EVENT', `원시 소켓 이벤트 수신: ${eventName}`, {
+          event: eventName,
+          data: args.length > 0 ? args[0] : null,
+          timestamp: new Date().toISOString()
+        });
+      }
+    });
+    logger.info('SocketService', '모든 이벤트 모니터링 설정 완료 (글로벌)');
+  }
+}
 
 export default socketService;

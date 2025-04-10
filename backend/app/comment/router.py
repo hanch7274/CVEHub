@@ -9,7 +9,7 @@ import functools
 
 from app.auth.models import User
 from app.auth.service import get_current_user
-from app.comment.models import CommentCreate, CommentUpdate, CommentResponse
+from app.comment.schemas import CommentCreate, CommentUpdate, CommentResponse
 from app.comment.service import CommentService
 from app.core.dependencies import get_comment_service
 from app.cve.service import CVEService

@@ -10,11 +10,8 @@ import json
 import functools
 from pydantic import ValidationError
 
-from app.cve.models import (
-    CVEModel, CVEListResponse, CVEDetailResponse, CVEOperationResponse,
-    BulkOperationResponse, CVESearchResponse, CreateCVERequest, PatchCVERequest,
-    BulkUpsertCVERequest, CommentCreate, CommentUpdate, CommentResponse
-)
+from app.cve.models import CVEModel
+from app.cve.schemas import CVEListResponse, CVEDetailResponse, CreateCVERequest, PatchCVERequest, CVEOperationResponse
 from app.auth.models import User
 from app.cve.service import CVEService
 from app.core.dependencies import get_cve_service
@@ -254,21 +251,57 @@ async def get_cve_detail(
             detail=f"CVE ID '{cve_id}'를 찾을 수 없습니다."
         )
     
+    # 디버깅: 결과 구조 확인
+    print("\n===== 디버깅: 결과 구조 =====")
+    print(f"결과 타입: {type(result)}")
+    
+    # reference 필드 디버깅
+    print("\n----- reference 필드 -----")
+    reference_data = result.get("reference", [])
+    print(f"reference 타입: {type(reference_data)}")
+    if reference_data and len(reference_data) > 0:
+        print(f"첫 번째 항목 타입: {type(reference_data[0])}")
+        print(f"첫 번째 항목 내용: {reference_data[0]}")
+    
+    # poc 필드 디버깅
+    print("\n----- poc 필드 -----")
+    poc_data = result.get("poc", [])
+    print(f"poc 타입: {type(poc_data)}")
+    if poc_data and len(poc_data) > 0:
+        print(f"첫 번째 항목 타입: {type(poc_data[0])}")
+        print(f"첫 번째 항목 내용: {poc_data[0]}")
+    
+    # snort_rule 필드 디버깅
+    print("\n----- snort_rule 필드 -----")
+    snort_rule_data = result.get("snort_rule", [])
+    print(f"snort_rule 타입: {type(snort_rule_data)}")
+    if snort_rule_data and len(snort_rule_data) > 0:
+        print(f"첫 번째 항목 타입: {type(snort_rule_data[0])}")
+        print(f"첫 번째 항목 내용: {snort_rule_data[0]}")
+    
+    # comment 필드 디버깅
+    print("\n----- comment 필드 -----")
+    comment_data = result.get("comment", [])
+    print(f"comment 타입: {type(comment_data)}")
+    if comment_data and len(comment_data) > 0:
+        print(f"첫 번째 항목 타입: {type(comment_data[0])}")
+        print(f"첫 번째 항목 내용: {comment_data[0]}")
+    
+    # datetime 필드 디버깅
+    print("\n----- datetime 필드 -----")
+    if "created_at" in result:
+        print(f"created_at 타입: {type(result['created_at'])}")
+        print(f"created_at 값: {result['created_at']}")
+    if "last_modified_at" in result:
+        print(f"last_modified_at 타입: {type(result['last_modified_at'])}")
+        print(f"last_modified_at 값: {result['last_modified_at']}")
+    
+    print("===== 디버깅 종료 =====\n")
+    
     # 결과 캐싱
     await cache_cve_detail(cve_id, result)
     
     return result
-
-@router.get("/{cve_id}", response_model=CVEDetailResponse)
-@cve_api_error_handler
-async def get_cve_detail(
-    cve_id: str,
-    bypass_cache: bool = Query(False, description="캐시를 우회하고 항상 데이터베이스에서 조회합니다."),
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """CVE ID로 CVE 상세 정보를 조회합니다."""
-    # 기존 구현 유지
 
 @router.head("/{cve_id}")
 @cve_api_error_handler
@@ -400,12 +433,12 @@ async def update_cve(
     
     # 특정 필드 업데이트 감지
     if len(updated_fields) == 1:
-        if "pocs" in updated_fields:
+        if "poc" in updated_fields:
             field_key = "poc"
-        elif "snort_rules" in updated_fields:
-            field_key = "snortRules"
-        elif "references" in updated_fields:
-            field_key = "references"
+        elif "snort_rule" in updated_fields:
+            field_key = "snortRule"
+        elif "reference" in updated_fields:
+            field_key = "reference"
         elif "status" in updated_fields:
             field_key = "status"
         elif "title" in updated_fields:
@@ -464,115 +497,6 @@ async def delete_cve(
     logger.info(f"CVE '{cve_id}' 삭제 완료")
     return {"success": True, "message": f"CVE ID {cve_id}가 삭제되었습니다."}
 
-# ----- 댓글 관련 엔드포인트 -----
-
-@router.post("/{cve_id}/comments", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
-@cve_api_error_handler
-async def create_comment(
-    cve_id: str,
-    comment_data: CommentCreate,
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """새 댓글을 생성합니다."""
-    logger.info(f"CVE {cve_id}에 사용자 {current_user.username}의 댓글 생성")
-    
-    comment, message = await cve_service.create_comment(
-        cve_id=cve_id,
-        content=comment_data.content,
-        user=current_user,
-        parent_id=comment_data.parent_id,
-        mentions=comment_data.mentions
-    )
-    
-    if not comment:
-        logger.error(f"댓글 생성 실패: {message}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
-    
-    logger.info(f"댓글 생성 성공: {comment.id}")
-    return comment
-
-@router.put("/{cve_id}/comments/{comment_id}", response_model=CommentResponse)
-@cve_api_error_handler
-async def update_comment(
-    cve_id: str,
-    comment_id: str,
-    comment_data: CommentUpdate,
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """댓글을 수정합니다."""
-    logger.info(f"CVE {cve_id}의 댓글 {comment_id} 사용자 {current_user.username}에 의한 수정")
-    
-    comment, message = await cve_service.update_comment(
-        cve_id=cve_id,
-        comment_id=comment_id,
-        content=comment_data.content,
-        user=current_user
-    )
-    
-    if not comment:
-        logger.error(f"댓글 수정 실패: {message}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
-    
-    logger.info(f"댓글 수정 성공: {comment_id}")
-    return comment
-
-@router.delete("/{cve_id}/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
-@cve_api_error_handler
-async def delete_comment(
-    cve_id: str,
-    comment_id: str,
-    permanent: bool = False,
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """댓글을 삭제합니다."""
-    logger.info(f"CVE {cve_id}의 댓글 {comment_id} 사용자 {current_user.username}에 의한 삭제")
-    
-    success, message = await cve_service.delete_comment(
-        cve_id=cve_id,
-        comment_id=comment_id,
-        user=current_user,
-        permanent=permanent
-    )
-    
-    if not success:
-        logger.error(f"댓글 삭제 실패: {message}")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
-    
-    logger.info(f"댓글 삭제 성공: {comment_id}")
-    return {"message": "댓글이 성공적으로 삭제되었습니다."}
-
-@router.get("/{cve_id}/comments", response_model=List[CommentResponse])
-@cve_api_error_handler
-async def get_comments(
-    cve_id: str,
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """CVE의 모든 댓글을 조회합니다."""
-    logger.info(f"CVE {cve_id}의 댓글 조회")
-    
-    comments = await cve_service.get_comments(cve_id)
-    
-    logger.info(f"CVE {cve_id}의 댓글 {len(comments)}개 조회됨")
-    return comments
-
-@router.get("/{cve_id}/comments/count", response_model=int)
-@cve_api_error_handler
-async def get_comment_count(
-    cve_id: str,
-    current_user: User = Depends(get_current_user),
-    cve_service: CVEService = Depends(get_cve_service)
-):
-    """CVE의 활성화된 댓글 수를 반환합니다."""
-    logger.info(f"CVE {cve_id}의 댓글 수 요청")
-    
-    count = await cve_service.count_active_comments(cve_id)
-    
-    logger.info(f"CVE {cve_id}의 댓글 수: {count}")
-    return count
 
 # ----- WebSocket 알림 전송 유틸리티 함수 -----
 

@@ -1,7 +1,7 @@
 #app/comment/service.py
 """
 댓글 관련 서비스 구현
-댓글 생성, 수정, 삭제 및 조회 기능 제공
+댓글 생성, 수정, 삭제 및 조회, 멘션 처리 기능 제공
 """
 from typing import List, Optional, Tuple, Dict, Any, Union
 from datetime import datetime
@@ -11,7 +11,10 @@ import traceback
 import asyncio
 from bson import ObjectId
 
-from app.cve.models import CVEModel, Comment
+# 수정: 임포트 경로 변경
+from app.comment.models import Comment
+from app.comment.schemas import CommentCreate, CommentUpdate, CommentResponse
+from app.cve.models import CVEModel
 from app.notification.models import Notification
 from app.auth.models import User
 from app.activity.models import ActivityAction, ActivityTargetType, ChangeItem
@@ -119,18 +122,8 @@ class CommentService:
     async def count_active_comments(self, cve_id: str) -> int:
         """CVE의 활성화된 댓글 수를 계산합니다."""
         try:
-            # 최적화: 전체 CVE 가져오지 않고 댓글만 조회
-            projection = {"comments": 1}
-            cve = await self.repository.find_by_cve_id_with_projection(cve_id, projection)
-            
-            if not cve or not hasattr(cve, 'comments'):
-                logger.error(f"CVE를 찾을 수 없거나 댓글이 없음: {cve_id}")
-                return 0
-                
-            # 삭제되지 않은 댓글 수 계산
-            active_comments = [c for c in cve.comments if not c.is_deleted]
-            logger.info(f"CVE {cve_id}의 활성 댓글 수: {len(active_comments)}개")
-            return len(active_comments)
+            # 리포지토리 메서드 사용
+            return await self.repository.count_active_comments(cve_id)
         except Exception as e:
             logger.error(f"활성 댓글 수 계산 중 오류: {str(e)}")
             return 0
@@ -151,14 +144,16 @@ class CommentService:
         except Exception as e:
             logger.error(f"댓글 업데이트 전송 중 오류: {str(e)}")
     
-    async def create_comment(self, cve_id: str, content: str, user: User, 
-                           parent_id: Optional[str] = None, 
-                           mentions: List[str] = None) -> Tuple[Optional[Comment], str]:
+    async def create_comment(self, cve_id: str, comment_data: dict) -> str:
         """새 댓글을 생성합니다."""
         try:
             # 댓글 트리 구조 확인 (depth 제한)
             MAX_COMMENT_DEPTH = 10
             depth = 0
+            content = comment_data.get("content")
+            created_by = comment_data.get("created_by")
+            parent_id = comment_data.get("parent_id")
+            mentions = comment_data.get("mentions", [])
             
             # 최적화: 부모 댓글 정보만 선택적으로 조회
             if parent_id:
@@ -170,7 +165,7 @@ class CommentService:
                 
                 if not parent or not parent.comments:
                     logger.error(f"부모 댓글을 찾을 수 없음: {parent_id}")
-                    return None, f"부모 댓글을 찾을 수 없습니다: {parent_id}"
+                    return None
                 
                 # 부모 댓글 깊이 계산
                 parent_comment = parent.comments[0]
@@ -178,14 +173,14 @@ class CommentService:
                 
                 if depth >= MAX_COMMENT_DEPTH:
                     logger.error(f"최대 댓글 깊이에 도달: {MAX_COMMENT_DEPTH}")
-                    return None, f"최대 댓글 깊이({MAX_COMMENT_DEPTH})에 도달했습니다."
+                    return None
             
             # 댓글 생성
             now = datetime.now(ZoneInfo("UTC"))
             comment = Comment(
                 id=str(ObjectId()),
                 content=content,
-                created_by=user.username,
+                created_by=created_by,
                 parent_id=parent_id,
                 depth=depth,  # 계산된 깊이 저장
                 created_at=now,
@@ -196,27 +191,28 @@ class CommentService:
             )
             
             # repository의 add_comment 메서드 사용
-            result = await self.repository.add_comment(cve_id, comment.dict())
+            comment_id = await self.repository.add_comment(cve_id, comment.dict())
             
-            if not result:
+            if not comment_id:
                 logger.error(f"댓글 추가 실패: {cve_id}")
-                return None, "댓글을 추가할 수 없습니다. CVE를 찾을 수 없거나 DB 오류가 발생했습니다."
+                return None
             
             # 멘션 처리
-            await self.process_mentions(
-                content=content,
-                cve_id=cve_id,
-                comment_id=comment.id,
-                sender=user,
-                mentioned_usernames=mentions
-            )
+            if current_user := await User.find_one({"username": created_by}):
+                await self.process_mentions(
+                    content=content,
+                    cve_id=cve_id,
+                    comment_id=comment.id,
+                    sender=current_user,
+                    mentioned_usernames=mentions
+                )
             
             # 댓글 수 업데이트 전송
             await self.send_comment_update(cve_id)
             
             # 활동 추적 유틸리티 메서드 사용
             await self._track_comment_activity(
-                user.username,
+                created_by,
                 cve_id,
                 comment.id,
                 ActivityAction.COMMENT,
@@ -224,13 +220,13 @@ class CommentService:
                 parent_id=parent_id
             )
             
-            return comment, "댓글이 성공적으로 생성되었습니다."
+            return comment_id
         except Exception as e:
             logger.error(f"댓글 생성 중 오류: {str(e)}")
             logger.error(traceback.format_exc())
-            return None, f"댓글 생성 중 오류가 발생했습니다: {str(e)}"
+            return None
     
-    async def update_comment(self, cve_id: str, comment_id: str, content: str, user: User) -> Tuple[Optional[Comment], str]:
+    async def update_comment(self, cve_id: str, comment_id: str, comment_data: dict, username: str) -> bool:
         """댓글을 수정합니다."""
         try:
             # 최적화: 필요한 정보만 조회
@@ -244,70 +240,60 @@ class CommentService:
             
             if not cve or not cve.comments:
                 logger.error(f"댓글을 찾을 수 없음: {comment_id}")
-                return None, f"댓글을 찾을 수 없습니다: {comment_id}"
+                return False
             
             # 첫 번째 일치하는 댓글 (comments.$ 연산자 결과)
             comment = cve.comments[0]
             
             # 권한 확인
-            if comment.created_by != user.username and not user.is_admin:
-                logger.error(f"사용자 {user.username}의 댓글 {comment_id} 수정 권한 없음")
-                return None, "댓글 수정 권한이 없습니다."
+            current_user = await User.find_one({"username": username})
+            if not current_user:
+                logger.error(f"사용자를 찾을 수 없음: {username}")
+                return False
+                
+            if comment.created_by != username and not current_user.is_admin:
+                logger.error(f"사용자 {username}의 댓글 {comment_id} 수정 권한 없음")
+                return False
             
             # 댓글이 삭제되었는지 확인
             if comment.is_deleted:
                 logger.error(f"삭제된 댓글 수정 불가: {comment_id}")
-                return None, "삭제된 댓글은 수정할 수 없습니다."
+                return False
             
             # 변경 전 내용 저장 (변경 감지용)
             old_content = comment.content
-            old_mentions = set(comment.mentions) if comment.mentions else set()
             
-            # 새 멘션 추출
-            new_mentions = set(Comment.extract_mentions(content))
+            content = comment_data.get("content")
             
             # repository의 update_comment 메서드 사용
-            now = datetime.now(ZoneInfo("UTC"))
             update_data = {
                 "content": content,
-                "last_modified_at": now,
-                "last_modified_by": user.username,
-                "mentions": list(new_mentions)
+                "last_modified_at": datetime.now(ZoneInfo("UTC")),
+                "last_modified_by": username
             }
             result = await self.repository.update_comment(cve_id, comment_id, update_data)
             
             if not result:
                 logger.error(f"댓글 수정 실패: {comment_id}")
-                return None, "댓글 수정에 실패했습니다"
+                return False
             
-            # 수정된 댓글 객체 생성 (응답용)
-            updated_comment = Comment(
-                id=comment.id,
-                content=content,
-                created_by=comment.created_by,
-                created_at=comment.created_at,
-                parent_id=comment.parent_id,
-                depth=comment.depth,
-                is_deleted=False,
-                last_modified_at=now,
-                last_modified_by=user.username,
-                mentions=list(new_mentions)
-            )
+            # 멘션 처리
+            new_mentions = Comment.extract_mentions(content)
+            old_mentions = set(comment.mentions) if comment.mentions else set()
+            added_mentions = set(new_mentions) - old_mentions
             
-            # 멘션 처리 (새 멘션이 추가된 경우만)
-            added_mentions = new_mentions - old_mentions
-            if added_mentions:
+            if added_mentions and current_user:
                 await self.process_mentions(
                     content=content,
                     cve_id=cve_id,
                     comment_id=comment_id,
-                    sender=user,
+                    sender=current_user,
                     mentioned_usernames=list(added_mentions)
                 )
             
             # 활동 추적
             await self._track_comment_activity(
-                user.username,
+                username,
                 cve_id,
                 comment_id,
                 ActivityAction.COMMENT_UPDATE,
@@ -316,13 +302,13 @@ class CommentService:
                 cve_title=cve.title
             )
             
-            return updated_comment, "댓글이 성공적으로 수정되었습니다."
+            return True
         except Exception as e:
             logger.error(f"댓글 수정 중 오류: {str(e)}")
             logger.error(traceback.format_exc())
-            return None, f"댓글 수정 중 오류가 발생했습니다: {str(e)}"
+            return False
     
-    async def delete_comment(self, cve_id: str, comment_id: str, user: User, permanent: bool = False) -> Tuple[bool, str]:
+    async def delete_comment(self, cve_id: str, comment_id: str, username: str, permanent: bool = False) -> bool:
         """댓글을 삭제합니다."""
         try:
             # 최적화: 필요한 정보만 조회
@@ -336,19 +322,24 @@ class CommentService:
             
             if not cve or not cve.comments:
                 logger.error(f"댓글을 찾을 수 없음: {comment_id}")
-                return False, f"댓글을 찾을 수 없습니다: {comment_id}"
+                return False
             
             # 첫 번째 일치하는 댓글 (comments.$ 연산자 결과)
             comment = cve.comments[0]
             
             # 권한 확인
-            if comment.created_by != user.username and not user.is_admin:
-                logger.error(f"사용자 {user.username}의 댓글 {comment_id} 삭제 권한 없음")
-                return False, "댓글 삭제 권한이 없습니다."
+            current_user = await User.find_one({"username": username})
+            if not current_user:
+                logger.error(f"사용자를 찾을 수 없음: {username}")
+                return False
+                
+            if comment.created_by != username and not current_user.is_admin:
+                logger.error(f"사용자 {username}의 댓글 {comment_id} 삭제 권한 없음")
+                return False
             
-            if permanent and not user.is_admin:
+            if permanent and not current_user.is_admin:
                 logger.error("관리자만 영구 삭제 가능")
-                return False, "영구 삭제는 관리자만 가능합니다."
+                return False
             
             comment_content = comment.content
             
@@ -357,14 +348,14 @@ class CommentService:
             
             if not result:
                 logger.error(f"댓글 삭제 실패: {comment_id}")
-                return False, "댓글 삭제에 실패했습니다"
+                return False
             
             # 댓글 수 업데이트 전송
             await self.send_comment_update(cve_id)
             
             # 활동 추적
             await self._track_comment_activity(
-                user.username,
+                username,
                 cve_id,
                 comment_id,
                 ActivityAction.COMMENT_DELETE,
@@ -373,30 +364,20 @@ class CommentService:
                 permanent=permanent
             )
             
-            return True, "댓글이 성공적으로 삭제되었습니다."
+            return True
         except Exception as e:
             logger.error(f"댓글 삭제 중 오류: {str(e)}")
             logger.error(traceback.format_exc())
-            return False, f"댓글 삭제 중 오류가 발생했습니다: {str(e)}"
+            return False
     
-    async def get_comments(self, cve_id: str, include_deleted: bool = False) -> List[Comment]:
+    async def get_comments(self, cve_id: str, include_deleted: bool = False) -> List[CommentResponse]:
         """CVE의 모든 댓글을 조회합니다."""
         try:
-            # 최적화: 댓글 필드만 조회
-            projection = {"comments": 1}
-            cve = await self.repository.find_by_cve_id_with_projection(cve_id, projection)
+            # 리포지토리 메서드 사용
+            comments = await self.repository.get_comments(cve_id, include_deleted)
             
-            if not cve:
-                logger.error(f"CVE를 찾을 수 없음: {cve_id}")
-                return []
-            
-            # 삭제된 댓글 필터링 (필요한 경우)
-            comments = cve.comments
-            if not include_deleted:
-                comments = [c for c in comments if not c.is_deleted]
-            
-            # 댓글 정렬 (생성 시간순)
-            return sorted(comments, key=lambda x: x.created_at)
+            # CommentResponse 모델로 변환하여 반환
+            return [CommentResponse(**comment.dict()) for comment in comments]
         except Exception as e:
             logger.error(f"댓글 조회 중 오류: {str(e)}")
             logger.error(traceback.format_exc())

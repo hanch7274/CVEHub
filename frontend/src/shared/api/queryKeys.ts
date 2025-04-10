@@ -39,6 +39,7 @@ interface UsersQueryKeys {
 interface QueryKeys {
   CVE_LIST: string;
   CVE_DETAIL: string;
+  CVE_SUBSCRIBERS: string;
   CVE: CVEQueryKeys;
   USER: string;
   USER_PROFILE: string;
@@ -51,6 +52,7 @@ export const QUERY_KEYS: QueryKeys = {
   // CVE 관련 query keys
   CVE_LIST: 'cve-list',
   CVE_DETAIL: 'cve-detail',
+  CVE_SUBSCRIBERS: 'cve-subscribers',
   
   // CVE 관련 함수형 쿼리 키 구조 (useCVEQuery.ts와 일치)
   CVE: {

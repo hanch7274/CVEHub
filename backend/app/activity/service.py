@@ -24,44 +24,108 @@ class ActivityService:
     
     def __init__(self):
         self.repository = ActivityRepository()
-        
-    async def create_activity(self, 
-                             username: str, 
-                             action: ActivityAction,
-                             target_type: ActivityTargetType,
-                             target_id: str,
-                             target_title: Optional[str] = None,
-                             changes: List[ChangeItem] = None,
-                             metadata: Dict[str, Any] = None) -> Optional[UserActivity]:
+    
+    async def track_object_changes(
+        self, 
+        username: str, 
+        action: ActivityAction,
+        target_type: ActivityTargetType,
+        target_id: str,
+        old_obj: Any = None, 
+        new_obj: Any = None,
+        target_title: Optional[str] = None,
+        ignore_fields: Optional[List[str]] = None,
+        additional_changes: Optional[List[ChangeItem]] = None
+    ) -> Optional[UserActivity]:
         """
-        사용자 활동을 생성합니다.
+        객체 변경 사항을 감지하고 활동 기록을 생성합니다.
+        모든 활동 추적을 위한 통합 메서드입니다.
         
         Args:
-            username: 활동을 수행한 사용자명
-            action: 활동 동작 (수정, 생성 등)
-            target_type: 대상 유형 (cve, poc 등)
-            target_id: 대상 ID (CVE ID 등)
-            target_title: 대상 제목 또는 요약 (검색 및 표시 용도)
-            changes: 변경 사항 목록
-            metadata: 추가 메타데이터
+            username: 활동 수행 사용자
+            action: 활동 동작 유형
+            target_type: 대상 유형
+            target_id: 대상 ID
+            old_obj: 변경 전 객체 (업데이트/삭제 시)
+            new_obj: 변경 후 객체 (생성/업데이트 시)
+            target_title: 대상 제목 (선택)
+            ignore_fields: 무시할 필드 (선택)
+            additional_changes: 추가 변경 사항 (선택)
             
         Returns:
             생성된 활동 또는 None
         """
         try:
+            # 변경 사항 목록 초기화
+            changes = []
+            
+            # 객체 변경 감지 (old_obj와 new_obj가 모두 있는 경우 - 업데이트)
+            if old_obj and new_obj:
+                # 변경 사항 감지
+                detected_changes = detect_object_changes(old_obj, new_obj, ignore_fields)
+                if detected_changes:
+                    changes.extend(detected_changes)
+            
+            # 생성 액션 (new_obj만 있는 경우)
+            elif new_obj and not old_obj:
+                changes.append(ChangeItem(
+                    field="general",
+                    field_name="일반",
+                    action="add",
+                    detail_type="simple",
+                    summary=f"새 {target_type} '{target_id}' 생성됨"
+                ))
+            
+            # 삭제 액션 (old_obj만 있는 경우)
+            elif old_obj and not new_obj:
+                changes.append(ChangeItem(
+                    field="general",
+                    field_name="일반",
+                    action="delete",
+                    detail_type="simple",
+                    summary=f"{target_type} '{target_id}' 삭제됨"
+                ))
+            
+            # 추가 변경 사항 포함
+            if additional_changes:
+                changes.extend(additional_changes)
+            
+            # 변경 사항이 없으면 활동 기록 생성하지 않음
+            if not changes:
+                return None
+            
+            # 필드 이름 매핑 (한글명 또는 사용자 친화적 이름)
+            field_name_mapping = {
+                "title": "제목",
+                "description": "설명",
+                "status": "상태",
+                "assigned_to": "담당자",
+                "severity": "심각도",
+                "poc": "PoC",
+                "snort_rule": "Snort 규칙",
+                "reference": "참조 문서",
+                "username": "사용자명",
+                "email": "이메일",
+                "is_active": "활성 상태",
+                "is_admin": "관리자 여부",
+                "full_name": "이름",
+                "comment": "댓글",
+                # 필요한 필드 추가
+            }
+            
             # action과 target_type이 문자열이거나 Enum일 수 있으므로 각각 처리
             action_value = action if isinstance(action, str) else action.value
             target_type_value = target_type if isinstance(target_type, str) else target_type.value
             
+            # 활동 생성
             activity_data = {
                 "username": username,
                 "timestamp": datetime.now(ZoneInfo("UTC")),
                 "action": action_value,
                 "target_type": target_type_value,
                 "target_id": target_id,
-                "target_title": target_title,
-                "changes": changes or [],
-                "metadata": metadata or {}
+                "target_title": target_title or str(target_id),
+                "changes": changes
             }
             
             # 활동 생성 및 반환
@@ -69,7 +133,7 @@ class ActivityService:
             return activity
             
         except Exception as e:
-            logger.error(f"활동 생성 중 오류 발생: {str(e)}")
+            logger.error(f"활동 추적 중 오류 발생: {str(e)}")
             logger.error(traceback.format_exc())
             return None
     
@@ -129,32 +193,62 @@ class ActivityService:
                     if changes_generator:
                         changes = changes_generator(self_obj, params)
                     
-                    metadata = {}
+                    additional_changes = []
                     if metadata_generator:
+                        # 메타데이터를 추가 변경 사항으로 변환
                         metadata = metadata_generator(self_obj, params)
+                        for key, value in metadata.items():
+                            additional_changes.append(ChangeItem(
+                                field=f"{key}_context",
+                                field_name=key.capitalize(),
+                                action="context",
+                                detail_type="simple",
+                                after=value,
+                                summary=f"{key.capitalize()}: {value}"
+                            ))
                     
                     # 결과 정보 추가 (해당되는 경우)
                     if hasattr(result, 'dict') and callable(getattr(result, 'dict')):
                         # Pydantic 모델 결과
-                        metadata["result"] = {"success": True, "id": str(getattr(result, 'id', None))}
+                        additional_changes.append(ChangeItem(
+                            field="result_context",
+                            field_name="결과",
+                            action="context",
+                            detail_type="simple",
+                            after={"id": str(getattr(result, 'id', None))},
+                            summary=f"결과 ID: {str(getattr(result, 'id', None))}"
+                        ))
                     elif isinstance(result, tuple) and len(result) >= 2:
                         # (결과, 메시지) 형태의 튜플
                         success = bool(result[0])
-                        metadata["result"] = {"success": success, "message": str(result[1])}
+                        additional_changes.append(ChangeItem(
+                            field="result_context",
+                            field_name="결과",
+                            action="context",
+                            detail_type="simple",
+                            after={"success": success, "message": str(result[1])},
+                            summary=f"결과: {str(result[1])}"
+                        ))
                     elif isinstance(result, dict) and "id" in result:
                         # ID가 포함된 딕셔너리
-                        metadata["result"] = {"success": True, "id": str(result.get("id"))}
+                        additional_changes.append(ChangeItem(
+                            field="result_context",
+                            field_name="결과",
+                            action="context",
+                            detail_type="simple",
+                            after={"id": str(result.get("id"))},
+                            summary=f"결과 ID: {str(result.get('id'))}"
+                        ))
                     
                     # 활동 생성
                     if hasattr(self_obj, 'activity_service') and self_obj.activity_service:
-                        await self_obj.activity_service.create_activity(
+                        await self_obj.activity_service.track_object_changes(
                             username=username,
-                            action=action.value,
-                            target_type=target_type.value,
+                            action=action,
+                            target_type=target_type,
                             target_id=target_id,
                             target_title=target_title,
-                            changes=changes,
-                            metadata=metadata
+                            additional_changes=changes + additional_changes
                         )
                 except Exception as e:
                     logger.error(f"활동 추적 중 오류 발생: {str(e)}")
@@ -163,7 +257,7 @@ class ActivityService:
                 return result
             return wrapper
         return decorator
-        
+            
     async def get_activities_by_username(self, username: str, page: int = 1, limit: int = 10) -> Dict[str, Any]:
         """
         사용자명으로 활동 목록을 조회합니다.
@@ -256,109 +350,3 @@ class ActivityService:
                 "page": page,
                 "limit": limit
             }
-
-    async def track_object_changes(
-        self, 
-        username: str, 
-        action: ActivityAction,
-        target_type: ActivityTargetType,
-        target_id: str,
-        old_obj: Any, 
-        new_obj: Any,
-        target_title: Optional[str] = None,
-        ignore_fields: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> Optional[UserActivity]:
-        """
-        두 객체 간의 변경 사항을 감지하고 활동 기록을 생성합니다.
-        
-        Args:
-            username: 활동 수행 사용자
-            action: 활동 동작 유형
-            target_type: 대상 유형
-            target_id: 대상 ID
-            old_obj: 변경 전 객체
-            new_obj: 변경 후 객체
-            target_title: 대상 제목 (선택)
-            ignore_fields: 무시할 필드 (선택)
-            metadata: 추가 메타데이터 (선택)
-            
-        Returns:
-            생성된 활동 또는 None
-        """
-        try:
-            # 변경 사항 감지
-            change_logs = detect_object_changes(old_obj, new_obj, ignore_fields)
-            
-            # 변경 사항이 없으면 활동 기록 생성하지 않음
-            if not change_logs:
-                return None
-            
-            # 필드 이름 매핑 (한글명 또는 사용자 친화적 이름)
-            field_name_mapping = {
-                "title": "제목",
-                "description": "설명",
-                "status": "상태",
-                "assigned_to": "담당자",
-                "severity": "심각도",
-                "pocs": "PoC",
-                "snort_rules": "Snort 규칙",
-                "references": "참조 문서",
-                "username": "사용자명",
-                "email": "이메일",
-                "is_active": "활성 상태",
-                "is_admin": "관리자 여부",
-                "full_name": "이름",
-                "comment": "댓글",
-                # 필요한 필드 추가
-            }
-            
-            # ChangeLogBase를 ChangeItem으로 변환
-            from ..cve.models import ChangeItem
-            
-            # 변경 사항이 여러 개인 경우를 하나의 통합된 ChangeItem으로 처리
-            # 필드가 여러 개인 경우 간단히 표시하기 위해 추가 요약
-            if len(change_logs) > 1:
-                # 필드명 수집
-                changed_fields = [field_name_mapping.get(log.field, log.field) for log in change_logs]
-                
-                change_item = ChangeItem(
-                    field="multiple",
-                    field_name="여러 필드",
-                    action="edit",
-                    detail_type="simple",
-                    summary=f"{len(changed_fields)}개 필드 변경됨: {', '.join(changed_fields[:3])}{' 등' if len(changed_fields) > 3 else ''}"
-                )
-                change_items = [change_item]
-            else:
-                # 단일 변경인 경우 상세 정보 제공
-                log = change_logs[0] if change_logs else None
-                if log:
-                    field_name = field_name_mapping.get(log.field, log.field)
-                    change_item = ChangeItem(
-                        field=log.field,
-                        field_name=field_name,
-                        action="edit" if log.action == "edit" else ("add" if log.action == "add" else "delete"),
-                        detail_type="detailed",
-                        before=log.old_value,
-                        after=log.new_value,
-                        summary=log.summary if hasattr(log, 'summary') else f"{field_name} 변경됨"
-                    )
-                    change_items = [change_item]
-                else:
-                    change_items = []
-                
-            # 활동 기록 생성
-            return await self.create_activity(
-                username=username,
-                action=action,
-                target_type=target_type,
-                target_id=target_id,
-                target_title=target_title or str(target_id),
-                changes=change_items,
-                metadata=metadata or {}
-            )
-        except Exception as e:
-            logger.error(f"변경 사항 추적 중 오류 발생: {str(e)}")
-            logger.error(traceback.format_exc())
-            return None

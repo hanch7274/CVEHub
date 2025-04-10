@@ -78,7 +78,7 @@ export const API_ENDPOINTS = {
         SEARCH: '/cves/search',
         COMMENTS: (id) => `/cves/${id}/comments`,
         COMMENT: (cveId, commentId) => `/cves/${cveId}/comments/${commentId}`,
-        POC: (id) => `/cves/${id}/pocs`,
+        POC: (id) => `/cves/${id}/poc`,
         SNORT_RULE: (id) => `/cves/${id}/snort-rules`,
         LOCK: (id) => `/cves/${id}/lock`
     },

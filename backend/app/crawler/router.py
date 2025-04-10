@@ -5,7 +5,6 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.auth.models import User
-from app.cve.models import CreateCVERequest
 from app.auth.service import get_current_admin_user, get_current_user
 from app.core.dependencies import get_crawler_service
 from app.crawler.service import CrawlerService

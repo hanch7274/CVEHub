@@ -1,0 +1,65 @@
+/**
+ * 자동 생성된 TypeScript 인터페이스 파일 - 직접 수정하지 마세요
+ * 생성 시간: {{ generation_timestamp }}
+ */
+
+// 베이스 모델 정의
+interface BaseGeneratedModel {
+  [key: string]: unknown;
+}
+
+{% for model_name, model_fields in embedded_models.items() %}
+{% if model_name != "modification_history" %}
+/**
+ * {{ model_name|format_type_name }} 인터페이스
+ * @description {{ descriptions.get(model_name, model_name) }}
+ */
+export interface Generated{{ model_name|format_type_name }} extends BaseGeneratedModel {
+  {% for field_name, (field_type, field_desc, default_val, required, example) in model_fields.items() %}
+  /** {{ field_desc }} */
+  {{ field_name|camelcase }}{% if not required %}?{% endif %}: {{ field_type|python_to_ts }};
+  {% endfor %}
+}
+{% endif %}
+{% endfor %}
+
+/**
+ * ModificationHistory 인터페이스 (수동 정의)
+ * @description 변경 이력
+ * @note 백엔드에서 리팩토링 예정이므로 임시 구현
+ */
+export interface GeneratedModificationHistory extends BaseGeneratedModel {
+  /** 수정 ID */
+  id?: string;
+  /** 수정한 사용자 */
+  username: string;
+  /** 수정 시간 */
+  timestamp: string | Date;
+  /** 변경 내역 목록 */
+  changes: GeneratedChangeItem[];
+}
+
+/**
+ * 생성된 CVE 상세 정보 인터페이스
+ */
+export interface GeneratedCVEDetail extends BaseGeneratedModel {
+  {% for field_name, (field_type, field_desc, default_val, required, example) in fields.items() %}
+  /** {{ field_desc }} */
+  {{ field_name|camelcase }}{% if not required %}?{% endif %}: {{ field_type|python_to_ts }};
+  {% endfor %}
+  
+  /** 댓글 목록 */
+  comment?: Generated{{ "comment"|format_type_name }}[];
+  
+  /** PoC 목록 */
+  poc?: Generated{{ "poc"|format_type_name }}[];
+  
+  /** Snort 규칙 목록 */
+  snort_rule?: Generated{{ "snort_rule"|format_type_name }}[];
+  
+  /** 참조 정보 목록 */
+  reference?: Generated{{ "reference"|format_type_name }}[];
+  
+  /** 변경 이력 목록 (백엔드 리팩토링 예정) */
+  modificationHistory?: GeneratedModificationHistory[];
+}

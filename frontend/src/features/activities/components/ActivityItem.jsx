@@ -57,9 +57,9 @@ const getTargetRoute = (targetType, targetId) => {
     case 'cve':
       return `/cves/${targetId}`;
     case 'poc':
-      return `/cves/${targetId.split('-poc-')[0]}/pocs/${targetId}`;
+      return `/cves/${targetId.split('-poc-')[0]}/poc/${targetId}`;
     case 'snort_rule':
-      return `/cves/${targetId.split('-snort-')[0]}/snort-rules/${targetId}`;
+      return `/cves/${targetId.split('-snort-')[0]}/snort-rule/${targetId}`;
     case 'comment':
       // 댓글 ID에서 부모 리소스 ID를 추출 (가정)
       const parentId = targetId.split('-comment-')[0];
@@ -151,19 +151,19 @@ const ActivityItem = ({ activity }) => {
     const additionalData = [];
     
     // PoC 정보 찾기
-    const pocChange = changes.find(c => c.field === 'pocs' && c.action === 'add');
+    const pocChange = changes.find(c => c.field === 'poc' && c.action === 'add');
     if (pocChange && pocChange.items && pocChange.items.length > 0) {
       additionalData.push(`PoC ${pocChange.items.length}개`);
     }
     
     // 참조문서 정보 찾기
-    const refChange = changes.find(c => c.field === 'references' && c.action === 'add');
+    const refChange = changes.find(c => c.field === 'reference' && c.action === 'add');
     if (refChange && refChange.items && refChange.items.length > 0) {
       additionalData.push(`참조문서 ${refChange.items.length}개`);
     }
     
     // Snort 규칙 정보 찾기
-    const ruleChange = changes.find(c => c.field === 'snort_rules' && c.action === 'add');
+    const ruleChange = changes.find(c => c.field === 'snort_rule' && c.action === 'add');
     if (ruleChange && ruleChange.items && ruleChange.items.length > 0) {
       additionalData.push(`Snort 규칙 ${ruleChange.items.length}개`);
     }

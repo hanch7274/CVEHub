@@ -4660,241 +4660,6 @@ root.render(
 
 
 ============================================================
-File: /home/CVEHub/frontend/src/shared/types/api.ts
-------------------------------------------------------------
-/**
- * API 관련 타입 정의 파일
- */
-
-/**
- * API 응답 기본 인터페이스
- */
-export interface ApiResponse<T = any> {
-  success: boolean;
-  message?: string;
-  data?: T;
-  error?: string;
-  errorCode?: string;
-}
-
-/**
- * 페이지네이션 정보 인터페이스
- */
-export interface PaginationInfo {
-  page: number;
-  limit: number;
-  total: number;
-  totalPages?: number;
-}
-
-/**
- * 페이지네이션 응답 인터페이스
- */
-export interface PaginatedResponse<T = any> {
-  items: T[];
-  total: number;
-  page: number;
-  limit: number;
-  pagination?: PaginationInfo;
-}
-
-/**
- * API 요청 옵션 인터페이스
- */
-export interface ApiRequestOptions {
-  skipAuthRefresh?: boolean;
-  bypassCache?: boolean;
-  headers?: Record<string, string>;
-  meta?: Record<string, any>;
-}
-
-/**
- * API 에러 인터페이스
- */
-export interface ApiError extends Error {
-  status?: number;
-  code?: number | string;
-  response?: {
-    data?: {
-      detail?: string;
-      message?: string;
-      errorCode?: string;
-    };
-    status?: number;
-  };
-}
-
-/**
- * API 상태 코드 타입
- */
-export type StatusCode = 
-  | 200 // OK
-  | 201 // Created
-  | 204 // No Content
-  | 400 // Bad Request
-  | 401 // Unauthorized
-  | 403 // Forbidden
-  | 404 // Not Found
-  | 409 // Conflict
-  | 422 // Unprocessable Entity
-  | 500 // Internal Server Error
-  | 503; // Service Unavailable
-
-
-============================================================
-File: /home/CVEHub/frontend/src/shared/types/components.ts
-------------------------------------------------------------
-/**
- * 컴포넌트 관련 타입 정의 파일
- */
-
-import { ReactNode } from 'react';
-import { Theme } from '@mui/material/styles';
-import { SxProps } from '@mui/system';
-import { CVEDetail } from 'features/cve/types/cve';
-import { User } from 'features/auth/types';
-
-/**
- * 공통 컴포넌트 프롭스 인터페이스
- */
-export interface CommonComponentProps {
-  children?: ReactNode;
-  className?: string;
-  style?: React.CSSProperties;
-  sx?: SxProps<Theme>;
-}
-
-/**
- * 레이아웃 컴포넌트 프롭스 인터페이스
- */
-export interface LayoutProps extends CommonComponentProps {
-  title?: string;
-}
-
-/**
- * CVE 컴포넌트 관련 프롭스 인터페이스
- */
-
-// CVE 상세 정보 컴포넌트 프롭스
-export interface CVEDetailProps {
-  cveId: string;
-  open?: boolean;
-  onClose: () => void;
-  highlightCommentId?: string | null;
-}
-
-// CVE 목록 컴포넌트 프롭스
-export interface CVEListProps extends CommonComponentProps {
-  selectedCVE?: string;
-  setSelectedCVE?: (cveId: string) => void;
-}
-
-// CVE 생성 컴포넌트 프롭스
-export interface CreateCVEProps extends CommonComponentProps {
-  onSuccess?: (cveId: string) => void;
-  onCancel?: () => void;
-}
-
-// 인라인 수정 텍스트 컴포넌트 프롭스
-export interface InlineEditTextProps {
-  value?: string;
-  onSave: (newValue: string) => void;
-  placeholder?: string;
-  multiline?: boolean;
-  disabled?: boolean;
-  fontSize?: string | number;
-  externalEdit?: boolean;
-  onEditingStart?: () => void;
-  onEditingEnd?: () => void;
-}
-
-// 댓글 컴포넌트 프롭스
-export interface CommentProps {
-  comment: any; // Comment 타입
-  cveId: string;
-  currentUser: User;
-  onReply?: (commentId: string) => void;
-  onEdit?: (commentId: string, newContent: string) => void;
-  onDelete?: (commentId: string) => void;
-  sendMessage?: (type: string, data: any) => Promise<any>;
-  depth?: number;
-  refreshTrigger?: number;
-}
-
-// 댓글 탭 컴포넌트 프롭스
-export interface CommentsTabProps {
-  cve: CVEDetail;
-  currentUser: User;
-  refreshTrigger?: number;
-  onCountChange?: (count: number) => void;
-  parentSendMessage?: (type: string, data: any) => Promise<any>;
-}
-
-// 히스토리 탭 컴포넌트 프롭스
-export interface HistoryTabProps {
-  modificationHistory: any[]; // ModificationHistory[]
-}
-
-// 일반 데이터 탭 컴포넌트 프롭스
-export interface GenericDataTabProps {
-  cve: CVEDetail;
-  currentUser: User;
-  refreshTrigger?: number;
-  tabConfig: any; // TabConfig
-  onCountChange?: (count: number) => void;
-  parentSendMessage?: (type: string, data: any) => Promise<any>;
-}
-
-// 태그 상태
-export interface TagState {
-  id: string | number;
-  text: string;
-}
-
-// 멘션 입력 컴포넌트 프롭스
-export interface MentionInputProps {
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  disabled?: boolean;
-  mentions?: any[]; // User[]
-  onMention?: (user: any) => void;
-  onSubmit?: () => void;
-}
-
-/**
- * 알림 컴포넌트 관련 프롭스 인터페이스
- */
-export interface NotificationBellProps extends CommonComponentProps {
-  count?: number;
-  onClick?: () => void;
-  onOpenCVEDetail?: (cveId: string, commentId?: string) => void;
-}
-
-/**
- * 사용자 인증 컴포넌트 관련 프롭스 인터페이스
- */
-export interface LoginFormProps extends CommonComponentProps {
-  onSuccess?: () => void;
-  onError?: (error: Error) => void;
-}
-
-export interface SignUpProps extends CommonComponentProps {
-  onSuccess?: () => void;
-  onError?: (error: Error) => void;
-}
-
-/**
- * 탭 패널 컴포넌트 프롭스 인터페이스
- */
-export interface TabPanelProps {
-  children?: ReactNode;
-  index: number;
-  value: number;
-}
-
-
-============================================================
 File: /home/CVEHub/frontend/src/shared/api/config/endpoints.js
 ------------------------------------------------------------
 import { WS_BASE_URL, SOCKET_IO_PATH } from 'config';
@@ -13290,6 +13055,9 @@ export type {
   HistoryTabProps
 } from './cve';
 
+// 생성된 타입 export 추가
+export * from './generated/cve';
+
 // 함수 내보내기
 export { countActiveComments } from './cve';
 
@@ -13377,6 +13145,175 @@ export interface TabPanelProps {
   
   /** 추가 Props */
   [key: string]: any;
+}
+
+
+============================================================
+File: /home/CVEHub/frontend/src/features/cve/types/generated/cve.ts
+------------------------------------------------------------
+/**
+ * 자동 생성된 TypeScript 인터페이스 파일 - 직접 수정하지 마세요
+ * 생성 시간: 2025-04-08 01:27:21
+ */
+
+// 베이스 모델 정의
+interface BaseGeneratedModel {
+  [key: string]: unknown;
+}
+
+/**
+ * Reference 인터페이스
+ * @description reference
+ */
+export interface GeneratedReference extends BaseGeneratedModel {
+  /** 참조 URL */
+  url: string;
+  /** 참조 타입 */
+  type?: string;
+  /** 참조 설명 */
+  description?: string;
+  /** 생성 시간 */
+  createdAt: string | Date;
+  /** 추가한 사용자 */
+  createdBy: string;
+  /** 마지막 수정 시간 */
+  lastModifiedAt: string | Date;
+  /** 마지막 수정자 */
+  lastModifiedBy: string;
+}
+/**
+ * PoC 인터페이스
+ * @description poc
+ */
+export interface GeneratedPoC extends BaseGeneratedModel {
+  /** PoC 소스 */
+  source: string;
+  /** PoC URL */
+  url: string;
+  /** PoC 설명 */
+  description?: string;
+  /** 생성 시간 */
+  createdAt: string | Date;
+  /** 추가한 사용자 */
+  createdBy: string;
+  /** 마지막 수정 시간 */
+  lastModifiedAt: string | Date;
+  /** 마지막 수정자 */
+  lastModifiedBy: string;
+}
+/**
+ * SnortRule 인터페이스
+ * @description snort_rule
+ */
+export interface GeneratedSnortRule extends BaseGeneratedModel {
+  /** Snort Rule 내용 */
+  rule: string;
+  /** Rule 타입 */
+  type: string;
+  /** Rule 설명 */
+  description?: string;
+  /** 생성 시간 */
+  createdAt: string | Date;
+  /** 추가한 사용자 */
+  createdBy: string;
+  /** 마지막 수정 시간 */
+  lastModifiedAt: string | Date;
+  /** 마지막 수정자 */
+  lastModifiedBy: string;
+}
+/**
+ * Comment 인터페이스
+ * @description comment
+ */
+export interface GeneratedComment extends BaseGeneratedModel {
+  /** 댓글 ID */
+  id: string;
+  /** 댓글 내용 */
+  content: string;
+  /** 작성자 이름 */
+  createdBy: string;
+  /** 부모 댓글 ID */
+  parentId?: string;
+  /** 댓글 깊이 */
+  depth?: number;
+  /** 삭제 여부 */
+  isDeleted?: boolean;
+  /** 생성 시간 */
+  createdAt: string | Date;
+  /** 마지막 수정 시간 */
+  lastModifiedAt?: string | Date;
+  /** 마지막 수정자 */
+  lastModifiedBy?: string;
+  /** 멘션된 사용자 목록 */
+  mentions?: Array<string>;
+}
+/**
+ * ChangeItem 인터페이스
+ * @description 변경 항목
+ */
+export interface GeneratedChangeItem extends BaseGeneratedModel {
+  /** 변경된 필드명 */
+  field: string;
+  /** 필드의 한글명 */
+  fieldName: string;
+  /** 변경 유형 */
+  action: "add" | "edit" | "delete";
+  /** 변경 내역 표시 방식 */
+  detailType?: "simple" | "detailed";
+  /** 변경 전 값 */
+  before?: any;
+  /** 변경 후 값 */
+  after?: any;
+  /** 컬렉션 타입 필드의 변경 항목들 */
+  items?: Array<Record<string, any>>;
+  /** 변경 요약 */
+  summary: string;
+}
+
+/**
+ * 생성된 CVE 상세 정보 인터페이스
+ */
+export interface GeneratedCVEDetail extends BaseGeneratedModel {
+  /** CVE ID */
+  cveId: string;
+  /** CVE 제목 */
+  title?: string;
+  /** CVE 설명 */
+  description?: string;
+  /** CVE 상태 */
+  status: string;
+  /** 담당자 */
+  assignedTo?: string;
+  /** 심각도 */
+  severity?: string;
+  /** 추가한 사용자 */
+  createdBy: string;
+  /** 마지막 수정자 */
+  lastModifiedBy: string;
+  /** 편집 잠금 여부 */
+  isLocked?: boolean;
+  /** 잠금 설정한 사용자 */
+  lockedBy?: string;
+  /** 잠금 설정 시간 */
+  lockTimestamp?: string | Date;
+  /** 잠금 만료 시간 */
+  lockExpiresAt?: string | Date;
+  /** 내부 참고사항 */
+  notes?: string;
+  /** Nuclei 템플릿 해시 */
+  nucleiHash?: string;
+  
+  /** 댓글 목록 */
+  comment?: GeneratedComment[];
+  
+  /** PoC 목록 */
+  poc?: GeneratedPoC[];
+  
+  /** Snort 규칙 목록 */
+  snort_rule?: GeneratedSnortRule[];
+  
+  /** 참조 정보 목록 */
+  reference?: GeneratedReference[];
 }
 
 
@@ -13703,6 +13640,66 @@ export interface ExtendedTabConfig<T extends DataItem> extends TabConfig {
 
 
 ============================================================
+File: /home/CVEHub/frontend/src/features/cve/types/bridge.ts
+------------------------------------------------------------
+// src/features/cve/types/bridge.ts
+import {
+    GeneratedCVEDetail,
+    GeneratedReference,
+    GeneratedPoC,
+    GeneratedSnortRule,
+    GeneratedComment,
+    GeneratedModificationHistory,
+    GeneratedChangeItem
+  } from './generated/cve';
+  
+  // 기본 확장 인터페이스 정의
+  export interface CVEDetail extends Omit<GeneratedCVEDetail, 'references' | 'pocs' | 'snortRules' | 'modificationHistory' | 'comments'> {
+    id?: string;
+    references: Reference[];
+    pocs: PoC[];
+    snortRules: SnortRule[];
+    modificationHistory: ModificationHistory[];
+    comments?: Comment[];
+    createdAt?: string | Date;
+    lastModifiedAt?: string | Date;
+    [key: string]: unknown;
+  }
+  
+  export interface Reference extends GeneratedReference {
+    id?: string;
+    [key: string]: unknown;
+  }
+  
+  export interface PoC extends Omit<GeneratedPoC, 'source'> {
+    id?: string;
+    code: string; // 'source' 대신 'code' 필드 사용
+    language?: string;
+    [key: string]: unknown;
+  }
+  
+  export interface SnortRule extends GeneratedSnortRule {
+    id?: string;
+    [key: string]: unknown;
+  }
+  
+  export interface Comment extends Omit<GeneratedComment, 'id'> {
+    id?: string;
+    children?: Comment[];
+    [key: string]: unknown;
+  }
+  
+  export interface ChangeItem extends GeneratedChangeItem {
+    [key: string]: unknown;
+  }
+  
+  export interface ModificationHistory extends GeneratedModificationHistory {
+    id?: string;
+    [key: string]: unknown;
+  }
+
+
+============================================================
 File: /home/CVEHub/frontend/src/features/cve/types/MentionTypes.ts
 ------------------------------------------------------------
 import React from 'react';
@@ -13790,6 +13787,18 @@ File: /home/CVEHub/frontend/src/features/cve/types/cve.ts
  * CVE 관련 타입 정의 파일
  */
 
+// 생성된 타입 임포트
+import {
+  GeneratedCVEDetail,
+  GeneratedPoC,
+  GeneratedReference,
+  GeneratedSnortRule,
+  GeneratedComment,
+  GeneratedModificationHistory,
+  GeneratedChangeItem,
+  // 필요한 다른 생성된 타입들...
+} from './generated/cve';
+
 // 다른 타입 파일에서 중복된 타입 임포트
 import { CommentProps as ImportedCommentProps } from './CommentTypes';
 import { CommentsTabProps as ImportedCommentsTabProps } from './CommentTypes';
@@ -13808,7 +13817,7 @@ export type TabPanelProps = ImportedTabPanelProps;
 
 /**
  * CVE 기본 정보 인터페이스
- */
+*/
 export interface CVEBase {
   id?: string;
   cveId: string;
@@ -13872,74 +13881,62 @@ export interface CVEDetailData {
 
 /**
  * 참고자료 인터페이스
+ * 중앙화된 타입 정의를 확장
  */
-export interface Reference {
+export interface Reference extends GeneratedReference {
   id?: string;
-  url: string;
-  description?: string;
-  addedBy?: string;
-  addedAt?: string | Date;
   // CVEData 타입과의 호환성을 위한 인덱스 시그니처 추가
   [key: string]: unknown;
 }
 
 /**
  * PoC (Proof of Concept) 인터페이스
+ * 중앙화된 타입 정의를 확장
  */
-export interface PoC {
+export interface PoC extends Omit<GeneratedPoC, 'source'> {
   id?: string;
   code: string;
-  language: string;
-  description?: string;
-  addedBy?: string;
-  addedAt?: string | Date;
+  language?: string;
   // CVEData 타입과의 호환성을 위한 인덱스 시그니처 추가
   [key: string]: unknown;
 }
 
 /**
- * Snort 규칙 인터페이스
+ * Snort Rule 인터페이스
+ * 중앙화된 타입 정의를 확장
  */
-export interface SnortRule {
+export interface SnortRule extends GeneratedSnortRule {
   id?: string;
-  rule: string;
-  description?: string;
-  addedBy?: string;
-  addedAt?: string | Date;
   // CVEData 타입과의 호환성을 위한 인덱스 시그니처 추가
   [key: string]: unknown;
 }
 
 /**
- * 수정 이력 인터페이스
+ * 수정 기록 항목 인터페이스
+ * 중앙화된 타입 정의를 확장
  */
-export interface ModificationHistory {
+export interface ChangeItem extends GeneratedChangeItem {
+  // 호환성을 위한 인덱스 시그니처
+  [key: string]: unknown;
+}
+
+/**
+ * 수정 기록 인터페이스
+ * 중앙화된 타입 정의를 확장
+ */
+export interface ModificationHistory extends GeneratedModificationHistory {
   id?: string;
-  field: string;
-  oldValue?: any;
-  newValue?: any;
-  modifiedBy: string;
-  modifiedAt: string | Date;
+  // 호환성을 위한 인덱스 시그니처
+  [key: string]: unknown;
 }
 
 /**
  * 댓글 인터페이스
+ * 중앙화된 타입 정의를 확장
  */
-export interface Comment {
+export interface Comment extends Omit<GeneratedComment, 'id'> {
   id?: string;
-  content?: string;
-  author?: unknown;
-  created_at?: string | Date;
-  updated_at?: string | Date;
-  createdAt?: string | Date;
-  updatedAt?: string | Date;
-  createdBy?: string;
-  isDeleted?: boolean;
-  is_deleted?: boolean;
-  children?: Comment[];
-  parentId?: string;
-  depth?: number;
-  lastModifiedAt?: string | Date;
+  // 호환성을 위한 인덱스 시그니처
   [key: string]: unknown;
 }
 
@@ -14476,21 +14473,30 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
 
     // 디바운스된 구독 요청 함수
     const debouncedSubscribe = useCallback(() => {
+      // 이미 실행 중인 타이머가 있으면 정리
       if (subscriptionTimerRef.current) {
         clearTimeout(subscriptionTimerRef.current);
+        subscriptionTimerRef.current = null;
       }
+      
+      // 새 타이머 생성
       subscriptionTimerRef.current = setTimeout(() => {
+        // 타이머 실행 후 타이머 ID 초기화
+        subscriptionTimerRef.current = null;
+        
         if (
           !isSubscribedRef.current &&
           connectedRef.current &&
           socketRef.current &&
           propsCveId
         ) {
-          logger.info('CVEDetail', `디바운스된 구독 요청 실행: ${propsCveId}`, {
-            isSubscribed: isSubscribedRef.current,
-            connected: connectedRef.current,
-            hasSocket: !!socketRef.current,
-          });
+          if (process.env.NODE_ENV === 'development') {
+            logger.info('CVEDetail', `디바운스된 구독 요청 실행: ${propsCveId}`, {
+              isSubscribed: isSubscribedRef.current,
+              connected: connectedRef.current,
+              hasSocket: !!socketRef.current,
+            });
+          }
           subscribe();
         }
       }, 300);
@@ -14498,21 +14504,30 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
 
     // 디바운스된 구독 해제 요청 함수
     const debouncedUnsubscribe = useCallback(() => {
+      // 이미 실행 중인 타이머가 있으면 정리
       if (subscriptionTimerRef.current) {
         clearTimeout(subscriptionTimerRef.current);
+        subscriptionTimerRef.current = null;
       }
+      
+      // 새 타이머 생성
       subscriptionTimerRef.current = setTimeout(() => {
+        // 타이머 실행 후 타이머 ID 초기화
+        subscriptionTimerRef.current = null;
+        
         if (
           isSubscribedRef.current &&
           connectedRef.current &&
           socketRef.current &&
           propsCveId
         ) {
-          logger.info('CVEDetail', `디바운스된 구독 해제 요청 실행: ${propsCveId}`, {
-            isSubscribed: isSubscribedRef.current,
-            connected: connectedRef.current,
-            hasSocket: !!socketRef.current,
-          });
+          if (process.env.NODE_ENV === 'development') {
+            logger.info('CVEDetail', `디바운스된 구독 해제 요청 실행: ${propsCveId}`, {
+              isSubscribed: isSubscribedRef.current,
+              connected: connectedRef.current,
+              hasSocket: !!socketRef.current,
+            });
+          }
           unsubscribe();
         }
       }, 300);
@@ -14947,41 +14962,104 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
     ), [errorDialogOpen, handleErrorDialogClose, error, queryError, handleRefresh]);
 
     // --- useEffects ---
+    // 소켓 이벤트 리스너 등록/제거
     useEffect(() => {
       if (propsCveId && open && socketRef.current && connectedRef.current) {
-        logger.info('CVEDetail: 소켓 이벤트 리스너 등록 시도', { event: 'cve_updated' });
+        if (process.env.NODE_ENV === 'development') {
+          logger.info('CVEDetail: 소켓 이벤트 리스너 등록 시도', { event: 'cve_updated' });
+        }
         socketRef.current.on('cve_updated', handleCVEUpdated);
-        logger.info('CVEDetail: 소켓 이벤트 리스너 등록 완료', { event: 'cve_updated' });
+        if (process.env.NODE_ENV === 'development') {
+          logger.info('CVEDetail: 소켓 이벤트 리스너 등록 완료', { event: 'cve_updated' });
+        }
         return () => {
           if (socketRef.current) {
-            logger.info('CVEDetail: 소켓 이벤트 리스너 제거 시도', { event: 'cve_updated' });
+            if (process.env.NODE_ENV === 'development') {
+              logger.info('CVEDetail: 소켓 이벤트 리스너 제거 시도', { event: 'cve_updated' });
+            }
             socketRef.current.off('cve_updated', handleCVEUpdated);
-            logger.info('CVEDetail: 소켓 이벤트 리스너 제거 완료', { event: 'cve_updated' });
+            if (process.env.NODE_ENV === 'development') {
+              logger.info('CVEDetail: 소켓 이벤트 리스너 제거 완료', { event: 'cve_updated' });
+            }
           }
         };
       } else {
-        logger.info('CVEDetail: 소켓 이벤트 리스너 등록 조건 미충족', {
-          hasId: !!propsCveId,
-          open,
-          hasSocket: !!socketRef.current,
-          connected: connectedRef.current,
-        });
+        if (process.env.NODE_ENV === 'development') {
+          logger.info('CVEDetail: 소켓 이벤트 리스너 등록 조건 미충족', {
+            hasId: !!propsCveId,
+            open,
+            hasSocket: !!socketRef.current,
+            connected: connectedRef.current,
+          });
+        }
       }
     }, [propsCveId, open, handleCVEUpdated]);
 
-    // 모달 열림/닫힘에 따른 데이터 로드 및 구독 관리
+    // 데이터 자동 갱신 로직
     useEffect(() => {
+      // 중복 실행 방지를 위한 플래그
+      let isEffectActive = true;
+      
+      // 이미 isFirstLoadRef가 false로 설정된 경우에는 실행하지 않음
+      if (propsCveId && open && isFirstLoadRef.current) {
+        const lastVisitTime = localStorage.getItem(`lastVisitTime_${propsCveId}`);
+        const currentTime = Date.now();
+        const oneDay = 24 * 60 * 60 * 1000;
+        
+        if (!lastVisitTime || currentTime - parseInt(lastVisitTime, 10) > oneDay) {
+          if (process.env.NODE_ENV === 'development') {
+            logger.info('CVEDetail: 장시간 미방문, 데이터 자동 갱신 시도', { cveId: propsCveId });
+          }
+          
+          // 로딩 중이 아닐 때만 데이터 갱신 실행
+          const refreshTimer = setTimeout(() => {
+            if (isEffectActive && !loading) {
+              if (process.env.NODE_ENV === 'development') {
+                logger.info('CVEDetail: 데이터 자동 갱신 실행');
+              }
+              refetchCveDetail()
+                .then(() => {
+                  if (process.env.NODE_ENV === 'development') {
+                    logger.info('CVEDetail: 데이터 자동 갱신 완료');
+                  }
+                })
+                .catch((error) => logger.error('CVEDetail: 데이터 자동 갱신 실패', error));
+            }
+          }, 1000);
+          
+          return () => {
+            clearTimeout(refreshTimer);
+            isEffectActive = false;
+          };
+        }
+        
+        // 방문 시간 업데이트
+        localStorage.setItem(`lastVisitTime_${propsCveId}`, currentTime.toString());
+        isFirstLoadRef.current = false;
+      }
+      
+      return () => {
+        isEffectActive = false;
+      };
+    }, [propsCveId, open, loading, refetchCveDetail]);
+
+    useEffect(() => {
+      // 중복 실행 방지를 위한 플래그
+      let isEffectActive = true;
+      
       // 모달이 열릴 때
       if (open && propsCveId) {
         // 초기 방문 시에만 로그 출력
-        if (!isFirstLoadRef.current) {
+        if (!isFirstLoadRef.current && process.env.NODE_ENV === 'development') {
           logger.info('CVEDetail: 모달 열림 감지', { cveId: propsCveId });
         }
         
         // 데이터 로드 로직 - 최초 1회만 실행
         if (!cveData && isFirstLoadRef.current) {
           setLoading(true);
-          logger.info('CVEDetail: 초기 데이터 로드 시작');
+          if (process.env.NODE_ENV === 'development') {
+            logger.info('CVEDetail: 초기 데이터 로드 시작');
+          }
           refetchCveDetail();
           isFirstLoadRef.current = false;
         } else if (cveData && isFirstLoadRef.current) {
@@ -15000,63 +15078,75 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
         
         // 모달 닫힐 때만 구독 해제 처리
         if (isSubscribedRef.current) {
-          logger.info('CVEDetail: 모달 닫힘 - 구독 해제 요청');
+          if (process.env.NODE_ENV === 'development') {
+            logger.info('CVEDetail: 모달 닫힘 - 구독 해제 요청');
+          }
           debouncedUnsubscribe();
         }
         
-        // 모달 닫힐 때 isFirstLoadRef 초기화
+        // 모달 닫힐 때 isFirstLoadRef 초기화 및 타이머 정리
         isFirstLoadRef.current = true;
-      }
-    }, [open, propsCveId, cveData, refetchCveDetail, debouncedUnsubscribe]);
-
-    // 소켓 연결 상태에 따른 구독 관리 - 수정된 부분
-    useEffect(() => {
-      // 모달이 열려있고, 소켓이 연결됐으며, 아직 구독되지 않은 상태일 때만 구독 시도
-      if (connected && open && propsCveId && !isSubscribedRef.current && !subscriptionTimerRef.current) {
-        if (process.env.NODE_ENV === 'development') {
-          logger.info('CVEDetail: 소켓 연결됨 - 구독 시도');
-        }
-        debouncedSubscribe();
-      }
-      
-      return () => {
-        // 컴포넌트 언마운트 시 타이머 정리
+        
+        // 모달이 닫힐 때 항상 타이머 정리
         if (subscriptionTimerRef.current) {
           clearTimeout(subscriptionTimerRef.current);
           subscriptionTimerRef.current = null;
         }
+      }
+      
+      // 클린업 함수
+      return () => {
+        isEffectActive = false;
+      };
+    }, [open, propsCveId, cveData, refetchCveDetail, debouncedUnsubscribe]);
+
+    // 소켓 연결 상태에 따른 구독 관리 - 수정된 부분
+    useEffect(() => {
+      // 중복 실행 방지를 위한 플래그
+      let isEffectActive = true;
+      
+      // 모달이 열려있고, 소켓이 연결됐으며, 아직 구독되지 않은 상태일 때만 구독 시도
+      if (connected && open && propsCveId && !isSubscribedRef.current) {
+        // 지연 실행으로 불필요한 중복 구독 방지
+        const delayedSubscribeCheck = setTimeout(() => {
+          // effect가 여전히 활성 상태이고 아직 구독되지 않았으며 타이머가 설정되지 않은 경우에만 구독
+          if (isEffectActive && !isSubscribedRef.current && !subscriptionTimerRef.current) {
+            if (process.env.NODE_ENV === 'development') {
+              logger.info('CVEDetail: 소켓 연결됨 - 구독 시도');
+            }
+            debouncedSubscribe();
+          }
+        }, 500); // 약간의 지연으로 타이밍 문제 방지
+        
+        return () => {
+          clearTimeout(delayedSubscribeCheck);
+          isEffectActive = false;
+        };
+      }
+      
+      return () => {
+        isEffectActive = false;
       };
     }, [connected, open, propsCveId, debouncedSubscribe]);
 
-    // 데이터 자동 갱신 로직 - 의존성 배열 수정
+    // 컴포넌트 언마운트 시 정리 작업
     useEffect(() => {
-      // 이미 isFirstLoadRef가 false로 설정된 경우에는 실행하지 않음
-      if (propsCveId && open && isFirstLoadRef.current) {
-        const lastVisitTime = localStorage.getItem(`lastVisitTime_${propsCveId}`);
-        const currentTime = Date.now();
-        const oneDay = 24 * 60 * 60 * 1000;
-        
-        if (!lastVisitTime || currentTime - parseInt(lastVisitTime, 10) > oneDay) {
-          logger.info('CVEDetail: 장시간 미방문, 데이터 자동 갱신 시도', { cveId: propsCveId });
-          
-          // 로딩 중이 아닐 때만 데이터 갱신 실행
-          const refreshTimer = setTimeout(() => {
-            if (!loading) {
-              logger.info('CVEDetail: 데이터 자동 갱신 실행');
-              refetchCveDetail()
-                .then(() => logger.info('CVEDetail: 데이터 자동 갱신 완료'))
-                .catch((error) => logger.error('CVEDetail: 데이터 자동 갱신 실패', error));
-            }
-          }, 1000);
-          
-          return () => clearTimeout(refreshTimer);
+      return () => {
+        // 컴포넌트 언마운트 시 모든 타이머 정리
+        if (subscriptionTimerRef.current) {
+          clearTimeout(subscriptionTimerRef.current);
+          subscriptionTimerRef.current = null;
         }
         
-        // 방문 시간 업데이트
-        localStorage.setItem(`lastVisitTime_${propsCveId}`, currentTime.toString());
-        isFirstLoadRef.current = false;
-      }
-    }, [propsCveId, open, loading, refetchCveDetail]);
+        // 구독 상태 정리
+        if (isSubscribedRef.current && propsCveId && socketRef.current && connectedRef.current) {
+          unsubscribe();
+        }
+        
+        // isFirstLoadRef 초기화
+        isFirstLoadRef.current = true;
+      };
+    }, [propsCveId, unsubscribe]);
 
     if (!open) return null;
     if (isQueryLoading && !cveData) {
@@ -15089,7 +15179,17 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
             </Typography>
           </DialogContent>
           <DialogActions>
-            <Button onClick={handleRefresh}>다시 시도</Button>
+            {queryError && (
+              <Button
+                onClick={() => {
+                  handleErrorDialogClose();
+                  handleRefresh();
+                }}
+                color="primary"
+              >
+                다시 시도
+              </Button>
+            )}
             <Button onClick={onClose}>닫기</Button>
           </DialogActions>
         </Dialog>
@@ -17404,6 +17504,44 @@ const CreateCVE: React.FC<CreateCVEProps> = ({ open = false, onClose, onSuccess 
 };
 
 export default CreateCVE;
+
+
+============================================================
+File: /home/CVEHub/frontend/src/features/cve/tests/BridgeTest.tsx
+------------------------------------------------------------
+// src/features/cve/tests/BridgeTest.tsx
+import React from 'react';
+import { CVEDetail, Reference, PoC, Comment } from '../types/bridge';
+
+/**
+ * 브릿지 타입 테스트 컴포넌트
+ */
+const BridgeTest: React.FC = () => {
+  // 테스트 객체 생성
+  const testCVE: CVEDetail = {
+    cveId: 'CVE-2023-1234',
+    title: '테스트 CVE',
+    status: '신규등록',
+    createdBy: 'admin',
+    lastModifiedBy: 'admin',
+    createdAt: new Date(),
+    references: [],
+    pocs: [],
+    snortRules: [],
+    modificationHistory: []
+  };
+  
+  console.log('테스트 CVE:', testCVE);
+  
+  return (
+    <div>
+      <h2>브릿지 타입 테스트</h2>
+      <pre>{JSON.stringify(testCVE, null, 2)}</pre>
+    </div>
+  );
+};
+
+export default BridgeTest;
 
 
 ============================================================

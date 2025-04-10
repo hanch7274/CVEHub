@@ -11,8 +11,7 @@ import time
 
 from fastapi.logger import logger
 from app.database import get_database
-from app.common.repositories.base import BaseRepository
-from app.comment.models import Comment, CommentCreate, CommentUpdate
+from app.comment.models import Comment
 
 
 def log_db_operation(operation_name):

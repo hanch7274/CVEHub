@@ -28,7 +28,8 @@ from starlette.exceptions import HTTPException
 from fastapi.websockets import WebSocketDisconnect, WebSocketState
 from app.system.models import SystemConfig
 from .database import init_db, get_database
-from app.cve.models import CVEModel, CreateCVERequest, PatchCVERequest
+from app.cve.models import CVEModel
+from app.cve.schemas import CreateCVERequest, PatchCVERequest
 from app.api import api_router  # 새 위치에서 임포트
 from app.core.scheduler import CrawlerScheduler
 

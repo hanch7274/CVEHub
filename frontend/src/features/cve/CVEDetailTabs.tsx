@@ -20,8 +20,8 @@ import HistoryTab from './components/HistoryTab';
 import { CVEDetailData, TabCounts, RefreshTriggers, CVEDetailTabsProps } from './types/cve';
 import {
   pocTabConfig, // 실제 타입 정의 필요 (e.g., PocTabConfigType)
-  snortRulesTabConfig, // 실제 타입 정의 필요
-  referencesTabConfig // 실제 타입 정의 필요
+  snortRuleTabConfig, // 실제 타입 정의 필요
+  referenceTabConfig // 실제 타입 정의 필요
 } from './components/tabConfigs';
 
 // 타입 정의는 types/cve.ts로 이동
@@ -56,8 +56,8 @@ interface TabItemConfig {
 // tabItemsConfig 타입 명시
 const tabItemsConfig: TabItemConfig[] = [
   { label: 'PoC', iconComponent: ScienceIcon, color: '#2196f3', hoverColor: '#1976d2', description: '증명 코드 및 취약점 검증', countKey: 'poc', component: GenericDataTab, config: pocTabConfig },
-  { label: 'Snort Rules', iconComponent: ShieldIcon, color: '#4caf50', hoverColor: '#388e3c', description: '탐지 규칙 및 방어 정책', countKey: 'snortRules', component: GenericDataTab, config: snortRulesTabConfig },
-  { label: 'References', iconComponent: LinkIcon, color: '#ff9800', hoverColor: '#f57c00', description: '관련 문서 및 참고 자료', countKey: 'references', component: GenericDataTab, config: referencesTabConfig },
+  { label: 'Snort Rule', iconComponent: ShieldIcon, color: '#4caf50', hoverColor: '#388e3c', description: '탐지 규칙 및 방어 정책', countKey: 'snortRule', component: GenericDataTab, config: snortRuleTabConfig },
+  { label: 'Reference', iconComponent: LinkIcon, color: '#ff9800', hoverColor: '#f57c00', description: '관련 문서 및 참고 자료', countKey: 'reference', component: GenericDataTab, config: referenceTabConfig },
   { label: 'Comments', iconComponent: CommentIcon, color: '#9c27b0', hoverColor: '#7b1fa2', description: '토론 및 의견 공유', countKey: 'comments', component: CommentsTab, config: null },
   { label: 'History', iconComponent: HistoryIcon, color: '#757575', hoverColor: '#757575', description: '수정 이력', countKey: null, component: HistoryTab, config: null }
 ];

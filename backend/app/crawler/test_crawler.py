@@ -90,7 +90,7 @@ async def test_single_cve(cve_id: str):
             logger.info(f"CVE ID: {cve_data.get('cve_id')}")
             logger.info(f"Title: {cve_data.get('title')}")
             logger.info(f"Description: {cve_data.get('description')}")
-            logger.info(f"References: {cve_data.get('references')}")
+            logger.info(f"Reference: {cve_data.get('reference')}")
 
             # DB에 저장
             success = await crawler.process_cve_data(cve_data)

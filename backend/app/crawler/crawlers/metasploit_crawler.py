@@ -4,7 +4,7 @@ import re
 import logging
 from pathlib import Path
 from ..crawler_base import BaseCrawlerService
-from ...models.cve_model import CVEModel
+from app.cve.models import CVEModel
 from ...core.config import get_settings
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -78,17 +78,17 @@ class MetasploitCrawlerService(BaseCrawlerService):
             description = desc_match.group(1) if desc_match else "No description available"
             
             # Reference URLs 찾기
-            reference_pattern = r"['\"']References['\"']\s*=>\s*\[(.*?)\]"
+            reference_pattern = r"['\"']Reference['\"']\s*=>\s*\[(.*?)\]"
             reference_section = re.search(reference_pattern, content, re.DOTALL)
             
-            references = []
+            reference = []
             if reference_section:
                 ref_text = reference_section.group(1)
                 url_matches = re.findall(r"['\"'](https?://[^'\"']+)['\"']", ref_text)
                 
                 for url in url_matches:
                     ref_type = 'NVD' if 'nvd.nist.gov' in url else 'OTHER'
-                    references.append({
+                    reference.append({
                         'url': url,
                         'source': 'metasploit-framework',
                         'type': ref_type,
@@ -103,7 +103,7 @@ class MetasploitCrawlerService(BaseCrawlerService):
             current_time = self.get_current_time()
             
             # Metasploit 모듈 URL을 Reference에 추가
-            references.append({
+            reference.append({
                 'url': module_url,
                 'source': 'metasploit-framework',
                 'type': 'Exploit',
@@ -112,7 +112,7 @@ class MetasploitCrawlerService(BaseCrawlerService):
             })
             
             # PoC 객체 생성
-            pocs = [{
+            poc = [{
                 'source': 'Metasploit-Framework',
                 'url': module_url,
                 'description': f'Metasploit: {name}',
@@ -124,8 +124,8 @@ class MetasploitCrawlerService(BaseCrawlerService):
                 'cve_id': cve_id,
                 'title': name,
                 'description': description,
-                'references': references,
-                'pocs': pocs,
+                'reference': reference,
+                'poc': poc,
                 'created_at': current_time,
                 'last_modified_at': current_time,
                 'created_by': self.crawler_name
@@ -191,55 +191,50 @@ class MetasploitCrawlerService(BaseCrawlerService):
                 })
                 
                 # 참조 정보 기록
-                if cve_data.get('references') and len(cve_data.get('references')) > 0:
+                if cve_data.get('reference') and len(cve_data.get('reference')) > 0:
                     changes.append({
-                        "field": "references",
-                        "field_name": "References",
+                        "field": "reference",
+                        "field_name": "Reference",
                         "action": "add",
                         "detail_type": "simple",
-                        "summary": f"Reference {len(cve_data.get('references'))}개 추가됨"
+                        "summary": f"Reference {len(cve_data.get('reference'))}개 추가됨"
                     })
                     
                 # PoC 정보 기록
-                if cve_data.get('pocs') and len(cve_data.get('pocs')) > 0:
+                if cve_data.get('poc') and len(cve_data.get('poc')) > 0:
                     changes.append({
-                        "field": "pocs",
+                        "field": "poc",
                         "field_name": "PoC",
                         "action": "add",
                         "detail_type": "simple",
-                        "summary": f"PoC {len(cve_data.get('pocs'))}개 추가됨"
+                        "summary": f"PoC {len(cve_data.get('poc'))}개 추가됨"
                     })
                 
-                modification_history = [{
-                    "username": "Metasploit-Crawler",
-                    "modified_at": current_time,
-                    "changes": changes
-                }]
+                # modification_history 부분 제거 (activity로 대체 예정)
                 
                 cve = CVEModel(
                     cve_id=cve_data['cve_id'],
                     title=cve_data['title'],
                     description=cve_data['description'],
-                    references=cve_data['references'],
-                    pocs=cve_data['pocs'],
+                    reference=cve_data['reference'],
+                    poc=cve_data['poc'],
                     created_at=cve_data['created_at'],
                     last_modified_at=cve_data['last_modified_at'],
-                    created_by="Metasploit-Crawler",
-                    modification_history=modification_history
+                    created_by="Metasploit-Crawler"
                 )
             else:
                 # 기존 CVE의 경우 PoC와 Reference만 업데이트
                 # 기존 Reference에 없는 새로운 Reference만 추가
-                existing_ref_urls = [ref.url for ref in cve.references]
-                for new_ref in cve_data['references']:
+                existing_ref_urls = [ref.url for ref in cve.reference]
+                for new_ref in cve_data['reference']:
                     if new_ref['url'] not in existing_ref_urls:
-                        cve.references.append(new_ref)
+                        cve.reference.append(new_ref)
                         
                 # 기존 PoC에 없는 새로운 PoC만 추가
-                existing_poc_urls = [poc.url for poc in cve.pocs]
-                for new_poc in cve_data['pocs']:
+                existing_poc_urls = [poc.url for poc in cve.poc]
+                for new_poc in cve_data['poc']:
                     if new_poc['url'] not in existing_poc_urls:
-                        cve.pocs.append(new_poc)
+                        cve.poc.append(new_poc)
                         
                 # last_modified_at 업데이트
                 cve.last_modified_at = cve_data['last_modified_at']

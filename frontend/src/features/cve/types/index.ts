@@ -59,7 +59,6 @@ export type {
   CVEDetailProps,
   SubscriberCountProps,
   CVEFilterOptions,
-  CVECreateRequest,
   CVEUpdateRequest,
   OperationResponse,
   ApiResponse,
@@ -70,15 +69,18 @@ export type {
   CVEData,
   SelectOption,
   GenericDataTabBaseProps,
-  SnortRulesTabProps,
+  SnortRuleTabProps,
   PoCTabProps,
-  ReferencesTabProps,
+  ReferenceTabProps,
   GenericDataTabProps,
   WebSocketUpdateData,
   HistoryChange,
   HistoryItem,
   HistoryTabProps
 } from './cve';
+
+// 생성된 타입 export 추가
+export * from './generated/cve';
 
 // 함수 내보내기
 export { countActiveComments } from './cve';

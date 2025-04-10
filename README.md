@@ -63,6 +63,73 @@ graph LR
 *   **실시간 통신 (WebSocket):** Socket.IO를 통해 클라이언트-서버 간 양방향 실시간 통신. 데이터 변경 알림, 구독 관리 등에 사용.
 *   **백그라운드 작업 (APScheduler/Crawler):** 정기적으로 외부 소스(Nuclei, Metasploit 등)에서 데이터를 크롤링하여 DB 업데이트.
 
+## 2.1. 스키마 중앙화 시스템 (Schema Centralization)
+
+CVEHub는 백엔드와 프론트엔드 간의 데이터 구조 일관성을 유지하기 위해 스키마 중앙화 시스템을 구현했습니다. 이는 모델 변경 시 여러 파일을 수동으로 수정해야 하는 번거로움을 줄이고, 타입 안전성을 향상시키며, 개발 생산성을 높이는 데 기여합니다.
+
+```mermaid
+graph TD
+    A[중앙 스키마 정의<br/>app/schemas/*.py] --> B[Pydantic 모델]
+    B --> C[Beanie 문서 모델<br/>자동 생성]
+    B --> D[OpenAPI 스키마]
+    D --> E[TypeScript 인터페이스<br/>자동 생성]
+    C --> F[MongoDB]
+    E --> G[프론트엔드 타입<br/>interfaces.ts]
+```
+
+### 2.1.1. 주요 구성 요소
+
+*   **중앙 스키마 파일:** `app/schemas/` 디렉토리에 정의된 Pydantic 모델들이 시스템의 중심이 됩니다. 이 모델들은 애플리케이션 전체에서 사용되는 데이터 구조를 정의합니다.
+
+*   **자동 변환 도구:**
+    *   **백엔드:** `app/tools/` 디렉토리에 있는 도구들이 Pydantic 모델을 Beanie 문서 모델로 자동 변환합니다.
+    *   **프론트엔드:** `app/tools/typescript_generator.py`가 Pydantic 모델에서 TypeScript 인터페이스를 자동으로 생성합니다.
+
+*   **생성된 모델 및 인터페이스:**
+    *   **백엔드:** `app/cve/generated_models.py`에 Beanie ODM 모델이 자동 생성됩니다.
+    *   **프론트엔드:** `frontend/src/features/cve/types/generated/cve.ts`에 TypeScript 인터페이스가 자동 생성됩니다.
+
+### 2.1.2. 변환 과정
+
+1. **Pydantic → Beanie:**
+   * Pydantic 모델을 기반으로 MongoDB에서 사용할 Beanie 문서 모델을 자동 생성합니다.
+   * 변환 시 필드 타입, 설명, 기본값 등의 메타데이터를 보존합니다.
+   * `BaseDocument` 확장을 통해 MongoDB 문서 모델로 작동하도록 합니다.
+
+2. **Pydantic → TypeScript:**
+   * Jinja2 템플릿(`app/tools/templates/ts_interfaces.ts.jinja2`)을 사용하여 TypeScript 인터페이스를 생성합니다.
+   * Python 타입을 TypeScript 타입으로 변환하는 필터를 적용합니다.
+   * 생성된 인터페이스는 `Generated` 접두사를 가지며, 기존 코드와의 호환성을 유지합니다.
+
+### 2.1.3. 사용 방법
+
+*   **스키마 변경 시 업데이트:**
+    ```bash
+    python -m app.tools.generate_all
+    ```
+    이 명령어는 백엔드 모델과 프론트엔드 인터페이스를 모두 최신 스키마 정의에 맞게 업데이트합니다.
+
+*   **프론트엔드 사용 패턴:**
+    * 생성된 인터페이스(`GeneratedReference` 등)를 기존 인터페이스에서 확장하여 사용합니다.
+    * 필요한 경우 `Omit<>` 유틸리티 타입을 통해 필드를 커스터마이징할 수 있습니다.
+    ```typescript
+    export interface Reference extends GeneratedReference {
+      // 추가 필드 또는 오버라이드
+      [key: string]: unknown; // 호환성을 위한 인덱스 시그니처
+    }
+    ```
+
+*   **백엔드 사용 패턴:**
+    * 생성된 모델(`CVEModel` 등)을 직접 가져와 사용합니다.
+    * 스키마와 분리된 비즈니스 로직을 추가할 경우, 새로운 파일에 래퍼 클래스를 만들어 확장합니다.
+
+### 2.1.4. 이점
+
+*   **일관성:** 백엔드와 프론트엔드 간의 데이터 구조 일관성 보장
+*   **생산성:** 모델 변경 시 타입을 수동으로 업데이트할 필요 없음
+*   **타입 안전성:** TypeScript의 타입 체크를 통한 런타임 오류 감소
+*   **유지보수성:** 스키마 정의가 중앙화되어 변경사항 추적 용이
+
 ## 3. 프론트엔드 상세 분석 (Frontend Details)
 
 ### 3.1. 구조 (`src/`)

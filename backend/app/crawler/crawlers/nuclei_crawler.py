@@ -11,7 +11,7 @@ from typing import Dict, List, Any, Optional, Union
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
-from app.cve.models import CVEModel
+from app.cve.models import CVEModel, ChangeItem
 from ..crawler_base import BaseCrawlerService
 from app.core.config import get_settings
 import re
@@ -360,9 +360,9 @@ class NucleiCrawlerService(BaseCrawlerService):
                 'description': description,
                 'severity': self._standardize_severity(severity),
                 'content': content,  # 원본 콘텐츠 보존
-                'references': self._extract_references(info.get('reference', [])),
-                'pocs': self._create_pocs(cve_id, file_path),
-                'snort_rules': [],
+                'reference': self._extract_reference(info.get('reference', [])),
+                'poc': self._create_poc(cve_id, file_path),
+                'snort_rule': [],
                 'file_path': file_path
             }
             
@@ -408,11 +408,11 @@ class NucleiCrawlerService(BaseCrawlerService):
         
         return 'unknown'
 
-    def _extract_references(self, references) -> List[Dict[str, Any]]:
+    def _extract_reference(self, reference) -> List[Dict[str, Any]]:
         """참조 URL 추출 및 객체 변환"""
-        if isinstance(references, str):
-            references = [references]
-        elif not references:
+        if isinstance(reference, str):
+            reference = [reference]
+        elif not reference:
             return []
         
         reference_objects = []
@@ -427,7 +427,7 @@ class NucleiCrawlerService(BaseCrawlerService):
             # 필요시 여기에 더 많은 매핑을 추가할 수 있습니다
         }
         
-        for ref_url in references:
+        for ref_url in reference:
             if not ref_url:
                 continue
                 
@@ -452,9 +452,9 @@ class NucleiCrawlerService(BaseCrawlerService):
                 "last_modified_by": "Nuclei-Crawler"
             })
         
-    return reference_objects
+        return reference_objects
 
-    def _create_pocs(self, cve_id: str, file_path: str) -> List[Dict[str, Any]]:
+    def _create_poc(self, cve_id: str, file_path: str) -> List[Dict[str, Any]]:
         """PoC 정보 생성"""
         # CVE ID에서 연도 추출
         cve_year_match = re.match(r'CVE-(\d{4})-\d+', cve_id)
@@ -483,28 +483,57 @@ class NucleiCrawlerService(BaseCrawlerService):
                 # 클론 작업 시작
                 self.log_info(f"저장소 클론 시작: {self.repo_url} -> {self.repo_path}")
                 
-                # 비동기로 클론 작업 수행
-                await loop.run_in_executor(
-                    None, 
-                    lambda: git.Repo.clone_from(self.repo_url, self.repo_path)
-                )
+                # 얕은 클론 옵션 추가 - 다운로드 속도 향상을 위해 최신 커밋만 가져옴
+                def clone_with_timeout():
+                    try:
+                        # 얕은 클론으로 속도 최적화 (depth=1로 최신 커밋만 가져옴)
+                        return git.Repo.clone_from(
+                            self.repo_url, 
+                            self.repo_path,
+                            depth=1,  # 얕은 클론
+                            single_branch=True,  # 단일 브랜치만
+                            branch='master'  # 메인 브랜치
+                        )
+                    except git.GitCommandError as e:
+                        self.log_error(f"Git 클론 명령 실패: {str(e)}")
+                        raise
                 
-                self.log_info("저장소 클론 완료")
+                # 비동기로 클론 작업 수행 (타임아웃 설정)
+                try:
+                    await asyncio.wait_for(
+                        loop.run_in_executor(None, clone_with_timeout),
+                        timeout=180  # 3분 타임아웃
+                    )
+                    self.log_info("저장소 클론 완료")
+                except asyncio.TimeoutError:
+                    self.log_error("저장소 클론 시간 초과 (3분). 작업 중단.")
+                    return False
+                
             else:
                 # 풀 작업 시작
                 self.log_info(f"저장소 풀 시작: {self.repo_path}")
                 
-                # 저장소 불러오기
+                # 저장소 불러오기 - 타임아웃 처리 추가
                 def load_and_pull():
-                    repo = git.Repo(self.repo_path)
-                    origin = repo.remotes.origin
-                    origin.pull()
-                    return True
+                    try:
+                        repo = git.Repo(self.repo_path)
+                        origin = repo.remotes.origin
+                        origin.pull()
+                        return True
+                    except git.GitCommandError as e:
+                        self.log_error(f"Git 풀 명령 실패: {str(e)}")
+                        raise
                 
-                # 비동기로 풀 작업 수행
-                await loop.run_in_executor(None, load_and_pull)
-                
-                self.log_info("저장소 풀 완료")
+                # 비동기로 풀 작업 수행 (타임아웃 설정)
+                try:
+                    await asyncio.wait_for(
+                        loop.run_in_executor(None, load_and_pull),
+                        timeout=120  # 2분 타임아웃
+                    )
+                    self.log_info("저장소 풀 완료")
+                except asyncio.TimeoutError:
+                    self.log_error("저장소 풀 시간 초과 (2분). 작업 중단.")
+                    return False
             
             return True
         except Exception as e:
@@ -521,7 +550,7 @@ class NucleiCrawlerService(BaseCrawlerService):
                     self.log_error(f"저장소 디렉토리 정리 중 오류: {str(cleanup_err)}")
             
             return False
-    
+
     def _extract_digest_hash(self, content: Union[str, Dict]) -> str:
         """템플릿 파일에서 digest 해시 값 추출"""
         # 텍스트 콘텐츠로 변환

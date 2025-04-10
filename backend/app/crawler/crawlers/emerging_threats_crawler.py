@@ -155,7 +155,7 @@ class EmergingThreatsCrawlerService(BaseCrawlerService):
                                 "msg": msg,  # 원본 메시지 (참고용)
                                 "rule_sid": sid,
                                 "rule_content": clean_rule.strip(),
-                                "references": url_refs
+                                "reference": url_refs
                             })
             
             await self.report_progress("processing", 100, 
@@ -229,8 +229,8 @@ class EmergingThreatsCrawlerService(BaseCrawlerService):
                 
                 if cve:
                     # 기존 CVE의 스노트 룰 가져오기
-                    if hasattr(cve, "snort_rules") and cve.snort_rules:
-                        current_rules = cve.snort_rules
+                    if hasattr(cve, "snort_rule") and cve.snort_rule:
+                        current_rules = cve.snort_rule
                     else:
                         current_rules = []
                         
@@ -247,30 +247,30 @@ class EmergingThreatsCrawlerService(BaseCrawlerService):
                         current_rules.append(rule_obj)
                         
                     # 업데이트할 데이터에 룰 추가
-                    cve_data["snort_rules"] = current_rules
+                    cve_data["snort_rule"] = current_rules
                     updated_count += 1
                 else:
                     # 새 CVE의 경우
-                    cve_data["snort_rules"] = [rule_obj]
+                    cve_data["snort_rule"] = [rule_obj]
                     new_count += 1
                 
                 # 참조 URL 처리
-                if rule_data["references"]:
-                    references = []
+                if rule_data["reference"]:
+                    reference = []
                     
                     # 기존 참조 URL 가져오기
-                    if cve and hasattr(cve, "references") and cve.references:
+                    if cve and hasattr(cve, "reference") and cve.reference:
                         existing_urls = {
                             ref.get("url") if isinstance(ref, dict) else ref
-                            for ref in cve.references
+                            for ref in cve.reference
                         }
-                        references = cve.references
+                        reference = cve.reference
                     else:
                         existing_urls = set()
-                        references = []
+                        reference = []
                     
                     # 새로운 URL 추가
-                    for url in rule_data["references"]:
+                    for url in rule_data["reference"]:
                         if url not in existing_urls:
                             # cve_utils의 create_reference 함수 사용
                             from ..utils.cve_utils import create_reference
@@ -280,11 +280,11 @@ class EmergingThreatsCrawlerService(BaseCrawlerService):
                                 description="EmergingThreats Rule Reference",
                                 creator="emerging_threats_crawler"
                             )
-                            references.append(reference_obj)
+                            reference.append(reference_obj)
                             existing_urls.add(url)
                     
                     # 업데이트할 데이터에 참조 URL 추가
-                    cve_data["references"] = references
+                    cve_data["reference"] = reference
                 
                 # BaseCrawlerService의 update_cve 메서드 사용
                 cve = await self.update_cve(cve_id, cve_data, "EmergingThreats-Crawler")

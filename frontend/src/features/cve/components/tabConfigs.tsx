@@ -50,8 +50,8 @@ export const pocTabConfig: ExtendedTabConfig<PoCItem> = {
   icon: CodeIcon,
   title: 'Proof of Concept',
   itemName: 'PoC',
-  dataField: 'pocs',
-  wsFieldName: 'pocs',
+  dataField: 'poc',
+  wsFieldName: 'poc',
   defaultItem: DEFAULT_POC,
   emptyTitle: '등록된 PoC 정보 없음',
   emptyDescription: '아직 이 취약점에 대한 PoC 코드가 등록되지 않았습니다.',
@@ -152,12 +152,12 @@ export const DEFAULT_RULE: SnortRuleItem = {
   description: '',
 };
 
-export const snortRulesTabConfig: ExtendedTabConfig<SnortRuleItem> = {
+export const snortRuleTabConfig: ExtendedTabConfig<SnortRuleItem> = {
   icon: ShieldIcon,
   title: 'Snort Rules',
   itemName: '규칙',
-  dataField: 'snortRules',
-  wsFieldName: 'snort_rules',
+  dataField: 'snortRule',
+  wsFieldName: 'snort_rule',
   defaultItem: DEFAULT_RULE,
   emptyTitle: '등록된 Snort 규칙 없음',
   emptyDescription: '아직 이 취약점에 대한 Snort 규칙이 정의되지 않았습니다.',
@@ -261,7 +261,7 @@ export const snortRulesTabConfig: ExtendedTabConfig<SnortRuleItem> = {
   )
 }; // 세미콜론 추가
 
-// --- References 탭 설정 ---
+// --- Reference 탭 설정 ---
 export const REFERENCE_TYPES: Record<string, string> = {
   NVD: 'NVD',
   ADVISORY: 'Advisory',
@@ -278,12 +278,12 @@ export const DEFAULT_REFERENCE: ReferenceItem = {
   description: '',
 }; // 세미콜론 추가
 
-export const referencesTabConfig: ExtendedTabConfig<ReferenceItem> = {
+export const referenceTabConfig: ExtendedTabConfig<ReferenceItem> = {
   icon: LinkIcon,
-  title: 'References',
+  title: 'Reference',
   itemName: '참조 링크',
-  dataField: 'references',
-  wsFieldName: 'references',
+  dataField: 'reference',
+  wsFieldName: 'reference',
   defaultItem: DEFAULT_REFERENCE,
   emptyTitle: '등록된 참조 링크 없음',
   emptyDescription: '아직 이 취약점과 관련된 참조 링크가 등록되지 않았습니다.',

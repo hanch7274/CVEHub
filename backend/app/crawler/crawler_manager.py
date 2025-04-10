@@ -90,7 +90,30 @@ class CrawlerManager(LoggingMixin):
         Returns:
             크롤러 인스턴스 또는 None
         """
-        return self.get_crawler(crawler_type)
+        # 디버깅 로그 추가
+        crawler = self.get_crawler(crawler_type)
+        if not crawler:
+            from .crawler_factory import CrawlerRegistry
+            # 등록된 크롤러 확인
+            registered_types = CrawlerRegistry.get_registered_types()
+            self.log_warning(f"크롤러 생성 실패: {crawler_type}, 등록된 크롤러: {registered_types}")
+            
+            # 크롤러 자동 발견 재시도
+            self.log_info("크롤러 자동 발견 재시도...")
+            CrawlerRegistry.discover_crawlers()
+            
+            # 발견 후 다시 생성 시도
+            crawler_class = CrawlerRegistry.get_crawler_class(crawler_type)
+            if crawler_class:
+                try:
+                    crawler = crawler_class()
+                    self.log_info(f"크롤러 생성 성공: {crawler_type}")
+                    # 크롤러 캐시에 저장
+                    self._crawlers[crawler_type.lower()] = crawler
+                except Exception as e:
+                    self.log_error(f"크롤러 생성 시도 중 오류: {crawler_type}", e)
+        
+        return crawler
     
     async def run_crawler(self, crawler_type: str, user_id: Optional[str] = None, quiet_mode: bool = False) -> Dict[str, Any]:
         """

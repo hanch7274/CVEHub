@@ -18,15 +18,16 @@ from bson import ObjectId
 from functools import wraps
 
 from app.cve.models import (
-    CVEModel, Reference, PoC, SnortRule, ModificationHistory, ChangeItem,
+    CVEModel, ChangeItem
+)
+from app.cve.schemas import (
     CreateCVERequest, PatchCVERequest
 )
-from app.activity.models import ActivityAction, ActivityTargetType, UserActivity
+from app.activity.models import ActivityAction, ActivityTargetType
 from app.activity.service import ActivityService
 from app.cve.repository import CVERepository
 from app.common.utils.datetime_utils import get_utc_now, format_datetime, normalize_datetime_fields
 from app.common.utils.change_detection import detect_object_changes
-from app.comment.service import CommentService
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -82,59 +83,59 @@ def track_cve_activity(action, extract_title=None, ignore_fields=None):
                 else:
                     title = cve_id
                 
-                # 변경 사항 감지 (업데이트 작업의 경우)
-                changes = []
+                # 추가 변경 사항 준비
+                additional_changes = []
                 
-                if action == ActivityAction.UPDATE and old_cve and new_cve:
-                    # 객체 변경 자동 감지 사용
-                    changes = detect_object_changes(
-                        old_obj=old_cve.dict(),
-                        new_obj=new_cve.dict(),
-                        ignore_fields=ignore_fields or ['last_modified_at', '_id', 'id']
-                    )
-                elif action == ActivityAction.CREATE:
-                    changes = [ChangeItem(
-                        field="cve",
-                        field_name="CVE",
-                        action="add",
-                        detail_type="simple",
-                        summary=f"새 CVE '{cve_id}' 생성"
-                    )]
-                elif action == ActivityAction.DELETE:
-                    changes = [ChangeItem(
-                        field="cve",
-                        field_name="CVE",
-                        action="delete",
-                        detail_type="simple",
-                        summary=f"CVE '{cve_id}' 삭제"
-                    )]
-                
-                # 메타데이터 준비
-                metadata = {}
-                
-                # CVE 정보가 있으면 메타데이터에 추가
+                # 상태 정보 추가
                 if new_cve:
-                    metadata.update({
-                        "severity": new_cve.severity,
-                        "status": new_cve.status
-                    })
+                    additional_changes.append(ChangeItem(
+                        field="severity_context",
+                        field_name="심각도",
+                        action="context",
+                        detail_type="simple",
+                        after=new_cve.severity,
+                        summary=f"심각도: {new_cve.severity}"
+                    ))
+                    
+                    additional_changes.append(ChangeItem(
+                        field="status_context",
+                        field_name="상태",
+                        action="context",
+                        detail_type="simple",
+                        after=new_cve.status,
+                        summary=f"상태: {new_cve.status}"
+                    ))
                 elif old_cve:
-                    metadata.update({
-                        "severity": old_cve.severity,
-                        "status": old_cve.status
-                    })
+                    additional_changes.append(ChangeItem(
+                        field="severity_context",
+                        field_name="이전 심각도",
+                        action="context",
+                        detail_type="simple",
+                        after=old_cve.severity,
+                        summary=f"이전 심각도: {old_cve.severity}"
+                    ))
+                    
+                    additional_changes.append(ChangeItem(
+                        field="status_context",
+                        field_name="이전 상태",
+                        action="context",
+                        detail_type="simple",
+                        after=old_cve.status,
+                        summary=f"이전 상태: {old_cve.status}"
+                    ))
                 
                 # 활동 생성
-                if changes:  # 변경 사항이 있는 경우에만 기록
-                    await self.activity_service.create_activity(
-                        username=username,
-                        action=action,
-                        target_type=ActivityTargetType.CVE,
-                        target_id=cve_id,
-                        target_title=title,
-                        changes=changes,
-                        metadata=metadata
-                    )
+                await self.activity_service.track_object_changes(
+                    username=username,
+                    action=action,
+                    target_type=ActivityTargetType.CVE,
+                    target_id=cve_id,
+                    old_obj=old_cve.dict() if old_cve else None,
+                    new_obj=new_cve.dict() if new_cve else None,
+                    target_title=title,
+                    ignore_fields=ignore_fields or ['last_modified_at', '_id', 'id'],
+                    additional_changes=additional_changes
+                )
             
             return result
         return wrapper
@@ -147,7 +148,7 @@ class CVEService:
         self.repository = cve_repository or CVERepository()
         self.activity_service = activity_service or ActivityService()
         self._comment_service = comment_service
-
+    
     @property
     def comments(self):
         """댓글 관련 작업을 위한 서비스 접근자"""
@@ -162,6 +163,7 @@ class CVEService:
                 activity_service=self.activity_service or ActivityService()
             )
         return self._comment_service
+    
     
     # 표준화된 결과 반환 메서드
     def _success_result(self, data, message="작업이 성공적으로 완료되었습니다"):
@@ -322,16 +324,52 @@ class CVEService:
             
             # pydantic 모델을 딕셔너리로 변환
             if not isinstance(cve_data, dict):
+                logger.debug(f"입력 데이터 타입: {type(cve_data)}")
                 cve_data = cve_data.dict()
-                
+            
+            # 디버깅: 입력 데이터 구조 확인
+            logger.debug(f"CVE 데이터 키: {list(cve_data.keys())}")
+            
+            # 문제가 되는 필드 값 디버깅
+            for field in ["assigned_to", "notes", "nuclei_hash"]:
+                if field in cve_data:
+                    logger.debug(f"{field} 필드 값: {cve_data[field]}")
+                    logger.debug(f"{field} 필드 타입: {type(cve_data[field])}")
+                    
+                    # 필드 값 확인 후 문자열로 변환 처리
+                    if cve_data[field] is None:
+                        logger.debug(f"{field} 필드가 None입니다. 빈 문자열로 변환합니다.")
+                        cve_data[field] = ""
+                    elif not isinstance(cve_data[field], str):
+                        logger.debug(f"{field} 필드가 문자열이 아닙니다. 문자열로 변환합니다: {cve_data[field]}")
+                        cve_data[field] = str(cve_data[field]) if cve_data[field] is not None else ""
+                else:
+                    logger.debug(f"{field} 필드가 없습니다. 빈 문자열을 추가합니다.")
+                    cve_data[field] = ""
+            
+            # 임베디드 필드 디버깅
+            for field_name in ['reference', 'poc', 'snort_rule']:
+                if field_name in cve_data:
+                    logger.debug(f"{field_name} 필드 타입: {type(cve_data[field_name])}")
+                    if hasattr(cve_data[field_name], '__class__'):
+                        logger.debug(f"{field_name} 필드 클래스: {cve_data[field_name].__class__.__name__}")
+                    if isinstance(cve_data[field_name], tuple) and len(cve_data[field_name]) > 0:
+                        logger.debug(f"{field_name} 첫 항목 타입: {type(cve_data[field_name][0])}")
+                        logger.debug(f"{field_name} 첫 항목 내용: {cve_data[field_name][0]}")
+                else:
+                    logger.debug(f"{field_name} 필드 없음")
+            
             # 날짜 필드 UTC 설정
             current_time = get_utc_now()
+            
+            # 임베디드 필드 처리 (FieldInfo 객체 변환)
+            cve_data = self._process_embedded_fields(cve_data)
             
             # CVE 객체 자체에 시간 메타데이터 추가
             cve_data = self._add_timestamp_metadata(cve_data, username, current_time)
             
             # 각 컨테이너 필드에 대해 필수 필드 추가
-            for field in ["references", "pocs", "snort_rules"]:
+            for field in ["reference", "poc", "snort_rule"]:
                 # 필드가 있고, None이 아니고, 비어있지 않은 경우만 처리
                 if field in cve_data and cve_data[field] is not None:
                     # 빈 리스트가 아닌지 확인하고 처리
@@ -365,33 +403,33 @@ class CVEService:
             if new_cve:
                 logger.info(f"CVE 생성 성공: CVE ID={new_cve.cve_id}")
                 
-                # 활동 추적 - CVE 생성 기록
-                changes = [ChangeItem(
+                # 활동 추적을 위한 추가 변경 사항 준비
+                additional_changes = []
+                
+                # 변경 사항 - CVE 생성
+                additional_changes.append(ChangeItem(
                     field="cve",
                     field_name="CVE",
                     action="add",
                     detail_type="detailed",
                     summary=f"새 CVE '{new_cve.cve_id}' 생성"
-                )]
-                
-                # 활동 로그를 위한 타이틀 생성 - CVE ID만 사용
-                activity_title = new_cve.cve_id
+                ))
                 
                 # 심각도 정보
-                changes.append(ChangeItem(
+                additional_changes.append(ChangeItem(
                     field="severity_context",
                     field_name="심각도",
-                    action="add",
+                    action="context",
                     detail_type="simple",
                     after=new_cve.severity,
                     summary=f"심각도: {new_cve.severity}"
                 ))
                 
                 # 상태 정보
-                changes.append(ChangeItem(
+                additional_changes.append(ChangeItem(
                     field="status_context",
                     field_name="상태",
-                    action="add",
+                    action="context",
                     detail_type="simple",
                     after=new_cve.status,
                     summary=f"상태: {new_cve.status}"
@@ -399,116 +437,118 @@ class CVEService:
                 
                 # 크롤러 정보
                 if is_crawler:
-                    changes.append(ChangeItem(
+                    additional_changes.append(ChangeItem(
                         field="crawler_context",
                         field_name="크롤러",
-                        action="add",
+                        action="context",
                         detail_type="simple",
                         after=crawler_name,
                         summary=f"크롤러: {crawler_name}"
                     ))
                 
                 # 생성자 정보
-                changes.append(ChangeItem(
+                additional_changes.append(ChangeItem(
                     field="created_by_context",
                     field_name="생성자",
-                    action="add",
+                    action="context",
                     detail_type="simple",
                     after=username,
                     summary=f"생성자: {username}"
                 ))
                 
                 # PoC 정보 추가
-                if new_cve.pocs and len(new_cve.pocs) > 0:
+                if new_cve.poc and len(new_cve.poc) > 0:
                     poc_items = []
-                    for poc in new_cve.pocs:
+                    for poc in new_cve.poc:
                         poc_items.append({
                             "source": poc.source,
                             "url": poc.url,
                             "description": poc.description
                         })
-                    changes.append(ChangeItem(
-                        field="pocs",
+                    additional_changes.append(ChangeItem(
+                        field="poc",
                         field_name="PoC",
                         action="add",
                         detail_type="detailed",
                         items=poc_items,
-                        summary=f"PoC {len(new_cve.pocs)}개 추가됨"
+                        summary=f"PoC {len(new_cve.poc)}개 추가됨"
                     ))
                     
                     # PoC 개수 정보
-                    changes.append(ChangeItem(
-                        field="pocs_count",
+                    additional_changes.append(ChangeItem(
+                        field="poc_count",
                         field_name="PoC 수",
-                        action="add",  
+                        action="context",  # 'add'에서 'context'로 변경
                         detail_type="simple",
-                        after=len(new_cve.pocs),
-                        summary=f"PoC 총 {len(new_cve.pocs)}개"
+                        after=len(new_cve.poc),
+                        summary=f"PoC 총 {len(new_cve.poc)}개"
                     ))
                 
                 # 참조문서 정보 추가
-                if new_cve.references and len(new_cve.references) > 0:
+                if new_cve.reference and len(new_cve.reference) > 0:
                     ref_items = []
-                    for ref in new_cve.references:
+                    for ref in new_cve.reference:
                         ref_items.append({
                             "type": ref.type,
                             "url": ref.url,
                             "description": ref.description
                         })
-                    changes.append(ChangeItem(
-                        field="references",
+                    additional_changes.append(ChangeItem(
+                        field="reference",
                         field_name="참조문서",
                         action="add",
                         detail_type="detailed",
                         items=ref_items,
-                        summary=f"참조문서 {len(new_cve.references)}개 추가됨"
+                        summary=f"참조문서 {len(new_cve.reference)}개 추가됨"
                     ))
                     
                     # 참조문서 개수 정보
-                    changes.append(ChangeItem(
-                        field="references_count",
+                    additional_changes.append(ChangeItem(
+                        field="reference_count",
                         field_name="참조문서 수",
-                        action="add",  
+                        action="context",  # 'add'에서 'context'로 변경
                         detail_type="simple",
-                        after=len(new_cve.references),
-                        summary=f"참조문서 총 {len(new_cve.references)}개"
+                        after=len(new_cve.reference),
+                        summary=f"참조문서 총 {len(new_cve.reference)}개"
                     ))
                 
                 # Snort 규칙 정보 추가
-                if new_cve.snort_rules and len(new_cve.snort_rules) > 0:
+                if new_cve.snort_rule and len(new_cve.snort_rule) > 0:
                     snort_items = []
-                    for snort in new_cve.snort_rules:
+                    for snort in new_cve.snort_rule:
                         snort_items.append({
                             "type": snort.type,
                             "rule": snort.rule,
                             "description": snort.description
                         })
-                    changes.append(ChangeItem(
-                        field="snort_rules",
+                    additional_changes.append(ChangeItem(
+                        field="snort_rule",
                         field_name="Snort 규칙",
                         action="add",
                         detail_type="detailed",
                         items=snort_items,
-                        summary=f"Snort 규칙 {len(new_cve.snort_rules)}개 추가됨"
+                        summary=f"Snort 규칙 {len(new_cve.snort_rule)}개 추가됨"
                     ))
                     
                     # Snort 규칙 개수 정보
-                    changes.append(ChangeItem(
-                        field="snort_rules_count",
+                    additional_changes.append(ChangeItem(
+                        field="snort_rule_count",
                         field_name="Snort 규칙 수",
-                        action="add",  
+                        action="context",  # 'add'에서 'context'로 변경
                         detail_type="simple",
-                        after=len(new_cve.snort_rules),
-                        summary=f"Snort 규칙 총 {len(new_cve.snort_rules)}개"
+                        after=len(new_cve.snort_rule),
+                        summary=f"Snort 규칙 총 {len(new_cve.snort_rule)}개"
                     ))
                 
-                await self.activity_service.create_activity(
+                # 활동 생성 - track_object_changes 사용
+                await self.activity_service.track_object_changes(
                     username=username,
                     action=ActivityAction.CREATE,
                     target_type=ActivityTargetType.CVE,
                     target_id=new_cve.cve_id,
-                    target_title=activity_title,  # CVE ID를 활동 타이틀로 사용
-                    changes=changes
+                    new_obj=new_cve.dict(),  # new_obj만 전달 (old_obj는 없음)
+                    target_title=new_cve.cve_id,  # CVE ID를 활동 타이틀로 사용
+                    additional_changes=additional_changes
                 )
                 
                 return new_cve
@@ -537,7 +577,6 @@ class CVEService:
         """
         CVE 정보를 업데이트합니다. 객체 변경 감지를 통한 활동 추적 사용.
         
-{{ ... }}
         Args:
             cve_id: 업데이트할 CVE ID
             update_data: 업데이트할 데이터 (dict 또는 PatchCVERequest)
@@ -577,17 +616,13 @@ class CVEService:
             # 업데이트된 CVE 가져오기
             updated_cve = await self.get_cve_detail(cve_id, as_model=False)
                 
-            # 객체 변경 감지를 이용한 활동 추적
-            excluded_fields = ['last_modified_at', '_id', 'id']
-            
-            # 추가 변경 사항 수집 - 변경 컸텍스트 정보 포함
+            # 추가 변경 사항 수집 - 변경 컨텍스트 정보 포함
             additional_changes = []
             
-            # 상태 문맵 정보
+            # 상태 정보 추가 (비교용)
             severity_val = updated_cve.get('severity') or existing_cve.severity
             status_val = updated_cve.get('status') or existing_cve.status
             
-            # 상태 정보 추가 (비교용)
             additional_changes.append(ChangeItem(
                 field="severity_context",
                 field_name="현재 심각도",
@@ -618,9 +653,9 @@ class CVEService:
             
             # 컬렉션 아이템 수량 정보 비교 추가
             collections = [
-                {"field": "pocs", "field_name": "PoC 수", "old": len(old_cve_dict.get('pocs', [])), "new": len(updated_cve.get('pocs', []))},
-                {"field": "references", "field_name": "참조문서 수", "old": len(old_cve_dict.get('references', [])), "new": len(updated_cve.get('references', []))},
-                {"field": "snort_rules", "field_name": "Snort 규칙 수", "old": len(old_cve_dict.get('snort_rules', [])), "new": len(updated_cve.get('snort_rules', []))}
+                {"field": "poc", "field_name": "PoC 수", "old": len(old_cve_dict.get('poc', [])), "new": len(updated_cve.get('poc', []))},
+                {"field": "reference", "field_name": "참조문서 수", "old": len(old_cve_dict.get('reference', [])), "new": len(updated_cve.get('reference', []))},
+                {"field": "snort_rule", "field_name": "Snort 규칙 수", "old": len(old_cve_dict.get('snort_rule', [])), "new": len(updated_cve.get('snort_rule', []))}
             ]
             
             for collection in collections:
@@ -644,7 +679,7 @@ class CVEService:
                 old_obj=old_cve_dict,
                 new_obj=updated_cve,
                 target_title=updated_cve.get('title') or existing_cve.title or cve_id,
-                ignore_fields=excluded_fields,
+                ignore_fields=['last_modified_at', '_id', 'id'],
                 additional_changes=additional_changes
             )
                     
@@ -676,15 +711,17 @@ class CVEService:
         current_time = get_utc_now()
         
         # 임베디드 필드에 시간 메타데이터 추가
-        for field in ["references", "pocs", "snort_rules"]:
+        for field in ["reference", "poc", "snort_rule"]:
             # 필드가 있고, None이 아니고, 비어있지 않은 경우만 처리
             if field in processed_data and processed_data[field] is not None:
                 # 빈 리스트가 아닌지 확인하고 처리
                 if isinstance(processed_data[field], list) and any(processed_data[field]):
                     # 빈 항목 필터링 (None이나 빈 dict 제거)
                     processed_data[field] = [item for item in processed_data[field] if item and isinstance(item, dict)]
-                    # 메타데이터 추가
-                    processed_data[field] = self._add_timestamp_metadata(processed_data[field], updated_by or "system", current_time)
+                    # 각 항목에 필수 필드 확인 및 추가
+                    processed_data[field] = [self._ensure_required_fields(item, updated_by or "system", current_time) for item in processed_data[field]]
+                    # 리스트의 각 항목에 메타데이터 추가
+                    processed_data[field] = [self._add_timestamp_metadata(item, updated_by or "system", current_time) for item in processed_data[field]]
         
         # 업데이트 시간 및 사용자 설정
         processed_data['last_modified_at'] = current_time
@@ -693,44 +730,48 @@ class CVEService:
         # 변경 이력 추가
         changes = self._extract_complex_changes(existing_cve, processed_data)
         if changes:
-            processed_data = self._add_modification_history(existing_cve, processed_data, changes, updated_by)
+            #processed_data = self._add_modification_history(existing_cve, processed_data, changes, updated_by)
+            pass
         
         return processed_data
 
-    def _add_modification_history(self, existing_cve: CVEModel, update_data: dict, changes: List[ChangeItem], updated_by: str) -> dict:
+    def _ensure_required_fields(self, item, username="system", timestamp=None):
         """
-        변경 이력을 업데이트 데이터에 추가
+        필수 필드가 누락된 경우 기본값을 설정합니다.
         
         Args:
-            existing_cve: 기존 CVE 모델
-            update_data: 업데이트 데이터
-            changes: 변경 사항 목록
-            updated_by: 업데이트한 사용자명
-            
+            item: 검사할 항목(dict)
+            username: 기본 사용자명
+            timestamp: 기본 타임스탬프 (None이면 현재 시간 사용)
+        
         Returns:
-            dict: 변경 이력이 추가된 업데이트 데이터
+            dict: 필수 필드가 추가된 항목
         """
-        # 변경 이력 데이터 생성
-        modification_history = ModificationHistory(
-            username=updated_by or "system",
-            modified_at=get_utc_now(),
-            changes=changes
-        )
+        if timestamp is None:
+            timestamp = get_utc_now()
         
-        # 기존 modification_history 불러오기
-        existing_history = existing_cve.dict().get("modification_history", [])
+        if not item:
+            return item
         
-        # 업데이트 데이터에 추가
-        update_data["modification_history"] = existing_history + [modification_history.dict()]
+        # 필수 필드 확인 및 추가
+        if "created_at" not in item or item["created_at"] is None:
+            item["created_at"] = timestamp
         
-        return update_data
-
-
+        if "created_by" not in item or item["created_by"] is None:
+            item["created_by"] = username
+        
+        if "last_modified_at" not in item or item["last_modified_at"] is None:
+            item["last_modified_at"] = timestamp
+        
+        if "last_modified_by" not in item or item["last_modified_by"] is None:
+            item["last_modified_by"] = username
+        
+        return item
 
     def _extract_complex_changes(self, existing_cve: CVEModel, update_data: dict) -> List[ChangeItem]:
         """
         복잡한 변경 사항을 추출하는 유틸리티 메서드 (필드별 커스텀 처리)
-        주로 컬렉션 타입 필드(pocs, references, snort_rules)의 변경 사항을 추적
+        주로 컬렉션 타입 필드(poc, reference, snort_rule)의 변경 사항을 추적
         """
         # 필드별 한글 이름 매핑
         field_names = {
@@ -738,9 +779,9 @@ class CVEService:
             "description": "설명",
             "status": "상태",
             "severity": "심각도",
-            "pocs": "PoC",
-            "references": "참조문서",
-            "snort_rules": "Snort 규칙",
+            "poc": "PoC",
+            "reference": "참조문서",
+            "snort_rule": "Snort 룰",
             "notes": "노트",
             "assigned_to": "담당자"
         }
@@ -756,7 +797,7 @@ class CVEService:
                 field_name = field_names.get(field, field)
                 
                 # 필드 유형별로 변경 내역 기록 방식 다르게 처리
-                if field in ['pocs', 'references', 'snort_rules'] and isinstance(new_value, list):
+                if field in ['poc', 'reference', 'snort_rule'] and isinstance(new_value, list):
                     # 컬렉션 아이템 비교 로직
                     old_items = existing_cve.dict().get(field, [])
                     
@@ -783,7 +824,7 @@ class CVEService:
                             removed_items.append(old_item)
                     
                     # 아이템 필드 정보 보강
-                    if field == 'pocs':
+                    if field == 'poc':
                         added_items_detail = []
                         for item in added_items:
                             added_items_detail.append({
@@ -800,7 +841,7 @@ class CVEService:
                             })
                         added_items = added_items_detail
                         removed_items = removed_items_detail
-                    elif field == 'references':
+                    elif field == 'reference':
                         added_items_detail = []
                         for item in added_items:
                             added_items_detail.append({
@@ -817,7 +858,7 @@ class CVEService:
                             })
                         added_items = added_items_detail
                         removed_items = removed_items_detail
-                    elif field == 'snort_rules':
+                    elif field == 'snort_rule':
                         added_items_detail = []
                         for item in added_items:
                             added_items_detail.append({
@@ -903,63 +944,51 @@ class CVEService:
 
     def _is_same_item(self, item1, item2, item_type):
         """두 아이템이 동일한지 비교"""
-        if item_type == 'pocs':
+        if item_type == 'poc':
             return item1.get('url') == item2.get('url')
-        elif item_type == 'references':
+        elif item_type == 'reference':
             return item1.get('url') == item2.get('url')
-        elif item_type == 'snort_rules':
+        elif item_type == 'snort_rule':
             return item1.get('rule') == item2.get('rule')
         return False
         
-    def _add_timestamp_metadata(self, items, user, current_time=None):
-        """
-        객체 또는 컬렉션에 시간 및 사용자 메타데이터를 추가합니다.
+    def _add_timestamp_metadata(self, data: dict, username: str, timestamp: datetime) -> dict:
+        """CVE 데이터에 시간 메타데이터를 추가합니다."""
+        data["created_at"] = timestamp
+        data["updated_at"] = timestamp
+        data["created_by"] = username
+        data["updated_by"] = username
+        return data
+
+    def _process_embedded_fields(self, data: dict) -> dict:
+        """임베디드 필드를 처리하여 FieldInfo 객체를 적절히 변환합니다."""
+        processed_data = {}
         
-        Args:
-            items: 처리할 객체 또는 컬렉션
-            user: 사용자 정보
-            current_time: 현재 시간 (기본값은 현재 시간)
-            
-        Returns:
-            시간 메타데이터가 추가된 객체 또는 컬렉션
-        """
-        if not items:
-            return items
-            
-        if current_time is None:
-            current_time = get_utc_now()
-            
-        # 단일 객체인 경우
-        if isinstance(items, dict):
-            for field, default_value in {
-                "created_by": user,
-                "last_modified_by": user,
-                "created_at": current_time,
-                "last_modified_at": current_time
-            }.items():
-                # None 값이거나, 필드가 없거나, 값이 비어있는 경우 새 값 설정
-                if field not in items or items.get(field) is None or not items[field]:
-                    items[field] = default_value
-            return items
-            
-        # 컬렉션인 경우
-        for item in items:
-            if not isinstance(item, dict):
-                continue
+        for key, value in data.items():
+            # FieldInfo 객체 처리
+            if hasattr(value, '__class__') and value.__class__.__name__ == 'FieldInfo':
+                logger.debug(f"FieldInfo 객체 발견: {key}")
+                processed_data[key] = []
+            # 리스트 처리
+            elif isinstance(value, list):
+                # 리스트의 각 항목 재귀적 처리
+                processed_items = []
+                for item in value:
+                    if hasattr(item, '__class__') and item.__class__.__name__ == 'FieldInfo':
+                        logger.debug(f"리스트 내 FieldInfo 객체 발견: {key}")
+                        # FieldInfo는 빈 딕셔너리로 대체
+                        processed_items.append({})
+                    else:
+                        processed_items.append(item)
+                processed_data[key] = processed_items
+            # 딕셔너리 처리
+            elif isinstance(value, dict):
+                processed_data[key] = self._process_embedded_fields(value)
+            else:
+                processed_data[key] = value
                 
-            # 필수 필드 보장
-            for field, default_value in {
-                "created_by": user,
-                "last_modified_by": user,
-                "created_at": current_time,
-                "last_modified_at": current_time
-            }.items():
-                # None 값이거나, 필드가 없거나, 값이 비어있는 경우 새 값 설정
-                if field not in item or item.get(field) is None or not item[field]:
-                    item[field] = default_value
-                    
-        return items
-    
+        return processed_data
+
     # 데코레이터 패턴 적용 - CVE 삭제 (간단한 동작)
     @track_cve_activity(
         action=ActivityAction.DELETE,
@@ -1122,4 +1151,3 @@ class CVEService:
             raise
     
     # ==== 내부 댓글 관리 클래스 ====
-    
