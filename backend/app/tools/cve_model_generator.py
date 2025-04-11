@@ -32,6 +32,7 @@ def normalize_class_name(name):
     # 명시적 매핑 테이블 (단수형 키 사용)
     class_name_map = {
         "comment": "Comment",
+        "comments": "Comment",  # comments 필드도 Comment 클래스로 매핑
         "poc": "PoC",
         "reference": "Reference",
         "snort_rule": "SnortRule",
@@ -97,10 +98,12 @@ def generate_beanie_model():
                 }
                 print("기존 모델에서 메서드 추출 성공")
             else:
-                print("models.py 모듈을 찾을 수 없음 (메서드 추출 생략)")
+                print("models.py 모듈을 찾을 수 없음 - 기본 메서드로 생성합니다")
+                # 모듈이 없는 경우에도 진행, model_classes는 빈 딕셔너리로 유지
                 
         except (ImportError, AttributeError) as e:
-            print(f"기존 모델 클래스 임포트 실패 (메서드 추출 생략): {e}")
+            print(f"기존 모델 클래스 임포트 실패 - 기본 메서드로 생성합니다: {e}")
+            # 예외가 발생해도 진행, model_classes는 빈 딕셔너리로 유지
             
     except (ImportError, AttributeError) as e:
         print(f"CVESchemaDefinition 임포트 실패: {e}")
@@ -118,6 +121,55 @@ def generate_beanie_model():
             # 기존 클래스에서 메서드 추출 시도
             if normalized_name in model_classes:
                 methods_by_class[normalized_name] = extract_methods_from_model(model_classes[normalized_name])
+    
+    # 기본 메서드 추가 (특정 클래스에 대한 기본 메서드 정의)
+    # CVE 모델에 기본 메서드 추가
+    if 'CVE' not in methods_by_class:
+        methods_by_class['CVE'] = {
+            'to_dict': {
+                'source': """def to_dict(self) -> dict:
+    \"\"\"CVE 객체를 dictionary로 변환\"\"\"
+    result = self.model_dump(exclude={'id'})
+    result['id'] = str(self.id) if self.id else None
+    return result""",
+                'decorators': []
+            },
+            'check_author': {
+                'source': """def check_author(self, user_id: str) -> bool:
+    \"\"\"현재 사용자가 작성자인지 확인\"\"\"
+    return str(self.author_id) == user_id""",
+                'decorators': []
+            }
+        }
+    
+    # Reference 모델에 기본 메서드 추가
+    if 'Reference' not in methods_by_class:
+        methods_by_class['Reference'] = {
+            'to_dict': {
+                'source': """def to_dict(self) -> dict:
+    \"\"\"Reference 객체를 dictionary로 변환\"\"\"
+    return {
+        'name': self.name,
+        'url': self.url
+    }""",
+                'decorators': []
+            }
+        }
+    
+    # PoC 모델에 기본 메서드 추가
+    if 'PoC' not in methods_by_class:
+        methods_by_class['PoC'] = {
+            'to_dict': {
+                'source': """def to_dict(self) -> dict:
+    \"\"\"PoC 객체를 dictionary로 변환\"\"\"
+    return {
+        'title': self.title,
+        'code': self.code,
+        'language': self.language
+    }""",
+                'decorators': []
+            }
+        }
     
     # 임베디드 모델 의존성 그래프 생성 (ChangeItem과 같은 특수 케이스 처리)
     dependency_order = ["ChangeItem"]  # 특정 순서가 필요한 클래스

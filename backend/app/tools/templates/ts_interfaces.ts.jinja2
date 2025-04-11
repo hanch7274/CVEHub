@@ -49,7 +49,7 @@ export interface GeneratedCVEDetail extends BaseGeneratedModel {
   {% endfor %}
   
   /** 댓글 목록 */
-  comment?: Generated{{ "comment"|format_type_name }}[];
+  comments?: Generated{{ "comment"|format_type_name }}[];
   
   /** PoC 목록 */
   poc?: Generated{{ "poc"|format_type_name }}[];

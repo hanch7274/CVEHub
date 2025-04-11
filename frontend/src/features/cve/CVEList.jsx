@@ -56,7 +56,7 @@ import CVEDetail from './CVEDetail';
 import CrawlerUpdateButton from './components/CrawlerUpdateButton';
 import CreateCVE from './CreateCVE';
 import { useSnackbar } from 'notistack';
-import { useCVEDetail, useCVEList, useCVEListUpdates, useCVEStats, useTotalCVECount } from './hooks';
+import { useCVEDetail, useCVEList, useCVEListUpdates, useCVEStats } from './hooks';
 
 // 기본 폰트 스타일
 const fontStyles = {
@@ -203,7 +203,7 @@ const CVEDetailWrapper = ({ cveId, open, onClose }) => {
   return <CVEDetail cveId={cveId} open={open} onClose={onClose} />;
 };
 
-const StatisticsSection = React.memo(({ statsData, totalCVECount, theme }) => {
+const StatisticsSection = React.memo(({ statsData, totalCount, theme }) => {
   return (
     <Grid container spacing={2} sx={{ mb: 3 }}>
       <Grid item xs={12} sm={6} md={3}>
@@ -219,7 +219,7 @@ const StatisticsSection = React.memo(({ statsData, totalCVECount, theme }) => {
             전체 CVE
           </Typography>
           <Typography variant="h4" sx={{ fontWeight: 'bold', color: theme.palette.primary.main, my: 1 }}>
-            {totalCVECount}
+            {totalCount}
           </Typography>
           <Typography variant="body2" sx={{ color: theme.palette.text.secondary }}>등록된 취약점</Typography>
         </Card>
@@ -466,7 +466,7 @@ const CVETable = React.memo(({
   cves, 
   isLoading, 
   page, 
-  totalCVECount, 
+  totalCount, 
   rowsPerPage, 
   onPageChange, 
   onRowsPerPageChange, 
@@ -626,7 +626,7 @@ const CVETable = React.memo(({
       <TablePagination
         rowsPerPageOptions={[1, 5, 10, 25]}
         component="div"
-        count={totalCVECount} 
+        count={totalCount} 
         rowsPerPage={rowsPerPage}
         page={page - 1}
         onPageChange={onPageChange}
@@ -797,8 +797,8 @@ const CVEList = () => {
   // 실시간 업데이트 구독
   useCVEListUpdates(queryClient);
 
-  // 전체 CVE 개수 조회
-  const { data: totalCVECount = 0, isLoading: isTotalCountLoading } = useTotalCVECount();
+  // 전체 CVE 개수 조회 (주석 처리 - 테이블의 totalCount로 대체)
+  // const { data: totalCVECount = 0, isLoading: isTotalCountLoading } = useTotalCVECount();
 
   // 통계 데이터를 가져오는 쿼리
   const { data: backendStats, isLoading: isLoadingStats } = useCVEStats();
@@ -908,11 +908,11 @@ const CVEList = () => {
   
   // 통계 데이터 (백엔드 API 결과와 로컬 데이터 결합)
   const statsData = useMemo(() => {
-    // 백엔드 통계 데이터가 있으면 사용
+    // 백엔드 통계 데이터가 있으면 사용하되, totalCount는 항상 테이블 데이터와 동일하게 사용
     if (backendStats) {
       return {
-        totalCount,
-        ...backendStats
+        ...backendStats,
+        totalCount  // 테이블 데이터와 동일한 totalCount 사용 (중요)
       };
     }
     
@@ -921,7 +921,7 @@ const CVEList = () => {
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
     
     return {
-      totalCount,
+      totalCount,  // 테이블 데이터와 동일한 totalCount 사용 (중요)
       newLastWeekCount: cves.filter(cve => new Date(cve.createdAt) >= oneWeekAgo).length,
       highSeverityCount: cves.filter(cve => 
         cve.severity?.toLowerCase() === 'critical' || 
@@ -1114,7 +1114,7 @@ const CVEList = () => {
       
       <StatisticsSection 
         statsData={statsData} 
-        totalCVECount={totalCVECount} 
+        totalCount={totalCount} 
         theme={theme} 
       />
 
@@ -1149,7 +1149,7 @@ const CVEList = () => {
               cves={cves} 
               isLoading={isLoading} 
               page={page} 
-              totalCVECount={totalCount}
+              totalCount={totalCount}
               rowsPerPage={rowsPerPage}
               onPageChange={handlePageChange}
               onRowsPerPageChange={handleRowsPerPageChange}

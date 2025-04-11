@@ -1,0 +1,81 @@
+"""
+자동 생성된 Auth Beanie 모델 파일 - 직접 수정하지 마세요
+생성 시간: {{ generation_timestamp }}
+"""
+from typing import List, Optional, Dict, Any, Literal
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from beanie import Document, PydanticObjectId
+from pydantic import Field, BaseModel, EmailStr, validator
+from bson import ObjectId
+from app.common.models.base_models import BaseSchema, TimestampMixin, UserBaseMixin, BaseDocument
+
+# ---------- 유틸리티 함수 ----------
+
+def serialize_datetime(dt: datetime) -> str:
+    """날짜를 ISO 8601 형식의 문자열로 직렬화"""
+    return dt.replace(tzinfo=ZoneInfo("UTC")).isoformat().replace('+00:00', 'Z') if dt else None
+
+# ---------- 기본 요청/응답 스키마 모델 ----------
+
+{% for model in schema.user_models %}
+class {{ model.name }}({% for parent in model.inherits %}{{ parent }}{% if not loop.last %}, {% endif %}{% endfor %}):
+    """{{ model.name }} 모델{% if model.is_base %} - 기본 사용자 정보{% elif model.is_request %} - 요청 모델{% elif model.is_response %} - 응답 모델{% elif model.is_internal %} - 내부용 모델{% endif %}"""
+{% for field in model.fields %}
+    {{ field.name }}: {{ field.type }}{% if field.required %} = Field(..., description="{{ field.description }}"){% else %} = Field({{ field.default }}, description="{{ field.description }}"){% endif %}
+
+{% endfor %}
+{% if model.example %}
+    class Config:
+        json_schema_extra = {
+            "example": {{ model.example }}
+        }
+{% endif %}
+
+{% endfor %}
+# ---------- 토큰 관련 모델 ----------
+
+{% for model in schema.token_models %}
+class {{ model.name }}({% for parent in model.inherits %}{{ parent }}{% if not loop.last %}, {% endif %}{% endfor %}):
+    """{{ model.name }} 모델{% if model.is_request %} - 요청 모델{% elif model.is_response %} - 응답 모델{% elif model.is_internal %} - 내부용 모델{% endif %}"""
+{% for field in model.fields %}
+    {{ field.name }}: {{ field.type }}{% if field.required %} = Field(..., description="{{ field.description }}"){% else %} = Field({{ field.default }}, description="{{ field.description }}"){% endif %}
+
+{% endfor %}
+{% if model.example %}
+    class Config:
+        json_schema_extra = {
+            "example": {{ model.example }}
+        }
+{% endif %}
+
+{% endfor %}
+# ---------- 문서 모델 (데이터베이스 모델) ----------
+
+{% for model in schema.document_models %}
+class {{ model.name }}({{ model.inherits[0] }}):
+    """{{ model.name }} 문서 모델"""
+{% for field in model.fields %}
+    {{ field.name }}: {{ field.type }}{% if field.required %} = Field(..., description="{{ field.description }}"){% else %} = Field({{ field.default }}, description="{{ field.description }}"){% endif %}
+
+{% endfor %}
+    class Settings:
+        name = "{{ model.collection_name }}"
+        indexes = [
+{% for index in model.indexes %}
+            "{{ index.field }}"{% if not loop.last %},{% endif %}
+{% endfor %}
+        ]
+{% if model.methods %}
+
+{% for method in model.methods %}
+{% if method.is_property %}
+    @property
+{% endif %}
+    def {{ method.name }}(self){% if method.return_type %} -> {{ method.return_type }}{% endif %}:
+        """{{ method.docstring }}"""
+        {{ method.code }}
+{% endfor %}
+{% endif %}
+
+{% endfor %}

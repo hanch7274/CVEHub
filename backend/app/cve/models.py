@@ -1,6 +1,6 @@
 """
 자동 생성된 Beanie 모델 파일 - 직접 수정하지 마세요
-생성 시간: 2025-04-09 02:53:22
+생성 시간: 2025-04-11 18:22:52
 """
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
@@ -41,9 +41,9 @@ class Reference(BaseModel):
     type: str = Field(default="OTHER", description="참조 타입")
     description: Optional[str] = Field(None, description="참조 설명")
     created_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="생성 시간")
-    created_by: str = Field(default="system", description="추가한 사용자")
+    created_by: str = Field(..., description="추가한 사용자")
     last_modified_at: datetime = Field(default=lambda: datetime.now(ZoneInfo("UTC")), description="마지막 수정 시간")
-    last_modified_by: str = Field(default="system", description="마지막 수정자")
+    last_modified_by: str = Field(..., description="마지막 수정자")
     
     class Config:
         json_encoders = {
@@ -118,7 +118,7 @@ class CVEModel(BaseDocument):
     nuclei_hash: Optional[str] = Field(default=None, description="Nuclei 템플릿 해시")
     
     # 임베디드 필드
-    comment: List[Comment] = Field(default=[])
+    comments: List[Comment] = Field(default=[])
     poc: List[PoC] = Field(default=[])
     snort_rule: List[SnortRule] = Field(default=[])
     reference: List[Reference] = Field(default=[])
@@ -146,7 +146,3 @@ class CVEModel(BaseDocument):
         unique_indexes = [
             [("cve_id", 1)]
         ]
-
-# 리팩토링 호환성을 위한 임시 별칭 - ChangeItem을 ModificationHistory로도 참조 가능하게 함
-# 향후 코드 정리 시 이 별칭은 제거하고 모든 참조를 ChangeItem으로 통일 필요
-ModificationHistory = ChangeItem

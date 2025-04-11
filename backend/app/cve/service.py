@@ -309,6 +309,38 @@ class CVEService:
                 # id 필드가 없는 경우 cve_id 값을 사용
                 cve_dict['id'] = cve_dict['cve_id']
             
+            # 댓글 정보 조회 및 추가
+            try:
+                # 댓글 서비스 인스턴스 확인
+                if self.comments:
+                    # 댓글 조회
+                    comments_data = await self.comments.get_comments(cve_id)
+                    # 결과에 댓글 추가 ('comments' 필드명으로 통일)
+                    cve_dict['comments'] = comments_data
+                    logger.debug(f"CVE {cve_id}에 {len(comments_data)} 개의 댓글을 추가했습니다.")
+                    
+                    # 기존 'comment' 필드가 있는 경우에도 'comments' 필드로 복사
+                    if 'comment' in cve_dict and isinstance(cve_dict['comment'], list) and not cve_dict['comments']:
+                        logger.debug(f"기존 comment 필드의 데이터를 comments 필드로 복사합니다.")
+                        cve_dict['comments'] = cve_dict['comment']
+                else:
+                    logger.warning(f"댓글 서비스 인스턴스가 없어 CVE {cve_id}의 댓글을 조회할 수 없습니다.")
+                    cve_dict['comments'] = []
+            except Exception as comment_err:
+                # 댓글 조회 오류가 발생해도 CVE 정보는 반환
+                logger.error(f"CVE {cve_id}의 댓글 조회 중 오류 발생: {str(comment_err)}")
+                logger.error(traceback.format_exc())
+                # 빈 댓글 배열 추가
+                cve_dict['comments'] = []
+                
+            # 필드명 일관성 보장: comment는 비워두지 않고 comments 데이터와 동기화
+            if 'comment' in cve_dict and ('comments' not in cve_dict or not cve_dict['comments']):
+                logger.debug(f"comment 필드를 comments 필드와 동기화합니다.")
+                cve_dict['comments'] = cve_dict['comment']
+            elif 'comments' in cve_dict and ('comment' not in cve_dict or not cve_dict['comment']):
+                logger.debug(f"comments 필드를 comment 필드와 동기화합니다.")
+                cve_dict['comment'] = cve_dict['comments']
+            
             return cve_dict
             
         except Exception as e:

@@ -60,18 +60,7 @@ class CVESchemaDefinition(SchemaDefinition):
             "last_modified_at": ("datetime", "마지막 수정 시간", "lambda: datetime.now(ZoneInfo(\"UTC\"))", True, "2023-01-01T12:00:00Z"),
             "last_modified_by": ("str", "마지막 수정자", None, True, "admin"),
         },
-        "comment": {
-            "id": ("str", "댓글 ID", "lambda: str(ObjectId())", True, "507f1f77bcf86cd799439011"),
-            "content": ("str", "댓글 내용", None, True, "이 취약점의 영향 범위는..."),
-            "created_by": ("str", "작성자 이름", None, True, "admin"),
-            "parent_id": ("Optional[str]", "부모 댓글 ID", "None", False, "507f1f77bcf86cd799439011"),
-            "depth": ("int", "댓글 깊이", "0", False, 0),
-            "is_deleted": ("bool", "삭제 여부", "False", False, False),
-            "created_at": ("datetime", "생성 시간", "lambda: datetime.now(ZoneInfo(\"UTC\"))", True, "2023-01-01T12:00:00Z"),
-            "last_modified_at": ("Optional[datetime]", "마지막 수정 시간", None, False, "2023-01-01T13:00:00Z"),
-            "last_modified_by": ("Optional[str]", "마지막 수정자", None, False, "admin"),
-            "mentions": ("List[str]", "멘션된 사용자 목록", "[]", False, ["@user1", "@user2"]),
-        },
+        # comment 모델은 comment_schema.py에서 정의됨 - 모듈화 유지
         "change_item": {
             "field": ("str", "변경된 필드명", None, True, "title"),
             "field_name": ("str", "필드의 한글명", None, True, "제목"),

@@ -1,6 +1,6 @@
 """
 자동 생성된 Comment 모델 파일 - 직접 수정하지 마세요
-생성 시간: 2025-04-09 02:53:23
+생성 시간: 2025-04-11 18:22:52
 """
 from typing import List, Optional
 from datetime import datetime

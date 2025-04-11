@@ -152,6 +152,31 @@ export const handleCVECreated = (queryClient: QueryClient, newCve: any) => {
     refetchType: 'active'
   });
   
+  // 통계 데이터 쿼리도 함께 무효화
+  queryClient.invalidateQueries({ 
+    queryKey: QUERY_KEYS.CVE.stats(),
+    refetchType: 'active'
+  });
+  
+  // 통계 데이터 강제 리패치 (staleTime 무시)
+  queryClient.refetchQueries({
+    queryKey: QUERY_KEYS.CVE.stats(),
+    type: 'active',
+    exact: true
+  });
+  
+  // 전체 CVE 개수 쿼리도 함께 무효화 및 리패치
+  queryClient.invalidateQueries({ 
+    queryKey: QUERY_KEYS.CVE.totalCount(),
+    refetchType: 'active'
+  });
+  
+  queryClient.refetchQueries({
+    queryKey: QUERY_KEYS.CVE.totalCount(),
+    type: 'active',
+    exact: true
+  });
+  
   logger.debug('handleCVECreated', `CVE 생성 이벤트(${eventId}) 처리 완료`, {
     cveId: newCve?.id || newCve?.cveId || newCve?.cve_id
   });
@@ -202,6 +227,25 @@ export const handleCVEUpdated = (queryClient: QueryClient, updatedCve: any) => {
     });
   }
   
+  // 통계 데이터 강제 리패치 (staleTime 무시)
+  queryClient.refetchQueries({
+    queryKey: QUERY_KEYS.CVE.stats(),
+    type: 'active',
+    exact: true
+  });
+  
+  // 전체 CVE 개수 쿼리도 함께 무효화 및 리패치
+  queryClient.invalidateQueries({ 
+    queryKey: QUERY_KEYS.CVE.totalCount(),
+    refetchType: 'active'
+  });
+  
+  queryClient.refetchQueries({
+    queryKey: QUERY_KEYS.CVE.totalCount(),
+    type: 'active',
+    exact: true
+  });
+
   // 상세 정보 캐시 업데이트
   if (updatedCveId) {
     queryClient.setQueryData(
@@ -256,6 +300,31 @@ export const handleCVEDeleted = (queryClient: QueryClient, deletedCve: any) => {
   queryClient.invalidateQueries({ 
     queryKey: QUERY_KEYS.CVE.lists(),
     refetchType: 'active'
+  });
+  
+  // 통계 데이터 쿼리도 함께 무효화
+  queryClient.invalidateQueries({ 
+    queryKey: QUERY_KEYS.CVE.stats(),
+    refetchType: 'active'
+  });
+  
+  // 통계 데이터 강제 리패치 (staleTime 무시)
+  queryClient.refetchQueries({
+    queryKey: QUERY_KEYS.CVE.stats(),
+    type: 'active',
+    exact: true
+  });
+  
+  // 전체 CVE 개수 쿼리도 함께 무효화 및 리패치
+  queryClient.invalidateQueries({ 
+    queryKey: QUERY_KEYS.CVE.totalCount(),
+    refetchType: 'active'
+  });
+  
+  queryClient.refetchQueries({
+    queryKey: QUERY_KEYS.CVE.totalCount(),
+    type: 'active',
+    exact: true
   });
   
   logger.debug('handleCVEDeleted', `CVE 삭제 이벤트(${eventId}) 처리 완료`, {

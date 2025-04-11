@@ -8,11 +8,13 @@ import {
   GeneratedPoC,
   GeneratedReference,
   GeneratedSnortRule,
-  GeneratedComment,
   GeneratedModificationHistory,
   GeneratedChangeItem,
   // 필요한 다른 생성된 타입들...
 } from './generated/cve';
+
+// GeneratedComment 타입 import
+import { GeneratedComment } from './generated/comment';
 
 // 다른 타입 파일에서 중복된 타입 임포트
 import { CommentProps as ImportedCommentProps } from './CommentTypes';

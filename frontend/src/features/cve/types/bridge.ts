@@ -4,11 +4,12 @@ import {
     GeneratedReference,
     GeneratedPoC,
     GeneratedSnortRule,
-    GeneratedComment,
     GeneratedModificationHistory,
     GeneratedChangeItem
   } from './generated/cve';
   
+import { GeneratedComment } from './generated/comment';
+
 // 타입 매핑 - 기존 필드명(snake_case)에서 자동 생성 타입(camelCase)으로의 브릿지
 // CVE 생성/업데이트 요청 시 humps 라이브러리에 의해 자동으로 snake_case로 변환됨
 

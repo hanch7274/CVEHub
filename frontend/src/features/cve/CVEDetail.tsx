@@ -707,36 +707,6 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
     };
   }, [propsCveId, open, handleCVEUpdated]);
 
-  // 오래된 데이터 자동 갱신 (한 번만 실행)
-  useEffect(() => {
-    if (!propsCveId || !open || !isFirstLoadRef.current) return;
-    
-    const lastVisitTimeKey = `lastVisitTime_${propsCveId}`;
-    const lastVisitTime = localStorage.getItem(lastVisitTimeKey);
-    const currentTime = Date.now();
-    const oneDay = 24 * 60 * 60 * 1000;
-    
-    // 마지막 방문 시간 기록
-    localStorage.setItem(lastVisitTimeKey, currentTime.toString());
-    
-    // 첫 로드 플래그 비활성화
-    isFirstLoadRef.current = false;
-    
-    // 오래된 데이터일 경우 자동 갱신
-    if (!lastVisitTime || currentTime - parseInt(lastVisitTime, 10) > oneDay) {
-      logger.debug('CVEDetail: 장시간 미방문, 데이터 자동 갱신 예약');
-      
-      const refreshTimer = setTimeout(() => {
-        if (!loading) {
-          refetchCveDetail()
-            .catch(error => logger.error('CVEDetail: 데이터 자동 갱신 실패', error));
-        }
-      }, 1500);
-      
-      return () => clearTimeout(refreshTimer);
-    }
-  }, [propsCveId, open, refetchCveDetail, loading]);
-
   // CVEDetail.tsx에서 구독 관리 로직 수정
   useEffect(() => {
     // 모달이 열려 있고, CVE ID가 있을 때만 실행

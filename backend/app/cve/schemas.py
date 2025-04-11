@@ -1,6 +1,6 @@
 """
 자동 생성된 API 스키마 파일 - 직접 수정하지 마세요
-생성 시간: 2025-04-09 02:53:22
+생성 시간: 2025-04-11 18:22:52
 """
 from typing import List, Optional, Dict, Any, Literal
 from datetime import datetime
@@ -203,7 +203,7 @@ class CVEDetailResponse(BaseSchema):
     reference: List[ReferenceResponse] = Field(default=[], description="참조 목록")
     poc: List[PoCResponse] = Field(default=[], description="PoC 목록")
     snort_rule: List[SnortRuleResponse] = Field(default=[], description="Snort 규칙 목록")
-    comment: List[CommentResponse] = Field(default=[], description="댓글 목록")
+    comments: List[CommentResponse] = Field(default=[], description="댓글 목록")
 
 class CVEOperationResponse(BaseSchema):
     """CVE 작업 결과 응답 모델"""

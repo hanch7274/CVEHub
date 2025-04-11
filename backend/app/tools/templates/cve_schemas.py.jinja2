@@ -119,7 +119,7 @@ class CVEDetailResponse(BaseSchema):
     reference: List[{{ normalize_class_name("reference") }}Response] = Field(default=[], description="참조 목록")
     poc: List[{{ normalize_class_name("poc") }}Response] = Field(default=[], description="PoC 목록")
     snort_rule: List[{{ normalize_class_name("snort_rule") }}Response] = Field(default=[], description="Snort 규칙 목록")
-    comment: List[{{ normalize_class_name("comment") }}Response] = Field(default=[], description="댓글 목록")
+    comments: List[{{ normalize_class_name("comment") }}Response] = Field(default=[], description="댓글 목록")
 
 class CVEOperationResponse(BaseSchema):
     """CVE 작업 결과 응답 모델"""

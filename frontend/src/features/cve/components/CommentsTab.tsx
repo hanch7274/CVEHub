@@ -142,15 +142,54 @@ const CommentsTab: React.FC<CommentsTabProps> = memo((props) => {
         handleCommentNotification(eventData);
       }
       
-      // 캐시 업데이트
+      // 캐시 업데이트 - 개선된 로직
       if (eventData?.data?.comments) {
+        // 현재 캐시된 데이터 확인
+        const currentData = queryClient.getQueryData<CVEDetailData>(queryKey);
+        
+        // 특별히 COMMENT_DELETED 이벤트인 경우, 이미 낙관적 업데이트가 적용된 상태라면
+        // 깜빡임 방지를 위해 캐시 업데이트 스킵 (중복 업데이트 방지)
+        if (eventName === SOCKET_EVENTS.COMMENT_DELETED && currentData?.comments) {
+          const deletedCommentId = eventData.deletedCommentId;
+          
+          // 이미 낙관적으로 업데이트된 상태인지 확인
+          const isAlreadyOptimisticallyUpdated = currentData.comments.some(
+            c => (c.id === deletedCommentId && c.isOptimistic) ||
+                 !currentData.comments.some(c => c.id === deletedCommentId)
+          );
+          
+          if (isAlreadyOptimisticallyUpdated) {
+            logger.info('CommentsTab: 이미 낙관적 업데이트가 적용됨, 소켓 업데이트 스킵', { 
+              eventName, deletedCommentId 
+            });
+            // 낙관적 업데이트 마커 제거만 수행
+            queryClient.setQueryData<CVEDetailData>(queryKey, (oldData) => {
+              if (!oldData?.comments) return oldData;
+              
+              const sanitizedComments = oldData.comments.map(comment => {
+                if (comment.isOptimistic) {
+                  const { isOptimistic, ...rest } = comment as any;
+                  return rest;
+                }
+                return comment;
+              });
+              
+              return { ...oldData, comments: sanitizedComments };
+            });
+            return;
+          }
+        }
+        
+        // 일반적인 캐시 업데이트 진행
         queryClient.setQueryData<CVEDetailData>(queryKey, (oldData) =>
           updateCommentsCache(oldData, eventData)
         );
+        
         // 댓글 수 업데이트
         const newActiveCount = (eventData.data.comments || []).filter((c: CommentData) => !c.isDeleted).length;
         onCommentCountChange?.(newActiveCount);
-      } else {
+      } else if (eventName !== SOCKET_EVENTS.COMMENT_DELETED) {
+        // COMMENT_DELETED가 아닌 이벤트에서만 캐시 무효화 고려
         // comments 데이터가 없으면 캐시 무효화 고려
         logger.warn(`Socket ${eventName}: comments 데이터 없음, 캐시 무효화`, { eventData });
         queryClient.invalidateQueries({ queryKey });
@@ -237,6 +276,14 @@ const CommentsTab: React.FC<CommentsTabProps> = memo((props) => {
 
   // 계층 구조로 정리된 댓글 목록
   const organizedComments = useMemo((): CommentData[] => {
+    // 댓글 목록 로깅 (디버깅 용도)
+    logger.info('CommentsTab: 댓글 데이터 상태', { 
+      cveId: cve.cveId,
+      commentsAvailable: Array.isArray(cve.comments),
+      commentsCount: Array.isArray(cve.comments) ? cve.comments.length : 0,
+      firstComment: Array.isArray(cve.comments) && cve.comments.length > 0 ? cve.comments[0] : null
+    });
+    
     return organizeComments(cve.comments); // undefined 방지
   }, [cve.comments, organizeComments]);
 

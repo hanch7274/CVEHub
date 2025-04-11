@@ -67,18 +67,6 @@ export function useCVESubscription(cveId: string) {
     const subscribersKey = [QUERY_KEYS.CVE_SUBSCRIBERS, cveId];
     let subscribers: Subscriber[] = queryClient.getQueryData(subscribersKey) || [];
     
-    // 없으면 로컬 스토리지에서 가져오기 (폴백)
-    if (!subscribers || subscribers.length === 0) {
-      try {
-        const storedSubscribers = localStorage.getItem(`cve_subscribers_${cveId}`);
-        if (storedSubscribers) {
-          subscribers = JSON.parse(storedSubscribers);
-        }
-      } catch (error) {
-        logger.error('useCVESubscription', '로컬 스토리지 구독자 정보 파싱 실패', error);
-      }
-    }
-    
     return subscribers;
   }, [cveId, queryClient]);
   

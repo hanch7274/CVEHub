@@ -10,6 +10,7 @@ import logging
 import traceback
 import asyncio
 from bson import ObjectId
+import re
 
 # 수정: 임포트 경로 변경
 from app.comment.models import Comment
@@ -317,21 +318,15 @@ class CommentService:
     async def delete_comment(self, cve_id: str, comment_id: str, username: str, permanent: bool = False) -> bool:
         """댓글을 삭제합니다."""
         try:
-            # 최적화: 필요한 정보만 조회
-            projection = {"comments.$": 1, "title": 1, "severity": 1, "status": 1}
+            # repository를 활용하여 댓글 조회 (직접 DB 접근 대신)
+            comments = await self.repository.get_comments(cve_id, include_deleted=True)
             
-            # MongoDB 투영(projection) 사용해 해당 댓글만 조회
-            cve = await CVEModel.find_one(
-                {"cve_id": cve_id, "comments.id": comment_id},
-                projection
-            )
+            # 댓글 ID로 해당 댓글 찾기
+            comment = next((c for c in comments if c.id == comment_id), None)
             
-            if not cve or not cve.comments:
+            if not comment:
                 logger.error(f"댓글을 찾을 수 없음: {comment_id}")
                 return False
-            
-            # 첫 번째 일치하는 댓글 (comments.$ 연산자 결과)
-            comment = cve.comments[0]
             
             # 권한 확인
             current_user = await User.find_one({"username": username})
@@ -348,6 +343,12 @@ class CommentService:
                 return False
             
             comment_content = comment.content
+            
+            # CVE 정보 조회 (활동 추적용)
+            cve_info = await self.repository.collection.find_one(
+                {"cve_id": {"$regex": f"^{re.escape(cve_id)}$", "$options": "i"}},
+                {"title": 1, "severity": 1, "status": 1}
+            )
             
             # repository의 delete_comment 메서드 사용
             result = await self.repository.delete_comment(cve_id, comment_id, permanent)
@@ -366,7 +367,7 @@ class CommentService:
                 comment_id,
                 ActivityAction.COMMENT_DELETE,
                 content=comment_content,
-                cve_title=cve.title,
+                cve_title=cve_info.get("title") if cve_info else cve_id,
                 permanent=permanent
             )
             

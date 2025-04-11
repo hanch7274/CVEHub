@@ -61,6 +61,14 @@ def main():
     except subprocess.CalledProcessError as e:
         print(f"❌ Comment 모델 및 스키마 생성 실패: {e}")
     
+    # Auth 모델 생성
+    print("\n5. Auth 모델 생성 중...")
+    try:
+        subprocess.run([sys.executable, "-m", "app.tools.auth_model_generator"], check=True)
+        print("✅ Auth 모델 생성 완료")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Auth 모델 생성 실패: {e}")
+    
     print("\n모든 코드 생성이 완료되었습니다!")
 
 if __name__ == "__main__":

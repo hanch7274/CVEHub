@@ -401,13 +401,6 @@ class SocketService implements ISocketIOService {
                     cveId,
                     subscribers: data.subscribers
                   });
-                  
-                  // 로컬 스토리지에도 저장
-                  try {
-                    localStorage.setItem(`cve_subscribers_${cveId}`, JSON.stringify(data.subscribers));
-                  } catch (e) {
-                    logger.error('SocketService', '구독자 목록 로컬 저장 실패', e);
-                  }
                 } 
                 // 현재 구독자가 있고, 구독자 수만 받았을 경우
                 else if (data.subscriber_count && data.username) {
@@ -427,13 +420,6 @@ class SocketService implements ISocketIOService {
                     const updatedSubscribers = [...subscribers, newSubscriber];
                     queryClient.setQueryData(subscribersKey, updatedSubscribers);
                     
-                    // 로컬 스토리지에도 저장
-                    try {
-                      localStorage.setItem(`cve_subscribers_${cveId}`, JSON.stringify(updatedSubscribers));
-                    } catch (e) {
-                      logger.error('SocketService', '구독자 목록 로컬 저장 실패', e);
-                    }
-                    
                     logger.debug('SocketService', `구독자 추가됨: ${data.username}`, {
                       cveId,
                       subscriberCount: updatedSubscribers.length
@@ -447,13 +433,6 @@ class SocketService implements ISocketIOService {
                     
                     if (updatedSubscribers.length !== subscribers.length) {
                       queryClient.setQueryData(subscribersKey, updatedSubscribers);
-                      
-                      // 로컬 스토리지에도 저장
-                      try {
-                        localStorage.setItem(`cve_subscribers_${cveId}`, JSON.stringify(updatedSubscribers));
-                      } catch (e) {
-                        logger.error('SocketService', '구독자 목록 로컬 저장 실패', e);
-                      }
                       
                       logger.debug('SocketService', `구독자 제거됨: ${data.username}`, {
                         cveId,
@@ -1593,35 +1572,9 @@ class SocketService implements ISocketIOService {
       // 로컬 스토리지에서 구독 정보 제거
       localStorage.removeItem(this.LOCAL_STORAGE_KEY);
       
-      // lastVisitTime 관련 데이터 정리
-      this._clearLastVisitTimes();
-      
-      logger.info('SocketService', '모든 구독 정보 및 방문 기록이 초기화되었습니다.');
+      logger.info('SocketService', '모든 구독 정보가 초기화되었습니다.');
     } catch (error) {
       logger.error('SocketService', '구독 정보 초기화 중 오류 발생', error);
-    }
-  }
-
-  // lastVisitTime_ 로 시작하는 로컬 스토리지 키 삭제
-  private _clearLastVisitTimes(): void {
-    try {
-      // 로컬 스토리지에서 lastVisitTime_ 으로 시작하는 모든 키 찾기
-      const keysToRemove: string[] = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith('lastVisitTime_')) {
-          keysToRemove.push(key);
-        }
-      }
-      
-      // 찾은 키 모두 삭제
-      keysToRemove.forEach(key => {
-        localStorage.removeItem(key);
-      });
-      
-      logger.info('SocketService', `${keysToRemove.length}개의 방문 기록이 삭제되었습니다.`);
-    } catch (error) {
-      logger.error('SocketService', '방문 기록 정리 중 오류 발생', error);
     }
   }
 
@@ -1633,39 +1586,7 @@ class SocketService implements ISocketIOService {
     if (!accessToken) {
       this.clearAllSubscriptions();
     }
-    // 로그인 상태에서도 30일 이상 지난 방문 기록은 정리
-    this._clearOldVisitTimes();
   };
-
-  // 30일 이상 지난 방문 기록만 정리
-  private _clearOldVisitTimes(): void {
-    try {
-      const now = Date.now();
-      const thirtyDays = 30 * 24 * 60 * 60 * 1000; // 30일을 밀리초로 변환
-      
-      const keysToRemove: string[] = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith('lastVisitTime_')) {
-          const timestamp = parseInt(localStorage.getItem(key) || '0', 10);
-          if (isNaN(timestamp) || now - timestamp > thirtyDays) {
-            keysToRemove.push(key);
-          }
-        }
-      }
-      
-      // 찾은 키 모두 삭제
-      keysToRemove.forEach(key => {
-        localStorage.removeItem(key);
-      });
-      
-      if (keysToRemove.length > 0) {
-        logger.info('SocketService', `${keysToRemove.length}개의 오래된 방문 기록이 삭제되었습니다.`);
-      }
-    } catch (error) {
-      logger.error('SocketService', '오래된 방문 기록 정리 중 오류 발생', error);
-    }
-  }
 }
 
 // 싱글톤 인스턴스 생성

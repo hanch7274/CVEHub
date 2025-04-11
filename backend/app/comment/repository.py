@@ -150,17 +150,36 @@ class CommentRepository:
             bool: 삭제 성공 여부
         """
         try:
-            # 쿼리 조건 설정 (대소문자 구분 없음)
+            # ID 처리 - ObjectId 변환 시도
+            try:
+                # ObjectId로 변환 가능한지 확인 (MongoDB ID 형식인 경우)
+                if ObjectId.is_valid(comment_id):
+                    object_id = ObjectId(comment_id)
+                    # ID가 ObjectId 형식이면 두 가지 경우를 모두 검색
+                    comment_id_condition = {
+                        "$in": [comment_id, str(object_id), object_id]
+                    }
+                else:
+                    # 일반 문자열 ID
+                    comment_id_condition = comment_id
+            except:
+                # 변환 불가능하면 문자열 그대로 사용
+                comment_id_condition = comment_id
+
+            # 쿼리 조건 설정 (대소문자 구분 없음 + ID 형식 유연화)
             query = {
                 "cve_id": {"$regex": f"^{re.escape(cve_id)}$", "$options": "i"},
-                "comments.id": comment_id
+                "comments.id": comment_id_condition
             }
+            
+            # 추가 디버깅 로그
+            logger.debug(f"댓글 삭제 쿼리: {query}")
             
             if permanent:
                 # 영구 삭제 (pull)
                 result = await self.collection.update_one(
                     query,
-                    {"$pull": {"comments": {"id": comment_id}}}
+                    {"$pull": {"comments": {"id": comment_id_condition}}}
                 )
             else:
                 # 논리적 삭제 (is_deleted = True)
@@ -170,9 +189,32 @@ class CommentRepository:
                 )
             
             if result.matched_count == 0:
-                logger.warning(f"댓글 삭제 실패: CVE 또는 댓글을 찾을 수 없음 (CVE: {cve_id}, 댓글: {comment_id})")
-                return False
+                # 일치하는 문서가 없을 경우 더 넓은 조건으로 재시도
+                logger.warning(f"정확한 ID 매치 실패, 문자열 기반으로 재시도: {comment_id}")
                 
+                # 두 번째 시도: comments 배열을 모두 조회한 후 ID만 비교 (MongoDB의 $elemMatch 사용)
+                fallback_query = {
+                    "cve_id": {"$regex": f"^{re.escape(cve_id)}$", "$options": "i"},
+                    "comments": {"$elemMatch": {"id": {"$regex": f"^{re.escape(comment_id)}$", "$options": "i"}}}
+                }
+                
+                if permanent:
+                    result = await self.collection.update_one(
+                        fallback_query,
+                        {"$pull": {"comments": {"id": {"$regex": f"^{re.escape(comment_id)}$", "$options": "i"}}}}
+                    )
+                else:
+                    # 모든 comments를 가져와서 일치하는 ID를 찾아 업데이트
+                    # 여기서는 첫 번째 일치하는 항목만 업데이트됨
+                    result = await self.collection.update_one(
+                        fallback_query,
+                        {"$set": {"comments.$.is_deleted": True}}
+                    )
+                
+                if result.matched_count == 0:
+                    logger.warning(f"댓글 삭제 실패: CVE 또는 댓글을 찾을 수 없음 (CVE: {cve_id}, 댓글: {comment_id})")
+                    return False
+            
             delete_type = "영구 삭제" if permanent else "논리적 삭제"
             logger.info(f"댓글 {delete_type} 성공: {comment_id} (CVE: {cve_id})")
             return True

@@ -65,13 +65,6 @@ const WebSocketQueryBridge: React.FC = () => {
     // 기존 구독자 정보 로드
     const subscribersKey = [QUERY_KEYS.CVE_SUBSCRIBERS, cveId];
     
-    // 로컬 스토리지에도 저장
-    try {
-      localStorage.setItem(`cve_subscribers_${cveId}`, JSON.stringify(subscribers));
-    } catch (error) {
-      logger.error('WebSocketQueryBridge', '구독자 정보 저장 중 오류 발생', error);
-    }
-    
     // 쿼리 클라이언트에 저장
     queryClient.setQueryData(subscribersKey, subscribers);
     logger.debug('WebSocketQueryBridge', `CVE ${cveId}의 구독자 정보 업데이트`, { subscribers });

@@ -15,6 +15,7 @@ from app.core.dependencies import get_comment_service
 from app.cve.service import CVEService
 from app.core.dependencies import get_cve_service
 from app.core.config import get_settings
+from app.cve.schemas import CVEDetailResponse
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -89,7 +90,7 @@ def comment_api_error_handler(func):
     return wrapper
 
 
-@router.post("/{cve_id}/comments", response_model=Dict[str, str])
+@router.post("/{cve_id}/comments", response_model=CVEDetailResponse)
 @comment_api_error_handler
 async def create_comment(
     cve_id: str,
@@ -109,17 +110,42 @@ async def create_comment(
     # 댓글 생성
     comment_id = await comment_service.create_comment(cve_id, comment_dict)
     
-    if not comment_id:
-        message = f"댓글 생성 실패: CVE ID {cve_id}를 찾을 수 없거나 댓글을 추가할 수 없습니다."
-        logger.error(message)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+    # 멘션 처리 (있는 경우)
+    if comment_data.mentions and len(comment_data.mentions) > 0:
+        logger.info(f"댓글에서 멘션 감지: {comment_data.mentions}")
+        try:
+            message = f"{current_user.display_name or current_user.username}님이 댓글에서 회원님을 멘션했습니다."
+            await comment_service.process_mentions(
+                cve_id, 
+                comment_id, 
+                comment_data.content, 
+                comment_data.mentions, 
+                current_user.username, 
+                message
+            )
+        except Exception as e:
+            # 멘션 처리 실패는 댓글 생성 실패로 이어지지 않음
+            message = f"멘션 처리 중 오류 발생: {str(e)}"
+            logger.error(message)
+    
+    # 업데이트된 CVE 상세 정보 조회
+    updated_cve = await cve_service.get_cve_detail(cve_id, current_user.username)
+    
+    # 응답 검증 및 로깅
+    if settings.DEBUG:
+        if not hasattr(updated_cve, 'comments'):
+            logger.error(f"응답 검증 실패: CVE 데이터에 comments 필드가 없음")
+            logger.debug(f"응답 데이터: {updated_cve}")
+        else:
+            comment_count = len(updated_cve.comments) if updated_cve.comments else 0
+            logger.debug(f"응답 검증 성공: {comment_count}개의 댓글 포함됨")
     
     # CVE 캐시 무효화 (백그라운드 작업)
     if background_tasks:
         background_tasks.add_task(cve_service.invalidate_cve_cache, cve_id)
     
     logger.info(f"댓글 생성 성공: {comment_id}")
-    return {"comment_id": comment_id, "message": "댓글이 성공적으로 생성되었습니다."}
+    return updated_cve
 
 
 @router.put("/{cve_id}/comments/{comment_id}", response_model=Dict[str, str])

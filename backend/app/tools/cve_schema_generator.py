@@ -47,9 +47,15 @@ def generate_api_schemas():
     # CVESchemaDefinition 동적 임포트
     try:
         cve_schema_module = importlib.import_module('app.schemas.cve_schema')
-        schema = cve_schema_module.CVESchemaDefinition()
+        cve_schema = cve_schema_module.CVESchemaDefinition()
+        
+        # 댓글 스키마 동적 임포트
+        comment_schema_module = importlib.import_module('app.schemas.comment_schema')
+        comment_schema = comment_schema_module.CommentSchemaDefinition()
+        
+        print("CVE와 댓글 스키마 모듈 임포트 성공")
     except (ImportError, AttributeError) as e:
-        print(f"CVESchemaDefinition 임포트 실패: {e}")
+        print(f"스키마 모듈 임포트 실패: {e}")
         return
     
     # 템플릿에 클래스명 변환 함수 제공
@@ -57,9 +63,20 @@ def generate_api_schemas():
     
     template = env.get_template("cve_schemas.py.jinja2")
     
+    # 댓글 스키마 참조 형태로 통합 (embedded_models에 추가)
+    combined_embedded_models = cve_schema.embedded_models.copy()
+    if 'comment' not in combined_embedded_models:  # comment가 이미 있는지 확인
+        combined_embedded_models['comment'] = comment_schema.fields
+    
+    # 추가 설정 - comments 필드를 별도 참조하도록 설정
+    additional_fields = {
+        "comments": ("List[CommentResponse]", "댓글 목록", "[]", False, [], "comment")
+    }
+    
     output = template.render(
-        fields=schema.fields,
-        embedded_models=schema.embedded_models,
+        fields=cve_schema.fields,
+        embedded_models=combined_embedded_models,
+        additional_fields=additional_fields,
         generation_timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     )
     

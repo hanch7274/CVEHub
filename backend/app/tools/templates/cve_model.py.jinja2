@@ -118,7 +118,7 @@ class CVEModel(BaseDocument):
     nuclei_hash: Optional[str] = Field(default=None, description="Nuclei 템플릿 해시")
     
     # 임베디드 필드
-    comment: List[Comment] = Field(default=[])
+    comments: List[Comment] = Field(default=[])
     poc: List[PoC] = Field(default=[])
     snort_rule: List[SnortRule] = Field(default=[])
     reference: List[Reference] = Field(default=[])

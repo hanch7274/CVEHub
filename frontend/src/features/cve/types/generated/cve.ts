@@ -1,10 +1,13 @@
 /**
  * 자동 생성된 TypeScript 인터페이스 파일 - 직접 수정하지 마세요
- * 생성 시간: 2025-04-09 02:53:22
+ * 생성 시간: 2025-04-11 18:22:52
  */
 
+// 댓글 타입 import
+import { GeneratedComment } from './comment';
+
 // 베이스 모델 정의
-interface BaseGeneratedModel {
+export interface BaseGeneratedModel {
   [key: string]: unknown;
 }
 
@@ -28,6 +31,7 @@ export interface GeneratedReference extends BaseGeneratedModel {
   /** 마지막 수정자 */
   lastModifiedBy: string;
 }
+
 /**
  * PoC 인터페이스
  * @description Proof of Concept 코드
@@ -48,6 +52,7 @@ export interface GeneratedPoC extends BaseGeneratedModel {
   /** 마지막 수정자 */
   lastModifiedBy: string;
 }
+
 /**
  * SnortRule 인터페이스
  * @description Snort 침입 탐지 규칙
@@ -68,32 +73,7 @@ export interface GeneratedSnortRule extends BaseGeneratedModel {
   /** 마지막 수정자 */
   lastModifiedBy: string;
 }
-/**
- * Comment 인터페이스
- * @description CVE 관련 댓글
- */
-export interface GeneratedComment extends BaseGeneratedModel {
-  /** 댓글 ID */
-  id: string;
-  /** 댓글 내용 */
-  content: string;
-  /** 작성자 이름 */
-  createdBy: string;
-  /** 부모 댓글 ID */
-  parentId?: string;
-  /** 댓글 깊이 */
-  depth?: number;
-  /** 삭제 여부 */
-  isDeleted?: boolean;
-  /** 생성 시간 */
-  createdAt: string | Date;
-  /** 마지막 수정 시간 */
-  lastModifiedAt?: string | Date;
-  /** 마지막 수정자 */
-  lastModifiedBy?: string;
-  /** 멘션된 사용자 목록 */
-  mentions?: Array<string>;
-}
+
 /**
  * ChangeItem 인터페이스
  * @description 변경 항목
@@ -167,7 +147,7 @@ export interface GeneratedCVEDetail extends BaseGeneratedModel {
   nucleiHash?: string;
   
   /** 댓글 목록 */
-  comment?: GeneratedComment[];
+  comments?: GeneratedComment[];
   
   /** PoC 목록 */
   poc?: GeneratedPoC[];
