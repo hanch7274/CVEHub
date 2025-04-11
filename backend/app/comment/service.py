@@ -21,6 +21,8 @@ from app.activity.models import ActivityAction, ActivityTargetType, ChangeItem
 from app.activity.service import ActivityService
 from app.socketio.manager import socketio_manager, WSMessageType
 from app.comment.repository import CommentRepository
+from app.cve.repository import CVERepository
+from app.cve.service import CVEService
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -32,7 +34,12 @@ class CommentService:
         """CommentService 초기화"""
         self.repository = comment_repository
         self.activity_service = activity_service
-        self.cve_repository = cve_repository
+        
+        # CVE 정보 접근을 위한 저장소 및 서비스
+        self.cve_repository = cve_repository or CVERepository()
+        
+        # CVE 서비스 추가
+        self.cve_service = CVEService() if not cve_repository else None
         
     @staticmethod
     def comment_to_dict(comment: Comment) -> dict:
@@ -137,8 +144,7 @@ class CommentService:
                 {
                     "type": WSMessageType.COMMENT_COUNT_UPDATE,
                     "data": {"cve_id": cve_id, "count": count}
-                },
-                broadcast=True
+                }
             )
             logger.info(f"{cve_id}의 댓글 수 업데이트 전송: {count}")
         except Exception as e:
@@ -383,16 +389,39 @@ class CommentService:
             logger.error(traceback.format_exc())
             return []
     
+    async def _update_comment_socket(self, cve_id: str, comment_id: str, update_type: str = "default"):
+        """댓글 소켓 이벤트 메서드"""
+        try:
+            # 소켓 이벤트 발송 전에 최신 댓글 데이터 조회
+            comments = await self.get_comments(cve_id)
+            
+            # 소켓 이벤트 발송
+            await socketio_manager.emit(
+                event="comment_updated",
+                data={
+                    "cve_id": cve_id,
+                    "comment_id": comment_id,
+                    "type": update_type,
+                    "comments": comments  # 전체 댓글 목록 추가
+                },
+                room=f"cve_{cve_id.lower()}"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"댓글 업데이트 전송 중 오류: {str(e)}")
+            logger.error(traceback.format_exc())
+            return False
+    
     async def _track_comment_activity(self, 
-                                   username: str,
-                                   cve_id: str, 
-                                   comment_id: str,
-                                   activity_type: ActivityAction,
-                                   content: str = None,
-                                   old_content: str = None,
-                                   cve_title: str = None,
-                                   parent_id: str = None,
-                                   permanent: bool = False):
+                               username: str,
+                               cve_id: str, 
+                               comment_id: str,
+                               activity_type: ActivityAction,
+                               content: str = None,
+                               old_content: str = None,
+                               cve_title: str = None,
+                               parent_id: str = None,
+                               permanent: bool = False):
         """댓글 활동 추적을 위한 유틸리티 메서드 - 중복 코드 제거"""
         try:
             # 기본 메타데이터 설정
@@ -406,16 +435,41 @@ class CommentService:
             if permanent:
                 metadata["permanent"] = permanent
             
-            # CVE 정보가 없는 경우 조회
+            # CVE 정보가 없는 경우 조회 (수정된 부분)
             if not cve_title:
+                # 사용 가능한 방법으로 CVE 정보 가져오기
                 projection = {"title": 1, "severity": 1, "status": 1}
-                cve = await self.repository.find_by_cve_id_with_projection(cve_id, projection)
-                if cve:
-                    cve_title = cve.title or cve_id
-                    metadata.update({
-                        "severity": cve.severity,
-                        "status": cve.status
-                    })
+                cve = None
+                
+                # 방법 1: cve_repository가 있으면 직접 조회
+                if self.cve_repository:
+                    try:
+                        cve_dict = await self.cve_repository.find_by_cve_id_with_projection(cve_id, projection)
+                        if cve_dict:
+                            cve_title = cve_dict.get("title") or cve_id
+                            metadata.update({
+                                "severity": cve_dict.get("severity"),
+                                "status": cve_dict.get("status")
+                            })
+                    except Exception as e:
+                        logger.warning(f"CVE Repository 조회 실패, 대체 방법 시도: {str(e)}")
+                
+                # 방법 2: 없으면 CVE 서비스 사용
+                if not cve and self.cve_service:
+                    try:
+                        cve_dict = await self.cve_service.get_cve_detail(cve_id, as_model=False, projection=projection)
+                        if cve_dict:
+                            cve_title = cve_dict.get("title") or cve_id
+                            metadata.update({
+                                "severity": cve_dict.get("severity"),
+                                "status": cve_dict.get("status")
+                            })
+                    except Exception as e:
+                        logger.warning(f"CVE Service 조회 실패: {str(e)}")
+                
+                # 방법 3: 둘 다 실패하면 cve_id만 사용
+                if not cve_title:
+                    cve_title = cve_id
             
             # 활동 유형에 따른 변경 내역 생성
             changes = []
@@ -449,15 +503,14 @@ class CommentService:
                     summary=f"댓글 {permanent and '영구 ' or ''}삭제됨"
                 ))
             
-            # 활동 기록 생성
-            await self.activity_service.create_activity(
+            # 활동 기록 생성 (track_object_changes 메서드 사용)
+            await self.activity_service.track_object_changes(
                 username=username,
-                activity_type=activity_type,
+                action=activity_type,
                 target_type=ActivityTargetType.CVE,
                 target_id=cve_id,
                 target_title=cve_title or cve_id,
-                changes=changes,
-                metadata=metadata
+                additional_changes=changes
             )
             
             return True

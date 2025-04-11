@@ -166,7 +166,7 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
             return None
             
     @log_db_operation("CVE ID로 투영 조회")
-    async def find_by_cve_id_with_projection(self, cve_id: str, projection: Dict[str, Any]) -> Optional[CVEModel]:
+    async def find_by_cve_id_with_projection(self, cve_id: str, projection: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         CVE ID로 CVE를 조회하되, 지정된 필드만 가져옵니다.
         
@@ -175,7 +175,7 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
             projection: 가져올 필드 (MongoDB projection 형식)
             
         Returns:
-            Optional[CVEModel]: 조회된 CVE 모델 또는 None
+            Optional[Dict[str, Any]]: 조회된 CVE 데이터 딕셔너리 또는 None (모델로 변환하지 않음)
         """
         try:
             # 대소문자 구분 없이 검색 (MongoDB $regex 사용)
@@ -185,33 +185,16 @@ class CVERepository(BaseRepository[CVEModel, CreateCVERequest, PatchCVERequest])
             if not document:
                 return None
                 
-            try:
-                return CVEModel(**document)
-            except Exception as validation_error:
-                logger.error(f"CVE 모델 변환 중 검증 오류 (projection): {str(validation_error)}")
-                # 불완전한 모델을 handling하기 위한 추가 로직
-                # _id 필드는 항상 포함되는지 확인
-                if "_id" not in document and projection.get("_id", 1) != 0:
-                    document["_id"] = PydanticObjectId()
+            # _id 필드가 ObjectId 타입이면 문자열로 변환
+            if "_id" in document and isinstance(document["_id"], ObjectId):
+                document["_id"] = str(document["_id"])
                 
-                # 필수 필드가 없는 경우 기본값 추가
-                base_fields = {
-                    "cve_id": cve_id,
-                    "title": document.get("title", ""),
-                    "severity": document.get("severity", "Unknown"),
-                    "status": document.get("status", "Unknown")
-                }
+            # 기본 필드 추가
+            if "cve_id" not in document:
+                document["cve_id"] = cve_id
                 
-                # 누락된 필요 필드 추가
-                for field, default in base_fields.items():
-                    if field not in document:
-                        document[field] = default
-                
-                try:
-                    return CVEModel(**document)
-                except Exception as e:
-                    logger.error(f"CVE 모델 변환 재시도 실패: {str(e)}")
-                    return None
+            return document
+            
         except Exception as e:
             logger.error(f"CVE ID projection 조회 중 오류: {str(e)}")
             logger.error(traceback.format_exc())

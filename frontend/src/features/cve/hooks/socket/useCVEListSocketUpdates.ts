@@ -1,8 +1,9 @@
-// socket/useCVERealtimeUpdates.ts
+// socket/useCVEListSocketUpdates.ts
 import { useRef, useEffect } from 'react';
 import { useTimers } from '../utils/cveQueryUtils';
 import useCVESocket from './useCVESocket';
 import logger from 'shared/utils/logging';
+import { CVE_EVENTS } from 'core/socket/services/constants';
 
 /**
  * CVE 목록 실시간 업데이트 훅
@@ -53,9 +54,9 @@ export function useCVEListUpdates() {
       logger.info('useCVEListUpdates', 'CVE 업데이트 구독 요청 전송');
       
       // 이벤트 구독 설정
-      const unsubCreated = on('CVE_CREATED', onCVECreated);
-      const unsubUpdated = on('CVE_UPDATED', onCVEUpdated);
-      const unsubDeleted = on('CVE_DELETED', onCVEDeleted);
+      const unsubCreated = on(CVE_EVENTS.CVE_CREATED, onCVECreated);
+      const unsubUpdated = on(CVE_EVENTS.CVE_UPDATED, onCVEUpdated);
+      const unsubDeleted = on(CVE_EVENTS.CVE_DELETED, onCVEDeleted);
       
       // 서버에 구독 요청 전송
       subscribeCVEList();

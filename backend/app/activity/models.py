@@ -19,6 +19,9 @@ class ActivityAction(str):
     ASSIGN = "assign"  # 할당
     LOGIN = "login"    # 로그인
     LOGOUT = "logout"  # 로그아웃
+    COMMENT = "comment"  # 댓글 작성
+    COMMENT_UPDATE = "comment_update"  # 댓글 수정
+    COMMENT_DELETE = "comment_delete"  # 댓글 삭제
 
 class ActivityTargetType(str):
     """활동 대상 유형"""

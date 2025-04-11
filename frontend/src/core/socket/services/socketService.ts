@@ -27,9 +27,30 @@ import logger from 'shared/utils/logging';
 import { getAccessToken, getUser } from 'shared/utils/storage/tokenStorage';
 import useSocketStore, { socketActions } from '../state/socketStore';
 import { camelToSnake, snakeToCamel } from 'shared/utils/caseConverter';
+import { getQueryClient, QUERY_KEYS } from 'shared/utils/reactQuery';
 
 // 변환에서 제외할 필드 목록
 const EXCLUDED_FIELDS: string[] = ['id', 'uuid', 'created_at', 'updated_at', 'deleted_at'];
+
+// 구독 관련 이벤트에서 변환이 필요한 필드 매핑
+const SUBSCRIPTION_FIELD_MAPPINGS: Record<string, string> = {
+  'cve_id': 'cveId',
+  'cveId': 'cve_id',
+  'user_id': 'userId',
+  'userId': 'user_id',
+  'display_name': 'displayName',
+  'displayName': 'display_name',
+  'profile_image': 'profileImage',
+  'profileImage': 'profile_image'
+};
+
+// 변환 바이패스가 필요한 이벤트 목록
+const BYPASS_CONVERSION_EVENTS: string[] = [
+  SUBSCRIPTION_EVENTS.SUBSCRIBE_CVE,
+  SUBSCRIPTION_EVENTS.UNSUBSCRIBE_CVE,
+  SUBSCRIPTION_EVENTS.SUBSCRIPTION_STATUS,
+  SUBSCRIPTION_EVENTS.CVE_SUBSCRIBERS_UPDATED
+];
 
 // Socket.IO URL을 가져오는 함수
 const getSocketIOURL = (): string => {
@@ -132,6 +153,7 @@ class SocketService implements ISocketIOService {
     if (typeof window !== 'undefined') {
       window.addEventListener('online', this._handleOnlineStatus.bind(this));
       window.addEventListener('offline', this._handleOfflineStatus.bind(this));
+      window.addEventListener('beforeunload', this._handleBeforeUnload.bind(this));
     }
   }
 
@@ -338,6 +360,123 @@ class SocketService implements ISocketIOService {
       this._updateConnectionState(SOCKET_STATE.ERROR);
       socketActions.setConnectionError(error);
       this._notifyListeners(CONNECTION_EVENTS.CONNECT_ERROR, error);
+    });
+    
+    // 구독 상태 업데이트 이벤트 리스너 추가
+    this.socket.on(SUBSCRIPTION_EVENTS.SUBSCRIPTION_STATUS, (data: any) => {
+      try {
+        const cveId = data.cve_id;
+        const success = !!data.success;
+        const isSubscribed = !!data.subscribed;
+        
+        logger.info('SocketService', `구독 상태 업데이트 이벤트 수신: ${cveId}`, {
+          success,
+          isSubscribed,
+          data
+        });
+        
+        if (success) {
+          // 서버와 로컬 상태 동기화
+          if (isSubscribed) {
+            this.subscribedCVEs.add(cveId);
+          } else {
+            this.subscribedCVEs.delete(cveId);
+          }
+          
+          this._saveSubscribedCVEs();
+          this._notifySubscriptionChange();
+          
+          // 구독자 목록 정보 업데이트 (React Query 캐시)
+          if (data.subscribers || data.subscriber_count > 0) {
+            try {
+              const queryClient = getQueryClient();
+              if (queryClient) {
+                const subscribersKey = [QUERY_KEYS.CVE_SUBSCRIBERS, cveId];
+                const currentSubscribers = queryClient.getQueryData(subscribersKey) || [];
+                
+                // 서버에서 받은 구독자 목록이 있으면 업데이트
+                if (Array.isArray(data.subscribers) && data.subscribers.length > 0) {
+                  queryClient.setQueryData(subscribersKey, data.subscribers);
+                  logger.debug('SocketService', `구독자 목록 업데이트 (${data.subscribers.length}명)`, {
+                    cveId,
+                    subscribers: data.subscribers
+                  });
+                  
+                  // 로컬 스토리지에도 저장
+                  try {
+                    localStorage.setItem(`cve_subscribers_${cveId}`, JSON.stringify(data.subscribers));
+                  } catch (e) {
+                    logger.error('SocketService', '구독자 목록 로컬 저장 실패', e);
+                  }
+                } 
+                // 현재 구독자가 있고, 구독자 수만 받았을 경우
+                else if (data.subscriber_count && data.username) {
+                  // currentSubscribers를 타입 단언하여 배열로 취급
+                  const subscribers = currentSubscribers as Array<{ username: string; id?: string; userId?: string; displayName?: string; profileImage?: string }>;
+                  
+                  // 현재 사용자가 구독한 경우, 목록에 추가
+                  if (isSubscribed && data.username && !subscribers.some(s => s.username === data.username)) {
+                    const newSubscriber = {
+                      id: data.user_id || '',
+                      userId: data.user_id || '',
+                      username: data.username || '',
+                      displayName: data.display_name || data.username || '',
+                      profileImage: data.profile_image || '',
+                    };
+                    
+                    const updatedSubscribers = [...subscribers, newSubscriber];
+                    queryClient.setQueryData(subscribersKey, updatedSubscribers);
+                    
+                    // 로컬 스토리지에도 저장
+                    try {
+                      localStorage.setItem(`cve_subscribers_${cveId}`, JSON.stringify(updatedSubscribers));
+                    } catch (e) {
+                      logger.error('SocketService', '구독자 목록 로컬 저장 실패', e);
+                    }
+                    
+                    logger.debug('SocketService', `구독자 추가됨: ${data.username}`, {
+                      cveId,
+                      subscriberCount: updatedSubscribers.length
+                    });
+                  }
+                  // 현재 사용자가 구독 취소한 경우, 목록에서 제거
+                  else if (!isSubscribed && data.username) {
+                    const updatedSubscribers = subscribers.filter(
+                      s => s.username !== data.username
+                    );
+                    
+                    if (updatedSubscribers.length !== subscribers.length) {
+                      queryClient.setQueryData(subscribersKey, updatedSubscribers);
+                      
+                      // 로컬 스토리지에도 저장
+                      try {
+                        localStorage.setItem(`cve_subscribers_${cveId}`, JSON.stringify(updatedSubscribers));
+                      } catch (e) {
+                        logger.error('SocketService', '구독자 목록 로컬 저장 실패', e);
+                      }
+                      
+                      logger.debug('SocketService', `구독자 제거됨: ${data.username}`, {
+                        cveId,
+                        subscriberCount: updatedSubscribers.length
+                      });
+                    }
+                  }
+                }
+                
+                // 쿼리 무효화
+                queryClient.invalidateQueries({
+                  queryKey: subscribersKey,
+                  exact: true
+                });
+              }
+            } catch (error) {
+              logger.error('SocketService', '구독자 목록 업데이트 중 오류 발생', error);
+            }
+          }
+        }
+      } catch (error) {
+        logger.error('SocketService', '구독 상태 이벤트 처리 오류', error);
+      }
     });
   }
 
@@ -651,67 +790,112 @@ class SocketService implements ISocketIOService {
 
   // 데이터 케이스 변환 처리
   private _convertDataCasing(data: any, options?: SocketCaseConverterOptions): any {
-    if (!data) return data;
-    
+    // 기본 옵션 설정
     const direction = options?.direction || 'incoming';
     const converter = direction === 'outgoing' ? camelToSnake : snakeToCamel;
     const sourceName = options?.sourceName || '알 수 없는 소스';
+    const eventName = options?.eventName || '';
+    
+    // 구독 관련 이벤트는 특별 처리
+    const isSubscriptionEvent = BYPASS_CONVERSION_EVENTS.includes(eventName);
     
     // 디버깅: 변환 전 데이터 구조 로깅
     if (typeof data === 'object' && !Array.isArray(data)) {
       logger.debug('데이터 변환', `[${direction}] ${sourceName} - 변환 전:`, {
         keys: Object.keys(data),
         hasSubscribers: 'subscribers' in data,
-        hasCveId: 'cve_id' in data || 'cveId' in data,
-        originalData: data
+        hasCveId: 'cve_id' in data,
+        hasCveIdCamel: 'cveId' in data,
+        direction,
+        eventName,
+        isSubscriptionEvent
       });
     }
     
     try {
-      // 데이터 타입에 따라 변환 처리
-      if (typeof data === 'object') {
-        if (Array.isArray(data)) {
-          return data.map(item => this._convertDataCasing(item, {
-            ...options,
-            sourceName: `${sourceName}[배열항목]`
-          }));
-        } else {
-          const result: Record<string, any> = {};
-          
-          for (const key in data) {
-            if (Object.prototype.hasOwnProperty.call(data, key)) {
-              // 제외 필드인 경우 변환하지 않음
-              const shouldExclude = EXCLUDED_FIELDS.includes(key);
-              const newKey = shouldExclude ? key : converter(key);
-              
-              // 디버깅: 키 변환 과정 로깅 (필요한 경우 특정 필드만)
-              if (key === 'cve_id' || key === 'cveId' || key === 'subscribers' || 
-                  key === 'username' || key === 'user_id') {
-                logger.debug('키 변환', `[${direction}] ${key} -> ${newKey}`, {
-                  excluded: shouldExclude,
-                  sourceName
-                });
-              }
-              
-              result[newKey] = this._convertDataCasing(data[key], {
-                ...options, 
-                sourceName: `${sourceName}.${key}`
-              });
-            }
-          }
-          
-          // 디버깅: 변환 후 데이터 구조 로깅
-          logger.debug('데이터 변환', `[${direction}] ${sourceName} - 변환 후:`, {
-            keys: Object.keys(result),
-            hasSubscribers: 'subscribers' in result,
-            hasCveId: 'cve_id' in result || 'cveId' in result,
-            convertedData: result
-          });
-          
-          return result;
-        }
+      // null 처리
+      if (data === null) {
+        return null;
       }
       
+      // 데이터 타입에 따라 변환 처리
+      if (typeof data === 'object') {
+        // 배열 처리
+        if (Array.isArray(data)) {
+          return data.map(item => this._convertDataCasing(item, options));
+        }
+        
+        // 객체 처리
+        const result: Record<string, any> = {};
+        
+        for (const key in data) {
+          if (Object.prototype.hasOwnProperty.call(data, key)) {
+            // 구독 관련 이벤트에서 특정 필드 처리
+            if (isSubscriptionEvent && (key in SUBSCRIPTION_FIELD_MAPPINGS)) {
+              const mappedKey = SUBSCRIPTION_FIELD_MAPPINGS[key];
+              
+              // 방향에 따라 매핑된 키 또는 원래 키 사용
+              result[direction === 'outgoing' ? mappedKey : key] = data[key];
+              
+              // 디버깅 로그
+              logger.debug('데이터 변환', `구독 관련 필드 매핑 적용: ${key} → ${mappedKey}`, {
+                direction,
+                eventName,
+                originalKey: key,
+                mappedKey,
+                value: data[key]
+              });
+              
+              continue;
+            }
+            
+            // 변환에서 제외할 필드 확인
+            if (EXCLUDED_FIELDS.includes(key)) {
+              result[key] = data[key];
+              continue;
+            }
+            
+            // 일반 필드는 케이스 변환 적용
+            const convertedKey = converter(key);
+            
+            // 중첩된 객체나 배열은 재귀적으로 처리
+            if (typeof data[key] === 'object' && data[key] !== null) {
+              result[convertedKey] = this._convertDataCasing(data[key], options);
+            } else {
+              result[convertedKey] = data[key];
+            }
+          }
+        }
+        
+        // 구독 관련 이벤트에서 특정 필드 추가 처리 (양방향 호환성 보장)
+        if (isSubscriptionEvent && typeof data === 'object' && !Array.isArray(data)) {
+          // cve_id와 cveId 동시 지원
+          if ('cve_id' in data && !('cveId' in data)) {
+            result.cveId = data.cve_id;
+          } else if ('cveId' in data && !('cve_id' in data)) {
+            result.cve_id = data.cveId;
+          }
+          
+          // 디버깅: 구독 이벤트 특별 처리 로그
+          logger.debug('데이터 변환', `구독 관련 이벤트 특별 처리 적용`, {
+            eventName,
+            hasCveId: 'cve_id' in result,
+            hasCveIdCamel: 'cveId' in result
+          });
+        }
+        
+        // 디버깅: 변환 후 데이터 구조 로깅
+        logger.debug('데이터 변환', `[${direction}] ${sourceName} - 변환 후:`, {
+          keys: Object.keys(result),
+          hasSubscribers: 'subscribers' in result,
+          hasCveId: 'cve_id' in result || 'cveId' in result,
+          convertedData: result
+        });
+        
+        return result;
+      }
+      
+      // 객체나 배열이 아닌 경우 원래 값 반환
       return data;
     } catch (error) {
       logger.error('SocketService', '데이터 케이스 변환 중 오류 발생', error);
@@ -1054,59 +1238,111 @@ class SocketService implements ISocketIOService {
    * CVE 구독 요청
    * 
    * @param cveId - 구독할 CVE ID
+   * @param callback - 구독 요청 결과 콜백 함수 (선택 사항, 응답용이 아닌 요청 성공/실패 콜백용)
    */
-  subscribeCVE(cveId: string): void {
-    if (!cveId) return;
-    
-    logger.info('SocketService', `CVE 구독 요청: ${cveId}`);
-    
-    // 이미 구독중인 경우 중복 구독 방지
-    if (this.subscribedCVEs.has(cveId)) {
-      logger.info('SocketService', `이미 구독 중인 CVE입니다: ${cveId}`);
-      return;
+  subscribeCVE(cveId: string, callback?: (success: boolean, error?: string) => void): void {
+    try {
+      // 이미 구독 중인 경우 중복 요청 방지
+      if (this.subscribedCVEs.has(cveId)) {
+        logger.debug('SocketService', `이미 구독 중인 CVE: ${cveId}`);
+        callback?.(true); // 이미 구독 중이므로 성공으로 처리
+        return;
+      }
+      
+      // 연결 상태 확인
+      if (this.isConnected && this.socket) {
+        logger.info('SocketService', `CVE 구독 요청 전송: ${cveId}`, {
+          cveId,
+          cve_id: cveId, // 원본 형식과 변환 형식 모두 로깅
+          eventName: SUBSCRIPTION_EVENTS.SUBSCRIBE_CVE,
+          requestFormat: { cve_id: cveId }, // 서버가 기대하는 형식
+          timestamp: new Date().toISOString(),
+          connectionState: this._connectionState
+        });
+        
+        // 낙관적 UI 업데이트 (서버 응답 전 먼저 업데이트)
+        this.subscribedCVEs.add(cveId);
+        this._saveSubscribedCVEs();
+        this._notifySubscriptionChange();
+        
+        // 소켓을 통해 구독 요청 전송 (콜백 제거, 서버는 별도 이벤트로 응답)
+        this.socket?.emit(SUBSCRIPTION_EVENTS.SUBSCRIBE_CVE, { cve_id: cveId });
+        
+        // 요청 성공 콜백 호출
+        callback?.(true);
+      } else {
+        // 오프라인 상태면 나중에 재연결 시 처리할 수 있도록 보류 목록에 추가
+        this.pendingSubscriptions.add(cveId);
+        logger.warn('SocketService', `오프라인 상태에서 구독 요청 보류: ${cveId}`, {
+          connectionState: this._connectionState,
+          pendingCount: this.pendingSubscriptions.size
+        });
+        
+        // 오프라인 상태에서는 일단 성공으로 처리하고 재연결 시 처리
+        this.subscribedCVEs.add(cveId);
+        this._saveSubscribedCVEs();
+        this._notifySubscriptionChange();
+        
+        // 요청 성공 콜백 호출
+        callback?.(true);
+      }
+    } catch (error) {
+      logger.error('SocketService', `CVE 구독 중 오류 발생: ${cveId}`, error);
+      callback?.(false, '내부 오류 발생');
     }
-    
-    // 구독 상태에 추가
-    this.subscribedCVEs.add(cveId);
-    this._saveSubscribedCVEs();
-    
-    // 소켓이 연결된 경우에만 요청 전송
-    if (this.isSocketConnected()) {
-      // 디버깅: 백엔드에서 기대하는 형식(cve_id)으로 전송
-      this.socket?.emit(SOCKET_EVENTS.SUBSCRIBE_CVE, { cve_id: cveId });
-    } else {
-      // 연결되지 않은 경우 보류 목록에 추가
-      logger.info('SocketService', `소켓이 연결되지 않아 구독 요청을 보류합니다: ${cveId}`);
-      this.pendingSubscriptions.add(cveId);
-    }
-    
-    // 구독 상태 변경 이벤트 발행
-    this._notifySubscriptionChange();
   }
   
   /**
-   * CVE 구독 해제 요청
+   * CVE 구독 취소 요청
    * 
-   * @param cveId - 구독 해제할 CVE ID
+   * @param cveId - 구독 취소할 CVE ID
+   * @param callback - 구독 취소 요청 결과 콜백 함수 (선택 사항, 응답용이 아닌 요청 성공/실패 콜백용)
    */
-  unsubscribeCVE(cveId: string): void {
-    if (!cveId) return;
-    
-    logger.info('SocketService', `CVE 구독 해제 요청: ${cveId}`);
-    
-    // 구독 목록에서 제거
-    this.subscribedCVEs.delete(cveId);
-    this.pendingSubscriptions.delete(cveId);
-    this._saveSubscribedCVEs();
-    
-    // 소켓이 연결된 경우에만 요청 전송
-    if (this.isSocketConnected()) {
-      // 디버깅: 백엔드에서 기대하는 형식(cve_id)으로 전송
-      this.socket?.emit(SOCKET_EVENTS.UNSUBSCRIBE_CVE, { cve_id: cveId });
+  unsubscribeCVE(cveId: string, callback?: (success: boolean, error?: string) => void): void {
+    try {
+      // 구독 중이 아닌 경우 중복 요청 방지
+      if (!this.subscribedCVEs.has(cveId)) {
+        logger.debug('SocketService', `구독 중이 아닌 CVE: ${cveId}`);
+        callback?.(true); // 이미 구독 취소된 상태이므로 성공으로 처리
+        return;
+      }
+      
+      // 연결 상태 확인
+      if (this.isConnected && this.socket) {
+        logger.info('SocketService', `CVE 구독 취소 요청 전송: ${cveId}`, {
+          cveId,
+          cve_id: cveId, // 원본 형식과 변환 형식 모두 로깅
+          eventName: SUBSCRIPTION_EVENTS.UNSUBSCRIBE_CVE,
+          requestFormat: { cve_id: cveId }, // 서버가 기대하는 형식
+          timestamp: new Date().toISOString(),
+          connectionState: this._connectionState
+        });
+        
+        // 낙관적 UI 업데이트 (서버 응답 전 먼저 업데이트)
+        this.subscribedCVEs.delete(cveId);
+        this.pendingSubscriptions.delete(cveId);
+        this._saveSubscribedCVEs();
+        this._notifySubscriptionChange();
+        
+        // 소켓을 통해 구독 취소 요청 전송 (콜백 제거, 서버는 별도 이벤트로 응답)
+        this.socket?.emit(SUBSCRIPTION_EVENTS.UNSUBSCRIBE_CVE, { cve_id: cveId });
+        
+        // 요청 성공 콜백 호출
+        callback?.(true);
+      } else {
+        // 오프라인 상태에서는 로컬에서만 삭제
+        this.subscribedCVEs.delete(cveId);
+        this.pendingSubscriptions.delete(cveId);
+        this._saveSubscribedCVEs();
+        this._notifySubscriptionChange();
+        
+        // 요청 성공 콜백 호출
+        callback?.(true);
+      }
+    } catch (error) {
+      logger.error('SocketService', `CVE 구독 취소 중 오류 발생: ${cveId}`, error);
+      callback?.(false, '내부 오류 발생');
     }
-    
-    // 구독 상태 변경 이벤트 발행
-    this._notifySubscriptionChange();
   }
   
   /**
@@ -1147,9 +1383,6 @@ class SocketService implements ISocketIOService {
     this.subscriptionChangeSubject.next(subscribedCVEs);
     
     // 소켓 이벤트를 통해 변경 알림 (외부 컴포넌트가 감지할 수 있도록)
-    this._notifyListeners(SUBSCRIPTION_EVENTS.SUBSCRIPTIONS_CHANGED, { cveIds: subscribedCVEs });
-    
-    // 소켓 이벤트 발행 (다른 클라이언트나 탭에서도 감지할 수 있도록)
     if (this.isSocketConnected()) {
       this.socket?.emit(SUBSCRIPTION_EVENTS.SUBSCRIBED_CVES_UPDATED, { cveIds: subscribedCVEs });
     }
@@ -1168,7 +1401,7 @@ class SocketService implements ISocketIOService {
     this.subscribedCVEs.forEach(cveId => {
       logger.info('SocketService', `구독 복원: ${cveId}`);
       // 디버깅: 백엔드에서 기대하는 형식(cve_id)으로 전송 
-      this.socket?.emit(SOCKET_EVENTS.SUBSCRIBE_CVE, { cve_id: cveId });
+      this.socket?.emit(SUBSCRIPTION_EVENTS.SUBSCRIBE_CVE, { cve_id: cveId });
     });
     
     // 보류 중인 구독 요청 처리
@@ -1180,7 +1413,7 @@ class SocketService implements ISocketIOService {
         pendingAdded = true;
       }
       // 디버깅: 백엔드에서 기대하는 형식(cve_id)으로 전송
-      this.socket?.emit(SOCKET_EVENTS.SUBSCRIBE_CVE, { cve_id: cveId });
+      this.socket?.emit(SUBSCRIPTION_EVENTS.SUBSCRIBE_CVE, { cve_id: cveId });
     });
     
     // 보류 중인 요청 목록 비우기
@@ -1286,6 +1519,47 @@ class SocketService implements ISocketIOService {
     }
   }
 
+  // 구독 정보 저장 (즉시 실행 버전)
+  saveSubscriptions(): void {
+    try {
+      // 구독 정보가 없으면 저장하지 않음
+      if (this.subscribedCVEs.size === 0) {
+        localStorage.removeItem(this.LOCAL_STORAGE_KEY);
+        logger.debug('SocketService', '구독 정보가 없어 로컬 스토리지에서 제거됨');
+        return;
+      }
+      
+      // 구독 정보를 로컬 스토리지에 저장
+      const subscriptions = Array.from(this.subscribedCVEs);
+      localStorage.setItem(this.LOCAL_STORAGE_KEY, JSON.stringify(subscriptions));
+      logger.info('SocketService', `구독 정보 저장 완료: ${subscriptions.length}개 CVE`);
+    } catch (error) {
+      logger.error('SocketService', '구독 정보 저장 중 오류 발생', error);
+    }
+  }
+
+  // 특정 CVE 구독 상태 업데이트
+  updateSubscription(cveId: string, isSubscribed: boolean): void {
+    try {
+      if (isSubscribed) {
+        if (!this.subscribedCVEs.has(cveId)) {
+          this.subscribedCVEs.add(cveId);
+          logger.debug('SocketService', `CVE 구독 추가: ${cveId}`);
+        }
+      } else {
+        if (this.subscribedCVEs.has(cveId)) {
+          this.subscribedCVEs.delete(cveId);
+          logger.debug('SocketService', `CVE 구독 제거: ${cveId}`);
+        }
+      }
+      
+      // 변경사항 즉시 저장
+      this.saveSubscriptions();
+    } catch (error) {
+      logger.error('SocketService', '구독 상태 업데이트 중 오류 발생', error);
+    }
+  }
+
   // 재귀적 키 변환 (인터페이스 구현용)
   convertKeysRecursive(data: any, toCamelCase: boolean, options?: SocketCaseConverterOptions): any {
     const direction = toCamelCase ? 'incoming' : 'outgoing';
@@ -1304,6 +1578,92 @@ class SocketService implements ISocketIOService {
       if (this.isConnected) {
         this.disconnect();
       }
+      // 인증 해제 시 구독 정보 및 관련 로컬 스토리지 데이터 초기화
+      this.clearAllSubscriptions();
+    }
+  }
+
+  // 모든 구독 정보 초기화
+  clearAllSubscriptions(): void {
+    try {
+      // 구독 정보 초기화
+      this.subscribedCVEs.clear();
+      this.pendingSubscriptions.clear();
+      
+      // 로컬 스토리지에서 구독 정보 제거
+      localStorage.removeItem(this.LOCAL_STORAGE_KEY);
+      
+      // lastVisitTime 관련 데이터 정리
+      this._clearLastVisitTimes();
+      
+      logger.info('SocketService', '모든 구독 정보 및 방문 기록이 초기화되었습니다.');
+    } catch (error) {
+      logger.error('SocketService', '구독 정보 초기화 중 오류 발생', error);
+    }
+  }
+
+  // lastVisitTime_ 로 시작하는 로컬 스토리지 키 삭제
+  private _clearLastVisitTimes(): void {
+    try {
+      // 로컬 스토리지에서 lastVisitTime_ 으로 시작하는 모든 키 찾기
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('lastVisitTime_')) {
+          keysToRemove.push(key);
+        }
+      }
+      
+      // 찾은 키 모두 삭제
+      keysToRemove.forEach(key => {
+        localStorage.removeItem(key);
+      });
+      
+      logger.info('SocketService', `${keysToRemove.length}개의 방문 기록이 삭제되었습니다.`);
+    } catch (error) {
+      logger.error('SocketService', '방문 기록 정리 중 오류 발생', error);
+    }
+  }
+
+  // 페이지 언로드 이벤트 처리 (비정상 종료, 창 닫기 등)
+  private _handleBeforeUnload = (): void => {
+    // 사용자가 로그인되어 있지 않은 경우에만 정리
+    // 로그인된 상태에서는 세션이 유지되어야 하므로 구독 정보를 보존
+    const accessToken = getAccessToken();
+    if (!accessToken) {
+      this.clearAllSubscriptions();
+    }
+    // 로그인 상태에서도 30일 이상 지난 방문 기록은 정리
+    this._clearOldVisitTimes();
+  };
+
+  // 30일 이상 지난 방문 기록만 정리
+  private _clearOldVisitTimes(): void {
+    try {
+      const now = Date.now();
+      const thirtyDays = 30 * 24 * 60 * 60 * 1000; // 30일을 밀리초로 변환
+      
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('lastVisitTime_')) {
+          const timestamp = parseInt(localStorage.getItem(key) || '0', 10);
+          if (isNaN(timestamp) || now - timestamp > thirtyDays) {
+            keysToRemove.push(key);
+          }
+        }
+      }
+      
+      // 찾은 키 모두 삭제
+      keysToRemove.forEach(key => {
+        localStorage.removeItem(key);
+      });
+      
+      if (keysToRemove.length > 0) {
+        logger.info('SocketService', `${keysToRemove.length}개의 오래된 방문 기록이 삭제되었습니다.`);
+      }
+    } catch (error) {
+      logger.error('SocketService', '오래된 방문 기록 정리 중 오류 발생', error);
     }
   }
 }

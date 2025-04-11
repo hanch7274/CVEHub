@@ -23,6 +23,7 @@ import WebSocketQueryBridge from 'core/socket/bridge/WebSocketQueryBridge';
 import { getAccessToken } from 'shared/utils/storage/tokenStorage';
 import socketService from 'core/socket/services/socketService';  // Socket.IO 서비스 임포트
 import { HelmetProvider } from 'react-helmet-async';
+import { setQueryClient } from 'shared/utils/reactQuery';
 
 // CVEDetail 컴포넌트를 lazy 로딩으로 가져옵니다
 const CVEDetail = lazy(() => import('./features/cve/CVEDetail'));
@@ -252,17 +253,19 @@ const MainRoutes = ({ setSelectedCVE, selectedCVE }) => {
   );
 };
 
-// React Query 클라이언트 생성
+// React Query Client 생성
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      refetchOnWindowFocus: false, // 창 포커스시 자동 리페치 비활성화
-      staleTime: 5 * 60 * 1000, // 5분 동안 데이터 신선하게 유지
-      retry: 1, // 실패시 1번 재시도
-      cacheTime: 10 * 60 * 1000, // 10분 동안 캐시 유지
+      retry: 1,
+      refetchOnWindowFocus: false,
+      staleTime: 1000 * 60 * 5,  // 5분 스테일 타임
     },
   },
 });
+
+// 전역 QueryClient 인스턴스 설정
+setQueryClient(queryClient);
 
 // auth.js에 queryClient 주입
 injectQueryClient(queryClient);

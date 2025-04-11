@@ -116,6 +116,20 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
   const hasAttemptedSubscriptionRef = useRef<boolean>(false);
   const isModalOpenRef = useRef<boolean>(false);
 
+  // Socket.IO 서비스 참조
+  const socketServiceRef = useRef(socket?.socketService).current;
+
+  // 구독 관련 상태와 기능
+  const { isSubscribed, isLoading: isSubscriptionLoading, subscribe, unsubscribe, getSubscribers } = useCVESubscription(propsCveId);
+  
+  // 기존 구독 상태 참조 유지 (최신 상태 접근용)
+  isSubscribedRef.current = isSubscribed;
+  
+  // 구독 상태가 변경될 때마다 참조 업데이트
+  useEffect(() => {
+    isSubscribedRef.current = isSubscribed;
+  }, [isSubscribed]);
+
   // --- Hooks ---
   // 현재 사용자 참조 유지
   useEffect(() => {
@@ -140,20 +154,6 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
   useEffect(() => {
     isModalOpenRef.current = open;
   }, [open]);
-
-  // CVE 구독 관련 로직 (useCVESubscription 훅 사용)
-  const { subscribe, unsubscribe, isSubscribed, getSubscribers } =
-    useCVESubscription(propsCveId || '');
-  
-  // 구독 상태 참조 업데이트
-  useEffect(() => {
-    isSubscribedRef.current = isSubscribed;
-    
-    // 개발 환경에서 디버깅 로그 추가
-    if (process.env.NODE_ENV === 'development') {
-      logger.info(`CVEDetail: 구독 상태 업데이트 - ${isSubscribed ? '구독중' : '미구독'}`);
-    }
-  }, [isSubscribed]);
 
   // 구독자 정보 (중앙 관리 시스템에서 가져옴)
   const subscribers = useMemo(() => {
@@ -631,6 +631,62 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
     </Dialog>
   ), [errorDialogOpen, handleErrorDialogClose, error, queryError, handleRefresh]);
 
+  // 대화상자 닫기 핸들러
+  const handleClose = useCallback(() => {
+    snackbarShown.current = false;
+    
+    // 컴포넌트 닫힐 때 구독 정보 즉시 저장
+    try {
+      if (socketServiceRef && typeof socketServiceRef.updateSubscription === 'function') {
+        // 현재 구독 상태를 중앙 저장소에 반영
+        socketServiceRef.updateSubscription(propsCveId, isSubscribedRef.current);
+        logger.info('CVEDetail', '컴포넌트 닫힘 - 구독 정보 저장 완료', { 
+          cveId: propsCveId, 
+          isSubscribed: isSubscribedRef.current 
+        });
+      } else {
+        // 소켓 서비스를 찾을 수 없는 경우 로컬에 직접 저장
+        const key = 'cvehub_subscribed_cves';
+        const savedCVEs = localStorage.getItem(key);
+        let cveList: string[] = [];
+        
+        if (savedCVEs) {
+          try {
+            cveList = JSON.parse(savedCVEs);
+          } catch (e) {
+            logger.error('CVEDetail', '저장된 구독 정보 파싱 실패', e);
+            cveList = [];
+          }
+        }
+        
+        // 구독 여부에 따라 리스트 업데이트
+        if (isSubscribedRef.current) {
+          // 이미 리스트에 없는 경우에만 추가
+          if (!cveList.includes(propsCveId)) {
+            cveList.push(propsCveId);
+          }
+        } else {
+          // 리스트에서 제거
+          cveList = cveList.filter(id => id !== propsCveId);
+        }
+        
+        // 업데이트된 리스트 저장
+        localStorage.setItem(key, JSON.stringify(cveList));
+        logger.info('CVEDetail', '로컬 구독 정보 직접 업데이트', { 
+          cveId: propsCveId, 
+          isSubscribed: isSubscribedRef.current 
+        });
+      }
+    } catch (error) {
+      logger.error('CVEDetail', '구독 정보 저장 중 오류 발생', error);
+    }
+    
+    // 원래 onClose 콜백 호출
+    if (typeof onClose === 'function') {
+      onClose();
+    }
+  }, [propsCveId, onClose, socketServiceRef, isSubscribedRef]);
+
   // --- useEffects ---
   // CVE 업데이트 이벤트 구독
   useEffect(() => {
@@ -739,7 +795,7 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
   
   if (isQueryLoading && !cveData) {
     return (
-      <Dialog open={open} fullWidth maxWidth="md" onClose={onClose}>
+      <Dialog open={open} fullWidth maxWidth="md" onClose={handleClose}>
         <DialogContent
           sx={{
             display: 'flex',
@@ -757,7 +813,7 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
   
   if (queryError && !cveData) {
     return (
-      <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+      <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
         <DialogTitle>오류</DialogTitle>
         <DialogContent>
           <Typography color="error" gutterBottom>
@@ -779,7 +835,7 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
               다시 시도
             </Button>
           )}
-          <Button onClick={onClose}>닫기</Button>
+          <Button onClick={handleClose}>닫기</Button>
         </DialogActions>
       </Dialog>
     );
@@ -788,13 +844,13 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
   if (!cveData) {
     logger.warn('CVEDetail: cveData가 없습니다 (로딩/에러 아님). 렌더링 중단.');
     return (
-      <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+      <Dialog open={open} onClose={handleClose} fullWidth maxWidth="sm">
         <DialogTitle>정보 없음</DialogTitle>
         <DialogContent>
           <Typography>해당 CVE 정보를 찾을 수 없습니다.</Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={onClose}>닫기</Button>
+          <Button onClick={handleClose}>닫기</Button>
         </DialogActions>
       </Dialog>
     );
@@ -803,7 +859,7 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
   return (
     <Dialog
       open={open}
-      onClose={onClose}
+      onClose={handleClose}
       maxWidth="lg"
       fullWidth
       TransitionComponent={Fade}
@@ -827,7 +883,7 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
           isCached={isCached}
           isLoading={loading}
           onRefresh={handleRefresh}
-          onClose={onClose}
+          onClose={handleClose}
         />
       </DialogTitle>
       <DialogContent

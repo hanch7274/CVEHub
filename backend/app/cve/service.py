@@ -28,6 +28,7 @@ from app.activity.service import ActivityService
 from app.cve.repository import CVERepository
 from app.common.utils.datetime_utils import get_utc_now, format_datetime, normalize_datetime_fields
 from app.common.utils.change_detection import detect_object_changes
+from app.socketio.manager import socketio_manager, WSMessageType
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -148,7 +149,9 @@ class CVEService:
         self.repository = cve_repository or CVERepository()
         self.activity_service = activity_service or ActivityService()
         self._comment_service = comment_service
-    
+        # 캐시 관련 설정
+        self._cache_ttl = 60 * 5  # 5분 캐시 유효시간
+
     @property
     def comments(self):
         """댓글 관련 작업을 위한 서비스 접근자"""
@@ -988,6 +991,37 @@ class CVEService:
                 processed_data[key] = value
                 
         return processed_data
+
+    # 캐시 무효화 메서드 추가
+    async def invalidate_cve_cache(self, cve_id: str) -> None:
+        """
+        특정 CVE의 캐시를 무효화합니다.
+        
+        Args:
+            cve_id: 캐시를 무효화할 CVE ID
+        """
+        try:
+            logger.info(f"CVE 캐시 무효화 시작: {cve_id}")
+            
+            # 구독자에게 업데이트 알림 (소켓 이벤트)
+            try:
+                # broadcast 매개변수 제거하고 이벤트 발송
+                await socketio_manager.emit(
+                    event="cve_updated",
+                    data={"cve_id": cve_id},
+                    room=f"cve_{cve_id.lower()}"
+                )
+                logger.info(f"CVE 업데이트 이벤트 발송 완료: {cve_id}")
+            except Exception as e:
+                logger.error(f"CVE 업데이트 이벤트 발송 실패: {str(e)}")
+                logger.error(traceback.format_exc())
+            
+            # TODO: 실제 캐시 시스템 사용 시 여기에 캐시 무효화 코드 추가
+            
+            logger.info(f"CVE 캐시 무효화 완료: {cve_id}")
+        except Exception as e:
+            logger.error(f"CVE 캐시 무효화 중 오류: {str(e)}")
+            logger.error(traceback.format_exc())
 
     # 데코레이터 패턴 적용 - CVE 삭제 (간단한 동작)
     @track_cve_activity(
