@@ -10,6 +10,7 @@ export const CONNECTION_EVENTS = {
   DISCONNECT: 'disconnect',
   CONNECT_ERROR: 'connect_error',
   RECONNECT: 'reconnect',
+  RECONNECT_ATTEMPT: 'reconnect_attempt',
   CONNECT_ACK: 'connect_ack', // 백엔드 WSMessageType.CONNECT_ACK와 일치
   CONNECTED: 'connected', // 백엔드 WSMessageType.CONNECTED와 일치
   SESSION_INFO_ACK: 'session_info_ack', // 백엔드 WSMessageType.SESSION_INFO_ACK와 일치
@@ -145,6 +146,9 @@ export const SOCKET_EVENTS = {
  * @property AUTH_ERROR - 인증 관련 오류가 발생한 상태
  * @property TIMEOUT - 일반적인 타임아웃 오류가 발생한 상태
  * @property NETWORK_ERROR - 네트워크 연결 문제가 발생한 상태
+ * @property OFFLINE - 네트워크 오프라인 상태
+ * @property FAILED - 재연결 시도 실패 상태
+ * @property CONFIG_ERROR - 설정 관련 오류 상태
  */
 export const SOCKET_STATE = {
   DISCONNECTED: 'disconnected',
@@ -157,7 +161,10 @@ export const SOCKET_STATE = {
   TRANSPORT_ERROR: 'transport_error',
   AUTH_ERROR: 'auth_error',
   TIMEOUT: 'timeout',
-  NETWORK_ERROR: 'network_error'
+  NETWORK_ERROR: 'network_error',
+  OFFLINE: 'offline',
+  FAILED: 'failed',
+  CONFIG_ERROR: 'config_error'
 };
 
 // 웹소켓 로그 문맥

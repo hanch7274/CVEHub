@@ -257,6 +257,10 @@ export const socketActions = {
   setConnected: (connected: boolean) => useSocketStore.getState().setConnected(connected),
   setConnectionState: (state: SocketState) => useSocketStore.getState().setConnectionState(state),
   setConnectionError: (error: Error | null) => useSocketStore.getState().setConnectionError(error),
+  updateConnectionState: (data: { connectionState: SocketState; isConnected: boolean }) => {
+    useSocketStore.getState().setConnectionState(data.connectionState);
+    useSocketStore.getState().setConnected(data.isConnected);
+  },
   emitEvent: (socket: Socket | null, event: string, data: any) => 
     useSocketStore.getState().emitEvent(socket, event, data),
   addEventHandler: (event: string, handler: (data: any) => void) => 

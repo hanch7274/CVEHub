@@ -1,0 +1,1491 @@
+// services/socketService.ts
+import { io, Socket } from 'socket.io-client';
+import { Observable, Subject, fromEvent, EMPTY, throwError, BehaviorSubject } from 'rxjs';
+import { shareReplay, map, filter, catchError, retry, takeUntil, finalize } from 'rxjs/operators';
+import _ from 'lodash';
+import LRUCache from 'lru-cache';
+import { getAccessToken, getUser } from 'shared/utils/storage/tokenStorage';
+import socketStoreAdapter from './socketStoreAdapter';
+import logger from 'shared/utils/logging';
+import { socketActions } from '../state/socketStore';
+import { camelToSnake, snakeToCamel } from 'shared/utils/caseConverter';
+import { getQueryClient, QUERY_KEYS } from 'shared/utils/reactQuery';
+import {
+  SOCKET_EVENTS,
+  SOCKET_STATE,
+  CONNECTION_EVENTS,
+  SUBSCRIPTION_EVENTS,
+  WS_DIRECTION,
+  SOCKET_CONFIG,
+  SOCKET_IO_PATH
+} from './constants';
+import {
+  SocketEventCallback,
+  SocketEventListeners,
+  SocketOptions,
+  SocketCaseConverterOptions
+} from '../types';
+
+// 변환에서 제외할 필드 목록
+const EXCLUDED_FIELDS: string[] = ['id', 'uuid', 'created_at', 'updated_at', 'deleted_at'];
+
+// 구독 관련 이벤트에서 변환이 필요한 필드 매핑
+const SUBSCRIPTION_FIELD_MAPPINGS: Record<string, string> = {
+  'cve_id': 'cveId',
+  'cveId': 'cve_id',
+  'user_id': 'userId',
+  'userId': 'user_id',
+  'display_name': 'displayName',
+  'displayName': 'display_name',
+  'profile_image': 'profileImage',
+  'profileImage': 'profile_image'
+};
+
+// 변환 바이패스가 필요한 이벤트 목록
+const BYPASS_CONVERSION_EVENTS: string[] = [
+  SUBSCRIPTION_EVENTS.SUBSCRIBE_CVE,
+  SUBSCRIPTION_EVENTS.UNSUBSCRIBE_CVE,
+  SUBSCRIPTION_EVENTS.SUBSCRIPTION_STATUS,
+  SUBSCRIPTION_EVENTS.CVE_SUBSCRIBERS_UPDATED
+];
+
+/**
+ * Socket.IO 서비스 클래스
+ * 
+ * WebSocket 통신을 관리하고 RxJS를 통한 이벤트 스트림 처리를 제공합니다.
+ * 이 클래스는 싱글톤 패턴으로 구현되어 애플리케이션 전체에서 일관된 소켓 연결을 유지합니다.
+ */
+class SocketService {
+  // === 소켓 및 연결 상태 관리 ===
+  socket: Socket | null = null;
+  isConnected: boolean = false;
+  private _connectionState: string = SOCKET_STATE.DISCONNECTED;
+  private connectionStateSubject: BehaviorSubject<string>;
+  private autoReconnectEnabled: boolean = true;
+  private maxReconnectAttempts: number = 10;
+  private currentReconnectAttempts: number = 0;
+  
+  // === 이벤트 및 리스너 관리 ===
+  listeners: SocketEventListeners = {};
+  options: SocketOptions | null = null;
+  private eventObservables: Map<string, Observable<any>> = new Map();
+  private destroySubjects: Map<string, Subject<void>> = new Map();
+  
+  // === 캐싱 및 성능 최적화 ===
+  private eventCache: LRUCache<string, { data: any, timestamp: number }>;
+  private caseConversionCache: LRUCache<string, any>;
+  
+  // === 구독 상태 관리 ===
+  private subscribedCVEs: Set<string> = new Set<string>();
+  private pendingSubscriptions: Set<string> = new Set<string>();
+  private LOCAL_STORAGE_KEY = 'cvehub_subscribed_cves';
+  private subscriptionChangeSubject: Subject<string[]> = new Subject<string[]>();
+  
+  // === 연결 진단 및 모니터링 ===
+  private pingInterval: NodeJS.Timeout | null = null;
+  private pingTimeoutId: NodeJS.Timeout | null = null;
+  private lastPingTime: number | null = null;
+  private connectionMetrics = {
+    connectAttempts: 0,
+    lastConnectTime: null as number | null,
+    disconnectCount: 0,
+    errorCount: 0,
+    lastErrorTime: null as number | null,
+    averageLatency: null as number | null,
+    pingHistory: [] as number[]
+  };
+  
+  constructor() {
+    // 상태 초기화
+    this.connectionStateSubject = new BehaviorSubject<string>(SOCKET_STATE.DISCONNECTED);
+    
+    // 캐시 초기화
+    this.eventCache = new LRUCache({
+      max: 100,          // 최대 항목 수
+      maxAge: 5 * 60000  // 5분 TTL
+    });
+    
+    this.caseConversionCache = new LRUCache({
+      max: 500,           // 최대 항목 수
+      maxAge: 10 * 60000  // 10분 TTL
+    });
+    
+    // 저장된 구독 상태 로드
+    this._loadSubscribedCVEs();
+    
+    // 브라우저 이벤트 리스너 설정
+    this._setupBrowserListeners();
+    
+    logger.info('SocketService', '소켓 서비스 초기화 완료');
+  }
+
+  //===================================================================
+  // 소켓 연결 관리
+  //===================================================================
+  
+  /**
+   * 소켓 연결 생성
+   * @param token JWT 토큰 (옵션)
+   * @returns 소켓 인스턴스
+   */
+  connect(token?: string): Socket {
+    try {
+      // 이미 연결된 소켓이 있으면 반환
+      if (this.socket && this.isConnected) {
+        return this.socket;
+      }
+      
+      // 토큰이 없으면 액세스 토큰 사용
+      const accessToken = token || getAccessToken();
+      
+      if (!accessToken) {
+        logger.error('SocketService', '연결 실패: 인증 토큰이 없습니다');
+        this._updateConnectionState(SOCKET_STATE.ERROR);
+        throw new Error('인증 토큰이 없습니다');
+      }
+      
+      // 연결 상태 업데이트
+      this._updateConnectionState(SOCKET_STATE.CONNECTING);
+      
+      // 접속할 호스트 정보 가져오기
+      const socketHost = this._getSocketIOURL();
+      
+      // 옵션 생성
+      this.options = this._createOptions(accessToken);
+      
+      if (!this.options) {
+        logger.error('SocketService', '연결 실패: 소켓 옵션이 없습니다');
+        this._updateConnectionState(SOCKET_STATE.ERROR);
+        throw new Error('소켓 옵션이 없습니다');
+      }
+      
+      // 소켓 생성 및 연결
+      this.socket = io(socketHost, {
+        ...this.options,
+        transports: ['websocket'],
+        forceNew: true
+      });
+      
+      // Zustand 스토어에 소켓 등록
+      socketStoreAdapter.registerSocket(this.socket);
+      
+      // 이벤트 핸들러 설정
+      this._setupEventHandlers();
+      
+      // 개발 환경에서만 디버깅 로그 설정
+      if (process.env.NODE_ENV === 'development') {
+        this._setupDebugLogging();
+      }
+      
+      return this.socket;
+      
+    } catch (error: any) {
+      logger.error('SocketService', '연결 중 예외 발생', {
+        error: error.message,
+        stack: error.stack
+      });
+      this._updateConnectionState(SOCKET_STATE.ERROR);
+      socketActions.setConnectionError(error);
+      throw error;
+    }
+  }
+  
+  /**
+   * 소켓 연결 해제
+   */
+  disconnect(): void {
+    if (this.socket) {
+      logger.info('SocketService', '웹소켓 연결 해제 요청');
+      
+      // 이벤트 리스너 제거
+      this.socket.offAny();
+      
+      // 연결 해제
+      this.socket.disconnect();
+      
+      // 상태 업데이트
+      this._updateConnectionState(SOCKET_STATE.DISCONNECTED);
+      
+      // Zustand 스토어에서 소켓 제거
+      socketStoreAdapter.registerSocket(null);
+      
+      // 소켓 참조 제거
+      this.socket = null;
+    }
+  }
+  
+  /**
+   * 개발 환경에서 디버그 로깅 설정
+   */
+  private _setupDebugLogging(): void {
+    if (!this.socket || typeof this.socket.onAny !== 'function') return;
+    
+    this.socket.onAny((eventName, ...args) => {
+      // 특정 이벤트 필터링 (heartbeat와 같은 불필요한 이벤트 제외)
+      if (eventName !== 'ping' && eventName !== 'pong') {
+        logger.debug('Socket.RAW', `이벤트: ${eventName}`, {
+          data: args.length > 0 ? args[0] : null,
+          timestamp: new Date().toISOString()
+        });
+      }
+    });
+  }
+  
+  /**
+   * 소켓 연결 상태 확인
+   */
+  isSocketConnected(): boolean {
+    return this.socket !== null && this.socket.connected;
+  }
+  
+  /**
+   * 소켓 인스턴스 가져오기
+   */
+  getSocket(): Socket | null {
+    return this.socket;
+  }
+  
+  /**
+   * 연결 상태 가져오기
+   */
+  getConnectionStatus(): boolean {
+    return this.isConnected;
+  }
+  
+  /**
+   * 인증 상태 변경 처리
+   * @param isAuthenticated 인증 여부
+   */
+  handleAuthStateChange(isAuthenticated: boolean): void {
+    if (isAuthenticated) {
+      // 인증된 경우 연결
+      if (!this.isConnected) {
+        this.connect();
+      }
+    } else {
+      // 인증 해제된 경우 연결 해제
+      if (this.isConnected) {
+        this.disconnect();
+      }
+      // 인증 해제 시 구독 정보 초기화
+      this.clearAllSubscriptions();
+    }
+  }
+  
+  /**
+   * Socket.IO URL 가져오기
+   */
+  private _getSocketIOURL(): string {
+    // 기본적으로 현재 호스트 사용
+    const host = window.location.hostname;
+    const port = process.env.NODE_ENV === 'development' ? '8000' : window.location.port;
+    return `${window.location.protocol}//${host}${port ? `:${port}` : ''}`;
+  }
+  
+  /**
+   * 소켓 옵션 생성
+   */
+  private _createOptions(token: string): SocketOptions | null {
+    if (!token || token.trim() === '') {
+      logger.warn('SocketService', '인증 토큰이 없습니다. 웹소켓 연결이 실패할 수 있습니다.');
+      return null;
+    }
+    
+    // 사용자 정보 가져오기
+    const user = getUser();
+    const username = user?.username;
+    
+    // Socket.IO 옵션 생성
+    const options: SocketOptions = {
+      path: SOCKET_IO_PATH,
+      transports: ['websocket'],
+      reconnection: SOCKET_CONFIG.RECONNECTION,
+      reconnectionAttempts: SOCKET_CONFIG.RECONNECTION_ATTEMPTS,
+      reconnectionDelay: SOCKET_CONFIG.RECONNECTION_DELAY,
+      reconnectionDelayMax: SOCKET_CONFIG.RECONNECTION_DELAY_MAX,
+      timeout: SOCKET_CONFIG.TIMEOUT,
+      autoConnect: SOCKET_CONFIG.AUTO_CONNECT,
+      
+      // 인증 정보 전달
+      auth: {
+        token: token,
+        username: username
+      },
+      
+      extraHeaders: {
+        'Authorization': `Bearer ${token}`
+      }
+    };
+    
+    return options;
+  }
+  
+  /**
+   * 연결 상태 업데이트
+   */
+  private _updateConnectionState(state: string): void {
+    if (this._connectionState === state) return;
+    
+    this._connectionState = state;
+    this.isConnected = state === SOCKET_STATE.CONNECTED;
+    
+    // 상태 변경 이벤트 발생
+    this._notifyListeners(CONNECTION_EVENTS.CONNECTION_STATE_CHANGE, { state });
+    
+    // Zustand 스토어에 상태 업데이트
+    socketActions.setConnectionState(state as any);
+    
+    // RxJS Subject에도 상태 업데이트
+    this.connectionStateSubject.next(state);
+    
+    logger.info('SocketService', '연결 상태 변경', { 
+      previousState: this._connectionState, 
+      newState: state,
+      isConnected: this.isConnected
+    });
+  }
+
+  /**
+   * 이벤트 핸들러 설정
+   */
+  private _setupEventHandlers(): void {
+    if (!this.socket) return;
+    
+    // 연결 이벤트
+    this.socket.on(CONNECTION_EVENTS.CONNECT, this._handleConnect.bind(this));
+    
+    // 연결 해제 이벤트
+    this.socket.on(CONNECTION_EVENTS.DISCONNECT, this._handleDisconnect.bind(this));
+    
+    // 연결 오류 이벤트
+    this.socket.on(CONNECTION_EVENTS.CONNECT_ERROR, this._handleConnectError.bind(this));
+    
+    // 구독 상태 업데이트 이벤트 리스너 추가
+    this.socket.on(SUBSCRIPTION_EVENTS.SUBSCRIPTION_STATUS, this._handleSubscriptionStatus.bind(this));
+    
+    // 구독자 업데이트 이벤트 리스너 추가
+    this.socket.on(SUBSCRIPTION_EVENTS.CVE_SUBSCRIBERS_UPDATED, this._handleSubscribersUpdated.bind(this));
+  }
+  
+  /**
+   * 연결 이벤트 핸들러
+   */
+  private _handleConnect(): void {
+    logger.info('SocketService', '웹소켓 연결 성공', {
+      socketId: this.socket?.id,
+      connected: this.socket?.connected
+    });
+    
+    // 연결 상태 업데이트
+    this._updateConnectionState(SOCKET_STATE.CONNECTED);
+    
+    // 연결 메트릭 업데이트
+    this.connectionMetrics.lastConnectTime = Date.now();
+    this.currentReconnectAttempts = 0; // 재연결 성공 시 카운터 초기화
+    
+    // 구독 상태 복원
+    this._restoreSubscriptions();
+    
+    // 모든 리스너에게 연결 이벤트 알림
+    this._notifyListeners(CONNECTION_EVENTS.CONNECT);
+    
+    // 연결 품질 모니터링 시작
+    this._startConnectionQualityMonitoring();
+  }
+  
+  /**
+   * 연결 해제 이벤트 핸들러
+   */
+  private _handleDisconnect(reason: string): void {
+    logger.info('SocketService', '웹소켓 연결 해제', { reason });
+    this._updateConnectionState(SOCKET_STATE.DISCONNECTED);
+    this._notifyListeners(CONNECTION_EVENTS.DISCONNECT, { reason });
+    
+    // 연결 품질 모니터링 중지
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+  }
+  
+  /**
+   * 연결 오류 이벤트 핸들러
+   */
+  private _handleConnectError(error: any): void {
+    logger.error('SocketService', '연결 오류', { 
+      message: error.message || '알 수 없는 오류'
+    });
+    
+    this._updateConnectionState(SOCKET_STATE.ERROR);
+    socketActions.setConnectionError(error);
+    this._notifyListeners(CONNECTION_EVENTS.CONNECT_ERROR, error);
+    
+    // 재연결 시도
+    if (this.autoReconnectEnabled && this.currentReconnectAttempts < this.maxReconnectAttempts) {
+      this.currentReconnectAttempts++;
+      const delay = this._calculateReconnectDelay();
+      
+      setTimeout(() => {
+        if (!this.isConnected) {
+          this.connect();
+        }
+      }, delay);
+    }
+  }
+  
+  /**
+   * 브라우저 이벤트 리스너 설정
+   */
+  private _setupBrowserListeners(): void {
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this._handleVisibilityChange.bind(this));
+    }
+    
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', this._handleOnlineStatus.bind(this));
+      window.addEventListener('offline', this._handleOfflineStatus.bind(this));
+      window.addEventListener('beforeunload', this._handleBeforeUnload.bind(this));
+    }
+  }
+  
+  /**
+   * 페이지 가시성 변경 처리
+   */
+  private _handleVisibilityChange(): void {
+    if (document.visibilityState === 'visible') {
+      // 인증 토큰이 있을 때만 연결 시도
+      const accessToken = getAccessToken();
+      if (!accessToken) {
+        logger.info('SocketService', '인증 토큰이 없어 소켓 연결을 시도하지 않습니다.');
+        return;
+      }
+      
+      if (!this.isConnected) {
+        logger.info('SocketService', '페이지 가시성 변경됨: 연결 시도');
+        this._attemptReconnect();
+      }
+    }
+  }
+  
+  /**
+   * 온라인 상태 처리
+   */
+  private _handleOnlineStatus(): void {
+    logger.info('SocketService', '네트워크 상태: 온라인');
+    if (!this.isConnected) {
+      this._attemptReconnect();
+    }
+  }
+  
+  /**
+   * 오프라인 상태 처리
+   */
+  private _handleOfflineStatus(): void {
+    logger.info('SocketService', '네트워크 상태: 오프라인');
+  }
+  
+  /**
+   * 페이지 언로드 이벤트 처리
+   */
+  private _handleBeforeUnload = (): void => {
+    // 사용자가 로그인되어 있지 않은 경우에만 정리
+    const accessToken = getAccessToken();
+    if (!accessToken) {
+      this.clearAllSubscriptions();
+    }
+  };
+  
+  /**
+   * 연결 품질 모니터링 시작
+   */
+  private _startConnectionQualityMonitoring(): void {
+    if (!this.socket || !this.isConnected || this.pingInterval) return;
+    
+    // 60초 간격으로 핑 측정
+    this.pingInterval = setInterval(() => {
+      this._measurePing();
+    }, 60000);
+  }
+  
+  /**
+   * 핑 측정
+   */
+  private _measurePing(): void {
+    if (!this.socket || !this.isConnected) return;
+    
+    const startTime = Date.now();
+    
+    // 핑-퐁 요청
+    this.socket.emit('ping', () => {
+      const pingTime = Date.now() - startTime;
+      
+      // 핑 기록 업데이트
+      this.connectionMetrics.pingHistory.push(pingTime);
+      
+      // 최대 10개만 유지
+      if (this.connectionMetrics.pingHistory.length > 10) {
+        this.connectionMetrics.pingHistory.shift();
+      }
+      
+      // 평균 지연 시간 계산
+      const sum = this.connectionMetrics.pingHistory.reduce((a, b) => a + b, 0);
+      this.connectionMetrics.averageLatency = 
+        this.connectionMetrics.pingHistory.length > 0 
+          ? sum / this.connectionMetrics.pingHistory.length 
+          : null;
+      
+      logger.debug('SocketService', '핑 측정 완료', {
+        pingTime,
+        averageLatency: this.connectionMetrics.averageLatency
+      });
+    });
+  }
+  
+  /**
+   * 재연결 시도
+   */
+  private _attemptReconnect(): void {
+    if (this.autoReconnectEnabled) {
+      if (this.currentReconnectAttempts < this.maxReconnectAttempts) {
+        // 인증 토큰이 있을 때만 연결 시도
+        const accessToken = getAccessToken();
+        if (!accessToken) {
+          logger.info('SocketService', '인증 토큰이 없어 재연결을 중단합니다.');
+          return;
+        }
+        
+        logger.info('SocketService', '재연결 시도...');
+        this.currentReconnectAttempts++;
+        this.connect();
+      } else {
+        logger.warn('SocketService', `최대 재연결 시도 횟수(${this.maxReconnectAttempts})를 초과했습니다.`);
+      }
+    }
+  }
+  
+  /**
+   * 연결 메트릭 가져오기
+   */
+  getConnectionMetrics(): any {
+    return {
+      ...this.connectionMetrics,
+      currentState: this._connectionState,
+      isConnected: this.isConnected,
+      socketId: this.socket?.id || null,
+      timestamp: new Date().toISOString()
+    };
+  }
+  
+  /**
+   * 지수 백오프를 사용한 재연결 지연 시간 계산
+   */
+  private _calculateReconnectDelay(): number {
+    const baseDelay = 1000; // 기본 1초
+    const attempts = this.currentReconnectAttempts;
+    const maxDelay = 30000; // 최대 30초
+    
+    // 지수 백오프: 기본 지연 * 2^시도횟수 + 랜덤 지터(0-1000ms)
+    const exponentialDelay = baseDelay * Math.pow(2, Math.min(attempts, 5));
+    const jitter = Math.random() * 1000;
+    
+    return Math.min(exponentialDelay + jitter, maxDelay);
+  }
+  
+  //===================================================================
+  // 이벤트 처리 관련 메서드
+  //===================================================================
+  
+  /**
+   * 이벤트 리스너 등록
+   * @param event 이벤트 이름
+   * @param callback 콜백 함수
+   * @returns 리스너 제거 함수
+   */
+  on(event: string, callback: SocketEventCallback): () => void {
+    if (!this.listeners[event]) {
+      this.listeners[event] = [];
+    }
+    
+    // 이미 등록된 콜백인지 확인
+    const isCallbackRegistered = this.listeners[event].some(cb => cb === callback);
+    
+    if (!isCallbackRegistered) {
+      this.listeners[event].push(callback);
+      
+      // 소켓이 있는 경우 이벤트 리스너 등록
+      if (this.socket) {
+        this.socket.on(event, (data: any) => {
+          // 데이터 케이스 변환 처리
+          const convertedData = this._convertDataCasing(data, {
+            direction: 'incoming',
+            sourceName: `소켓이벤트[${event}]`
+          });
+          
+          callback(convertedData);
+        });
+      }
+      
+      // Zustand 스토어에 이벤트 핸들러 등록
+      socketStoreAdapter.registerEventHandler(event, callback);
+      
+      logger.debug('SocketService', `이벤트 리스너 등록: ${event}`);
+    }
+    
+    // 이벤트 리스너 제거 함수 반환
+    return () => {
+      this.off(event, callback);
+    };
+  }
+
+  /**
+   * addEventListener는 on의 별칭으로 구현
+   */
+  addEventListener(event: string, callback: SocketEventCallback): () => void {
+    return this.on(event, callback);
+  }
+
+  /**
+   * 이벤트 리스너 제거
+   * @param event 이벤트 이름
+   * @param callback 콜백 함수
+   */
+  off(event: string, callback: SocketEventCallback): void {
+    if (this.listeners[event]) {
+      // 콜백 제거
+      this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
+      
+      // 소켓이 있는 경우 이벤트 리스너 제거
+      if (this.socket) {
+        this.socket.off(event, callback as any);
+      }
+      
+      // Zustand 스토어에서 이벤트 핸들러 제거
+      socketStoreAdapter.unregisterEventHandler(event, callback);
+      
+      logger.debug('SocketService', `이벤트 리스너 제거: ${event}`);
+    }
+  }
+
+  /**
+   * 이벤트 발생
+   * @param event 이벤트 이름
+   * @param data 이벤트 데이터
+   * @param callback 콜백 함수
+   */
+  emit(event: string, data: any, callback?: Function): void {
+    if (!this.socket) {
+      logger.warn('SocketService', `소켓 연결 없이 이벤트 발신 시도: ${event}`);
+      return;
+    }
+    
+    // 이벤트별 최적화 전략 적용
+    if (this._shouldThrottleEvent(event)) {
+      // 스로틀링 적용 이벤트
+      this._throttledEmit(event, data, callback);
+    } else if (this._shouldDebounceEvent(event)) {
+      // 디바운싱 적용 이벤트
+      this._debouncedEmit(event, data, callback);
+    } else {
+      // 일반 이벤트는 즉시 발생
+      this._emitImmediate(event, data, callback);
+    }
+  }
+  
+  /**
+   * 즉시 이벤트 발생 (내부 메서드)
+   */
+  private _emitImmediate(event: string, data: any, callback?: Function): void {
+    try {
+      // 데이터 케이스 변환 처리 (camelCase -> snake_case)
+      const convertedData = this._convertDataCasing(data, { 
+        direction: 'outgoing',
+        sourceName: `이벤트[${event}]`
+      });
+      
+      // 이벤트 발생
+      if (callback) {
+        this.socket!.emit(event, convertedData, callback);
+      } else {
+        this.socket!.emit(event, convertedData);
+      }
+      
+      // 이벤트 캐싱
+      this.eventCache.set(event, {
+        data: convertedData,
+        timestamp: Date.now()
+      });
+      
+      // Zustand 스토어에 이벤트 발생 기록
+      socketStoreAdapter.recordEventEmission(this.socket!, event, convertedData);
+      
+      logger.debug('SocketService', `이벤트 발신: ${event}`);
+    } catch (error) {
+      logger.error('SocketService', `이벤트 발신 중 오류 발생: ${event}`, error);
+    }
+  }
+  
+  /**
+   * 스로틀링된 이벤트 발생
+   */
+  private _throttledEmit = _.throttle((event: string, data: any, callback?: Function) => {
+    this._emitImmediate(event, data, callback);
+  }, 300, { leading: true, trailing: true });
+  
+  /**
+   * 디바운스된 이벤트 발생
+   */
+  private _debouncedEmit = _.debounce((event: string, data: any, callback?: Function) => {
+    this._emitImmediate(event, data, callback);
+  }, 300);
+  
+  /**
+   * 이벤트 스로틀링 적용 여부 결정
+   */
+  private _shouldThrottleEvent(event: string): boolean {
+    // 자주 발생하는 이벤트에 스로틀링 적용
+    const throttleEvents = [
+      'typing', 'scroll', 'mouse_move', 'position_update',
+      'progress_update', 'search_typing'
+    ];
+    
+    return throttleEvents.some(e => event.includes(e));
+  }
+  
+  /**
+   * 이벤트 디바운싱 적용 여부 결정
+   */
+  private _shouldDebounceEvent(event: string): boolean {
+    // 마지막 값만 중요한 이벤트에 디바운싱 적용
+    const debounceEvents = [
+      'filter_change', 'search_query', 'input_change',
+      'text_complete', 'resize', 'settings_change'
+    ];
+    
+    return debounceEvents.some(e => event.includes(e));
+  }
+
+  /**
+   * 모든 리스너에게 이벤트 알림
+   */
+  private _notifyListeners(event: string, data?: any): void {
+    if (this.listeners[event]) {
+      // 데이터 케이스 변환 처리 (snake_case -> camelCase)
+      const convertedData = this._convertDataCasing(data, {
+        direction: 'incoming',
+        sourceName: `이벤트[${event}]`
+      });
+      
+      // 모든 리스너에게 알림
+      this.listeners[event].forEach(callback => {
+        try {
+          callback(convertedData);
+        } catch (error) {
+          logger.error('SocketService', `리스너 호출 중 오류 발생: ${event}`, error);
+        }
+      });
+    }
+  }
+  
+  /**
+   * 스로틀링된 리스너 알림
+   */
+  private _throttledNotifyListeners = _.throttle((event: string, data?: any) => {
+    this._notifyListeners(event, data);
+  }, 50, { leading: true, trailing: true });
+  
+  //===================================================================
+  // RxJS 관련 메서드
+  //===================================================================
+  
+  /**
+   * 연결 상태 Observable 반환
+   */
+  getConnectionState(): Observable<string> {
+    return this.connectionStateSubject.asObservable();
+  }
+  
+  /**
+   * 특정 연결 상태를 감지하는 Observable 반환
+   */
+  whenConnectionState(state: string): Observable<boolean> {
+    return this.getConnectionState().pipe(
+      map(currentState => currentState === state),
+      filter(isMatch => isMatch)
+    );
+  }
+  
+  /**
+   * 연결됨 상태를 감지하는 Observable 반환
+   */
+  whenConnected(): Observable<boolean> {
+    return this.whenConnectionState(SOCKET_STATE.CONNECTED);
+  }
+  
+  /**
+   * 특정 이벤트를 Observable로 변환
+   */
+  fromEvent<T = any>(eventName: string, componentId: string = 'global'): Observable<T> {
+    const cacheKey = `${eventName}_${componentId}`;
+    
+    // 캐시된 Observable이 있으면 반환
+    if (this.eventObservables.has(cacheKey)) {
+      return this.eventObservables.get(cacheKey) as Observable<T>;
+    }
+    
+    // 소켓 상태 및 인스턴스 확인
+    if (!this.socket) {
+      logger.warn('SocketService', `소켓 인스턴스가 없어 이벤트 스트림 생성 불가: ${eventName}`);
+      return EMPTY;
+    }
+    
+    // 컴포넌트별 정리를 위한 Subject 생성 또는 가져오기
+    if (!this.destroySubjects.has(componentId)) {
+      this.destroySubjects.set(componentId, new Subject<void>());
+    }
+    const destroySubject = this.destroySubjects.get(componentId)!;
+    
+    // fromEvent를 사용하여 소켓 이벤트를 Observable로 변환
+    const observable = fromEvent<T>(this.socket, eventName).pipe(
+      // 데이터 케이스 변환 및 로깅
+      map(data => {
+        logger.debug('SocketService', `이벤트 수신: ${eventName}`, data);
+        // 데이터 케이스 변환 처리 (snake_case -> camelCase)
+        return this._convertDataCasing(data) as T;
+      }),
+      // 오류 처리
+      catchError(error => {
+        logger.error('SocketService', `이벤트 처리 중 오류: ${eventName}`, error);
+        return throwError(() => error);
+      }),
+      // 자동 재시도 (최대 3회)
+      retry({ count: 3, delay: 1000 }),
+      // 컴포넌트 언마운트 시 구독 해제
+      takeUntil(destroySubject),
+      // 여러 구독자가 동일한 Observable을 공유하도록 설정
+      shareReplay(1),
+      // 완료 시 정리
+      finalize(() => {
+        logger.debug('SocketService', `이벤트 스트림 종료: ${eventName}`);
+        this.eventObservables.delete(cacheKey);
+      })
+    );
+    
+    // 캐시에 저장
+    this.eventObservables.set(cacheKey, observable);
+    
+    return observable;
+  }
+  
+  /**
+   * 특정 이벤트 스트림에서 필터링된 데이터만 추출
+   */
+  fromFilteredEvent<T = any>(
+    eventName: string, 
+    predicate: (data: T) => boolean,
+    componentId: string = 'global'
+  ): Observable<T> {
+    return this.fromEvent<T>(eventName, componentId).pipe(
+      filter(predicate)
+    );
+  }
+  
+  /**
+   * 컴포넌트 정리
+   */
+  cleanup(componentId: string): void {
+    if (this.destroySubjects.has(componentId)) {
+      const subject = this.destroySubjects.get(componentId)!;
+      subject.next();
+      subject.complete();
+      this.destroySubjects.delete(componentId);
+      
+      // 해당 컴포넌트와 관련된 모든 캐시된 Observable 제거
+      const keysToRemove: string[] = [];
+      this.eventObservables.forEach((_, key) => {
+        if (key.endsWith(`_${componentId}`)) {
+          keysToRemove.push(key);
+        }
+      });
+      
+      keysToRemove.forEach(key => {
+        this.eventObservables.delete(key);
+      });
+      
+      logger.debug('SocketService', `컴포넌트 정리 완료: ${componentId}`);
+    }
+  }
+  
+  /**
+   * 모든 리소스 정리
+   */
+  cleanupAll(): void {
+    // 모든 타이머 정리
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+    
+    if (this.pingTimeoutId) {
+      clearTimeout(this.pingTimeoutId);
+      this.pingTimeoutId = null;
+    }
+    
+    // 모든 RxJS Subject 정리
+    this.destroySubjects.forEach((subject) => {
+      subject.next();
+      subject.complete();
+    });
+    this.destroySubjects.clear();
+    
+    // 캐시 정리
+    this.eventCache.clear();
+    this.caseConversionCache.clear();
+    this.eventObservables.clear();
+    
+    // 연결 해제
+    this.disconnect();
+    
+    logger.info('SocketService', '모든 리소스 정리 완료');
+  }
+  
+  //===================================================================
+  // CVE 구독 관련 메서드
+  //===================================================================
+  
+  /**
+   * CVE 구독 요청
+   * @param cveId CVE ID
+   * @param callback 콜백 함수
+   */
+  subscribeCVE(cveId: string, callback?: (success: boolean, error?: string) => void): void {
+    try {
+      // 이미 구독 중인 경우 중복 요청 방지
+      if (this.subscribedCVEs.has(cveId)) {
+        logger.debug('SocketService', `이미 구독 중인 CVE: ${cveId}`);
+        callback?.(true); // 이미 구독 중이므로 성공으로 처리
+        return;
+      }
+      
+      // 연결 상태 확인
+      if (this.isConnected && this.socket) {
+        logger.info('SocketService', `CVE 구독 요청 전송: ${cveId}`);
+        
+        // 낙관적 UI 업데이트 (서버 응답 전 먼저 업데이트)
+        this.subscribedCVEs.add(cveId);
+        this._saveSubscribedCVEs();
+        this._notifySubscriptionChange();
+        
+        // 소켓을 통해 구독 요청 전송
+        this.socket?.emit(SUBSCRIPTION_EVENTS.SUBSCRIBE_CVE, { cve_id: cveId });
+        
+        // 요청 성공 콜백 호출
+        callback?.(true);
+      } else {
+        // 오프라인 상태면 나중에 재연결 시 처리할 수 있도록 보류 목록에 추가
+        this.pendingSubscriptions.add(cveId);
+        logger.warn('SocketService', `오프라인 상태에서 구독 요청 보류: ${cveId}`, {
+          connectionState: this._connectionState,
+          pendingCount: this.pendingSubscriptions.size
+        });
+        
+        // 오프라인 상태에서는 일단 성공으로 처리하고 재연결 시 처리
+        this.subscribedCVEs.add(cveId);
+        this._saveSubscribedCVEs();
+        this._notifySubscriptionChange();
+        
+        // 요청 성공 콜백 호출
+        callback?.(true);
+      }
+    } catch (error) {
+      logger.error('SocketService', `CVE 구독 중 오류 발생: ${cveId}`, error);
+      callback?.(false, '내부 오류 발생');
+    }
+  }
+  
+  /**
+   * CVE 구독 취소 요청
+   * @param cveId CVE ID
+   * @param callback 콜백 함수
+   */
+  unsubscribeCVE(cveId: string, callback?: (success: boolean, error?: string) => void): void {
+    try {
+      // 구독 중이 아닌 경우 중복 요청 방지
+      if (!this.subscribedCVEs.has(cveId)) {
+        logger.debug('SocketService', `구독 중이 아닌 CVE: ${cveId}`);
+        callback?.(true); // 이미 구독 취소된 상태이므로 성공으로 처리
+        return;
+      }
+      
+      // 연결 상태 확인
+      if (this.isConnected && this.socket) {
+        logger.info('SocketService', `CVE 구독 취소 요청 전송: ${cveId}`);
+        
+        // 낙관적 UI 업데이트 (서버 응답 전 먼저 업데이트)
+        this.subscribedCVEs.delete(cveId);
+        this.pendingSubscriptions.delete(cveId);
+        this._saveSubscribedCVEs();
+        this._notifySubscriptionChange();
+        
+        // 소켓을 통해 구독 취소 요청 전송
+        this.socket?.emit(SUBSCRIPTION_EVENTS.UNSUBSCRIBE_CVE, { cve_id: cveId });
+        
+        // 요청 성공 콜백 호출
+        callback?.(true);
+      } else {
+        // 오프라인 상태에서는 로컬에서만 삭제
+        this.subscribedCVEs.delete(cveId);
+        this.pendingSubscriptions.delete(cveId);
+        this._saveSubscribedCVEs();
+        this._notifySubscriptionChange();
+        
+        // 요청 성공 콜백 호출
+        callback?.(true);
+      }
+    } catch (error) {
+      logger.error('SocketService', `CVE 구독 취소 중 오류 발생: ${cveId}`, error);
+      callback?.(false, '내부 오류 발생');
+    }
+  }
+  
+  /**
+   * 특정 CVE 구독 상태 확인
+   * @param cveId CVE ID
+   * @returns 구독 여부
+   */
+  isSubscribedToCVE(cveId: string): boolean {
+    return this.subscribedCVEs.has(cveId);
+  }
+  
+  /**
+   * 구독 중인 모든 CVE 목록 반환
+   * @returns 구독 중인 CVE ID 배열
+   */
+  getSubscribedCVEs(): string[] {
+    return Array.from(this.subscribedCVEs);
+  }
+  
+  /**
+   * 구독 상태 변경 이벤트를 관찰할 수 있는 Observable을 반환
+   * @returns 구독 중인 CVE ID 배열을 포함하는 Observable
+   */
+  getSubscriptionChanges(): Observable<string[]> {
+    return this.subscriptionChangeSubject.asObservable();
+  }
+  
+  /**
+   * 구독 상태 변경을 알림
+   */
+  private _notifySubscriptionChange(): void {
+    const subscribedCVEs = this.getSubscribedCVEs();
+    // Subject를 통해 변경 사항 알림
+    this.subscriptionChangeSubject.next(subscribedCVEs);
+    
+    logger.debug('SocketService', `구독 상태 변경 알림: ${subscribedCVEs.length}개 CVE`);
+  }
+  
+  /**
+   * 기존에 구독 중이던 CVE 재구독
+   */
+  private _restoreSubscriptions(): void {
+    if (!this.isSocketConnected()) {
+      logger.warn('SocketService', '소켓이 연결되지 않아 구독 복원을 스킵합니다.');
+      return;
+    }
+    
+    // 기존에 구독 중이던 CVE 재구독
+    this.subscribedCVEs.forEach(cveId => {
+      logger.info('SocketService', `구독 복원: ${cveId}`);
+      this.socket?.emit(SUBSCRIPTION_EVENTS.SUBSCRIBE_CVE, { cve_id: cveId });
+    });
+    
+    // 보류 중인 구독 요청 처리
+    let pendingAdded = false;
+    this.pendingSubscriptions.forEach(cveId => {
+      logger.info('SocketService', `보류 중인 구독 처리: ${cveId}`);
+      if (!this.subscribedCVEs.has(cveId)) {
+        this.subscribedCVEs.add(cveId);
+        pendingAdded = true;
+      }
+      this.socket?.emit(SUBSCRIPTION_EVENTS.SUBSCRIBE_CVE, { cve_id: cveId });
+    });
+    
+    // 보류 중인 요청 목록 비우기
+    this.pendingSubscriptions.clear();
+    this._saveSubscribedCVEs();
+    
+    // 보류 중인 구독이 추가되었다면 변경 이벤트 발행
+    if (pendingAdded) {
+      this._notifySubscriptionChange();
+    }
+    
+    logger.info('SocketService', `구독 복원 완료: ${this.subscribedCVEs.size}개 CVE`);
+  }
+  
+  /**
+   * 로컬 스토리지에 구독 상태 저장
+   */
+  private _saveSubscribedCVEs(): void {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem(
+          this.LOCAL_STORAGE_KEY, 
+          JSON.stringify(Array.from(this.subscribedCVEs))
+        );
+      } catch (error) {
+        logger.error('SocketService', '구독 상태 저장 오류', error);
+      }
+    }
+  }
+  
+  /**
+   * 로컬 스토리지에서 구독 상태 불러오기
+   */
+  private _loadSubscribedCVEs(): void {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const savedSubscriptions = localStorage.getItem(this.LOCAL_STORAGE_KEY);
+        if (savedSubscriptions) {
+          const subscriptions = JSON.parse(savedSubscriptions) as string[];
+          let changed = false;
+          
+          subscriptions.forEach(cveId => {
+            if (cveId && !this.subscribedCVEs.has(cveId)) {
+              this.subscribedCVEs.add(cveId);
+              changed = true;
+            }
+          });
+          
+          if (changed) {
+            // 구독 상태가 변경된 경우에만 알림
+            this._notifySubscriptionChange();
+          }
+          
+          logger.info('SocketService', `저장된 구독 상태 불러오기 완료: ${this.subscribedCVEs.size}개 CVE`);
+        }
+      } catch (error) {
+        logger.error('SocketService', '구독 상태 불러오기 오류', error);
+      }
+    }
+  }
+  
+  /**
+   * 모든 구독 정보 초기화
+   */
+  clearAllSubscriptions(): void {
+    try {
+      // 구독 정보 초기화
+      this.subscribedCVEs.clear();
+      this.pendingSubscriptions.clear();
+      
+      // 로컬 스토리지에서 구독 정보 제거
+      localStorage.removeItem(this.LOCAL_STORAGE_KEY);
+      
+      // 구독 변경 알림
+      this._notifySubscriptionChange();
+      
+      logger.info('SocketService', '모든 구독 정보가 초기화되었습니다.');
+    } catch (error) {
+      logger.error('SocketService', '구독 정보 초기화 중 오류 발생', error);
+    }
+  }
+  
+  /**
+   * 구독 저장 (즉시 실행 버전)
+   */
+  saveSubscriptions(): void {
+    this._saveSubscribedCVEs();
+  }
+  
+  /**
+   * 특정 CVE 구독 상태 업데이트
+   */
+  updateSubscription(cveId: string, isSubscribed: boolean): void {
+    try {
+      if (isSubscribed) {
+        if (!this.subscribedCVEs.has(cveId)) {
+          this.subscribedCVEs.add(cveId);
+          logger.debug('SocketService', `CVE 구독 추가: ${cveId}`);
+        }
+      } else {
+        if (this.subscribedCVEs.has(cveId)) {
+          this.subscribedCVEs.delete(cveId);
+          logger.debug('SocketService', `CVE 구독 제거: ${cveId}`);
+        }
+      }
+      
+      // 변경사항 즉시 저장
+      this.saveSubscriptions();
+      this._notifySubscriptionChange();
+    } catch (error) {
+      logger.error('SocketService', '구독 상태 업데이트 중 오류 발생', error);
+    }
+  }
+  
+  //===================================================================
+  // 이벤트 핸들러 메서드
+  //===================================================================
+  
+  /**
+   * 구독 상태 이벤트 핸들러
+   */
+  private _handleSubscriptionStatus(data: any): void {
+    try {
+      const cveId = data.cve_id || data.cveId;
+      const success = !!data.success;
+      const isSubscribed = !!data.subscribed;
+      
+      logger.info('SocketService', `구독 상태 업데이트 이벤트 수신: ${cveId}`, {
+        success,
+        isSubscribed,
+        data
+      });
+      
+      if (success) {
+        // 서버와 로컬 상태 동기화
+        if (isSubscribed) {
+          this.subscribedCVEs.add(cveId);
+        } else {
+          this.subscribedCVEs.delete(cveId);
+        }
+        
+        this._saveSubscribedCVEs();
+        this._notifySubscriptionChange();
+        
+        // 구독자 목록 정보 업데이트 (React Query 캐시)
+        if (data.subscribers || data.subscriber_count > 0) {
+          this._updateSubscribersCache(data);
+        }
+      }
+    } catch (error) {
+      logger.error('SocketService', '구독 상태 이벤트 처리 오류', error);
+    }
+  }
+  
+  /**
+   * 구독자 업데이트 이벤트 핸들러
+   */
+  private _handleSubscribersUpdated(data: any): void {
+    try {
+      this._updateSubscribersCache(data);
+    } catch (error) {
+      logger.error('SocketService', '구독자 업데이트 이벤트 처리 오류', error);
+    }
+  }
+  
+  /**
+   * 구독자 캐시 업데이트
+   */
+  private _updateSubscribersCache(data: any): void {
+    try {
+      const queryClient = getQueryClient();
+      if (!queryClient) return;
+      
+      const cveId = data.cve_id || data.cveId;
+      if (!cveId) return;
+      
+      const subscribersKey = [QUERY_KEYS.CVE_SUBSCRIBERS, cveId];
+      const currentSubscribers = queryClient.getQueryData(subscribersKey) || [];
+      
+      // 서버에서 받은 구독자 목록이 있으면 업데이트
+      if (Array.isArray(data.subscribers) && data.subscribers.length > 0) {
+        queryClient.setQueryData(subscribersKey, data.subscribers);
+        logger.debug('SocketService', `구독자 목록 업데이트 (${data.subscribers.length}명)`, {
+          cveId,
+          subscribers: data.subscribers
+        });
+      } 
+      // 현재 구독자가 있고, 구독자 수만 받았을 경우
+      else if (data.subscriber_count && data.username) {
+        // currentSubscribers를 타입 단언하여 배열로 취급
+        const subscribers = currentSubscribers as Array<{ username: string; id?: string; userId?: string; displayName?: string; profileImage?: string }>;
+        
+        // 현재 사용자가 구독한 경우, 목록에 추가
+        if (data.subscribed && data.username && !subscribers.some(s => s.username === data.username)) {
+          const newSubscriber = {
+            id: data.user_id || '',
+            userId: data.user_id || '',
+            username: data.username || '',
+            displayName: data.display_name || data.username || '',
+            profileImage: data.profile_image || '',
+          };
+          
+          const updatedSubscribers = [...subscribers, newSubscriber];
+          queryClient.setQueryData(subscribersKey, updatedSubscribers);
+          
+          logger.debug('SocketService', `구독자 추가됨: ${data.username}`, {
+            cveId,
+            subscriberCount: updatedSubscribers.length
+          });
+        }
+        // 현재 사용자가 구독 취소한 경우, 목록에서 제거
+        else if (!data.subscribed && data.username) {
+          const updatedSubscribers = subscribers.filter(
+            s => s.username !== data.username
+          );
+          
+          if (updatedSubscribers.length !== subscribers.length) {
+            queryClient.setQueryData(subscribersKey, updatedSubscribers);
+            
+            logger.debug('SocketService', `구독자 제거됨: ${data.username}`, {
+              cveId,
+              subscriberCount: updatedSubscribers.length
+            });
+          }
+        }
+      }
+      
+      // 쿼리 무효화
+      queryClient.invalidateQueries({
+        queryKey: subscribersKey,
+        exact: true
+      });
+    } catch (error) {
+      logger.error('SocketService', '구독자 목록 업데이트 중 오류 발생', error);
+    }
+  }
+  
+  //===================================================================
+  // 유틸리티 메서드
+  //===================================================================
+  
+  /**
+   * 데이터 케이스 변환 처리
+   */
+  private _convertDataCasing(data: any, options?: SocketCaseConverterOptions): any {
+    // 캐시 키 생성
+    const cacheKey = this._createCacheKey(data, options);
+    if (cacheKey && this.caseConversionCache.has(cacheKey)) {
+      return this.caseConversionCache.get(cacheKey);
+    }
+    
+    // 기본 옵션 설정
+    const direction = options?.direction || 'incoming';
+    const converter = direction === 'outgoing' ? camelToSnake : snakeToCamel;
+    const sourceName = options?.sourceName || '알 수 없는 소스';
+    const eventName = options?.eventName || '';
+    
+    // 구독 관련 이벤트는 특별 처리
+    const isSubscriptionEvent = BYPASS_CONVERSION_EVENTS.includes(eventName);
+    
+    try {
+      // null 처리
+      if (data === null) {
+        return null;
+      }
+      
+      // 데이터 타입에 따라 변환 처리
+      if (typeof data === 'object') {
+        // 배열 처리
+        if (Array.isArray(data)) {
+          const result = data.map(item => this._convertDataCasing(item, options));
+          
+          // 캐시에 저장
+          if (cacheKey) {
+            this.caseConversionCache.set(cacheKey, result);
+          }
+          
+          return result;
+        }
+        
+        // 객체 처리
+        const result: Record<string, any> = {};
+        
+        for (const key in data) {
+          if (Object.prototype.hasOwnProperty.call(data, key)) {
+            // 구독 관련 이벤트에서 특정 필드 처리
+            if (isSubscriptionEvent && (key in SUBSCRIPTION_FIELD_MAPPINGS)) {
+              const mappedKey = SUBSCRIPTION_FIELD_MAPPINGS[key];
+              
+              // 방향에 따라 매핑된 키 또는 원래 키 사용
+              result[direction === 'outgoing' ? mappedKey : key] = data[key];
+              continue;
+            }
+            
+            // 변환에서 제외할 필드 확인
+            if (EXCLUDED_FIELDS.includes(key)) {
+              result[key] = data[key];
+              continue;
+            }
+            
+            // 일반 필드는 케이스 변환 적용
+            const convertedKey = converter(key);
+            
+            // 중첩된 객체나 배열은 재귀적으로 처리
+            if (typeof data[key] === 'object' && data[key] !== null) {
+              result[convertedKey] = this._convertDataCasing(data[key], options);
+            } else {
+              result[convertedKey] = data[key];
+            }
+          }
+        }
+        
+        // 구독 관련 이벤트에서 특정 필드 추가 처리 (양방향 호환성 보장)
+        if (isSubscriptionEvent && typeof data === 'object' && !Array.isArray(data)) {
+          // cve_id와 cveId 동시 지원
+          if ('cve_id' in data && !('cveId' in data)) {
+            result.cveId = data.cve_id;
+          } else if ('cveId' in data && !('cve_id' in data)) {
+            result.cve_id = data.cveId;
+          }
+        }
+        
+        // 캐시에 저장
+        if (cacheKey) {
+          this.caseConversionCache.set(cacheKey, result);
+        }
+        
+        return result;
+      }
+      
+      // 객체나 배열이 아닌 경우 원래 값 반환
+      return data;
+    } catch (error) {
+      logger.error('SocketService', '데이터 케이스 변환 중 오류 발생', error);
+      return data;
+    }
+  }
+  
+  /**
+   * 캐시 키 생성
+   */
+  private _createCacheKey(data: any, options?: SocketCaseConverterOptions): string | null {
+    if (!data || typeof data !== 'object') {
+      return null;
+    }
+    
+    try {
+      const direction = options?.direction || 'incoming';
+      const sourceName = options?.sourceName || '';
+      
+      // 간단한 객체는 직접 키 생성
+      if (!Array.isArray(data) && Object.keys(data).length <= 5) {
+        return `${direction}:${sourceName}:${JSON.stringify(data)}`;
+      }
+      
+      // 복잡한 객체는 일부 프로퍼티와 길이 기반 키 생성
+      const keys = Object.keys(data);
+      const keyPreview = keys.slice(0, 3).join(',');
+      
+      if (Array.isArray(data)) {
+        return `${direction}:${sourceName}:array:${data.length}:${keyPreview}`;
+      }
+      
+      return `${direction}:${sourceName}:object:${keys.length}:${keyPreview}`;
+    } catch (error) {
+      return null;
+    }
+  }
+  
+  /**
+   * 재귀적 키 변환 (인터페이스 구현용)
+   */
+  convertKeysRecursive(data: any, toCamelCase: boolean, options?: SocketCaseConverterOptions): any {
+    const direction = toCamelCase ? 'incoming' : 'outgoing';
+    return this._convertDataCasing(data, { ...options, direction });
+  }
+}
+
+// 싱글톤 인스턴스 생성
+const socketService = new SocketService();
+
+export default socketService;

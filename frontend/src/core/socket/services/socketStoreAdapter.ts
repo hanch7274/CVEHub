@@ -115,6 +115,19 @@ class SocketStoreAdapter {
   }
   
   /**
+   * 액션을 디스패치하는 메서드
+   * 
+   * Zustand 스토어 액션을 실행하는 헬퍼 메서드입니다.
+   * 
+   * @param action - 실행할 스토어 액션
+   */
+  dispatch(action: Function): void {
+    if (typeof action === 'function') {
+      action();
+    }
+  }
+
+  /**
    * 이벤트 핸들러 등록
    * 
    * 이벤트 이름과 핸들러 함수를 등록하여 이벤트 발생 시 호출할 수 있도록 합니다.

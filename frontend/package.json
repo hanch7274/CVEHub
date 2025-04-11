@@ -25,6 +25,7 @@
         "humps": "^2.0.1",
         "jwt-decode": "^4.0.0",
         "lodash": "^4.17.21",
+        "lru-cache": "^11.1.0",
         "notistack": "^3.0.2",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
@@ -38,6 +39,7 @@
         "recharts": "^2.15.1",
         "redux-persist": "^6.0.0",
         "rxjs": "^7.8.2",
+        "rxjs-socket.io": "^0.3.9",
         "socket.io-client": "^4.8.1",
         "web-vitals": "^2.1.4",
         "zustand": "^5.0.3"

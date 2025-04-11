@@ -736,15 +736,10 @@ const CVEDetail: React.FC<CVEDetailProps> = ({ cveId: propsCveId, open = false, 
       // 모달이 닫히거나 컴포넌트가 언마운트될 때만 구독 해제
       if (isSubscribedRef.current) {
         logger.info('CVEDetail: 모달 닫힘 또는 언마운트, 구독 해제', { cveId: propsCveId });
-        // unsubscribe() 호출 대신 socket.off() 메서드를 직접 사용하는 방식으로 변경
-        if (socketRef.current && socketRef.current.off) {
-          socketRef.current.off('subscription_status');
-          logger.info(`[직접 구독] socket.off 메서드로 구독 해제 완료`);
-        }
-        // 플래그 초기화는 실제 구독 해제 응답 후에 처리되도록 수정
+        unsubscribe();
       }
     };
-  }, [propsCveId, open, connected, subscribe]);
+  }, [propsCveId, open, connected, subscribe, unsubscribe]);
 
   // 연결 상태 변경 처리 (분리된 useEffect)
   useEffect(() => {

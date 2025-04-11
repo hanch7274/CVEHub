@@ -136,11 +136,13 @@ graph TD
 
 *   **`App.jsx`:** 최상위 컴포넌트. 라우팅, 전역 컨텍스트 설정, Socket.IO 연결 관리, 전역 에러 핸들링 초기화.
 *   **`core/socket/`:** Socket.IO 클라이언트 로직 집중.
-    *   `socketService.ts`: 소켓 연결 관리, 이벤트 송수신, 상태 동기화 싱글톤 서비스.
-    *   `socketStore.ts`: Zustand 기반 소켓 상태(연결, 오류 등) 전역 관리.
-    *   `useSocket.ts`: 컴포넌트에서 소켓 기능 사용을 위한 커스텀 훅.
-    *   `WebSocketQueryBridge.tsx`: 소켓 이벤트를 감지하여 React Query 캐시 자동 업데이트.
-*   **`features/`:** 기능별 모듈 분리 (auth, cve, notification, cache, activities). 각 모듈은 컴포넌트, 훅(쿼리, 뮤테이션, 소켓), 서비스, 타입 정의 포함.
+    *   `services/socketService.ts`: 소켓 연결 관리, 이벤트 송수신 관리 싱글톤 서비스.
+    *   `services/socketEventManager.ts`: 이벤트 등록, 발행, 케이스 변환 처리 담당.
+    *   `services/socketMetrics.ts`: 연결 품질 및 메트릭 모니터링 담당.
+    *   `hooks/useSocket.ts`: 컴포넌트에서 소켓 기능을 쉽게 사용할 수 있는 훅. 상태 관리, 이벤트 관리, 구독 처리 등.
+    *   `state/socketStore.ts`: 소켓 상태 전역 관리 (Zustand)
+    *   `bridge/WebSocketQueryBridge.tsx`: Socket.IO 이벤트를 React Query 캐시 업데이트로 연결.
+*   **`features/`:** 주요 기능별 모듈화 (`auth/`, `cve/`, `notification/` 등).
 *   **`shared/`:** 모듈 간 공유되는 코드 (API 설정, 공통 타입, 유틸리티, 공유 컨텍스트).
 *   **`layout/`:** Header, Sidebar 등 레이아웃 컴포넌트.
 
@@ -175,21 +177,39 @@ graph TD
     *   `MentionInput` 컴포넌트로 사용자 멘션 기능 구현 (`useSearchUsers` 훅으로 사용자 목록 조회).
     *   **실시간 댓글 업데이트:** `useSocket`의 `on` 메서드로 `COMMENT_ADDED`, `COMMENT_UPDATED`, `COMMENT_DELETED` 이벤트 구독 및 캐시 업데이트.
 
-### 3.3. 상태 관리 및 데이터 흐름
+### 3.3. 소켓 서비스 아키텍처 (`core/socket/`)
 
-*   **서버 데이터:** React Query가 API 호출 결과 캐싱 및 관리. 소켓 이벤트를 통해 캐시가 업데이트되면 UI 자동 갱신.
-*   **소켓 상태:** Zustand 스토어(`socketStore`)에 연결 상태, 오류 등 저장. `useSocket` 훅이 이 스토어 상태 반영.
-*   **인증 상태:** `AuthContext` 통해 전역 관리. 로그인/로그아웃 시 상태 변경 및 관련 캐시/소켓 연결 처리.
-*   **로컬 UI 상태:** `useState` 주로 사용 (모달 열림, 입력 값 등).
-*   **데이터 흐름 (댓글 작성 예시):**
-    1.  `CommentsTab`: 사용자가 `MentionInput`에 댓글 입력 및 제출.
-    2.  `CommentsTab`: `handleSubmit` -> `useCommentMutations.createComment` 호출.
-    3.  `useCommentMutations`: React Query `useMutation` 실행 -> `api.post('/cves/{cve_id}/comments', ...)` 호출 (Axios).
-    4.  `(Optimistic Update)`: `onMutate`에서 캐시에 임시 댓글 추가.
-    5.  **백엔드:** 댓글 생성 -> DB 저장 -> 업데이트된 CVE 데이터 반환.
-    6.  `useCommentMutations`: `onSuccess` -> `queryClient.setQueryData`로 캐시 업데이트, `parentSendMessage(SOCKET_EVENTS.COMMENT_ADDED)` 호출하여 소켓 이벤트 전송 요청.
-    7.  **백엔드 (Socket.IO):** `COMMENT_ADDED` 이벤트 수신 및 브로드캐스트.
-    8.  다른 클라이언트: `CommentsTab`의 `useEffect` 내 `on(SOCKET_EVENTS.COMMENT_ADDED)` 핸들러 -> 캐시 업데이트 -> UI 갱신.
+*   **구조:** 다중 레이어 디자인으로 역할 분리
+    *   **`SocketService`**: 소켓 연결/해제, 기본 인터페이스 제공, 상태 관리
+    *   **`SocketEventManager`**: 이벤트 처리 로직, 케이스 변환, 구독 관리
+    *   **`SocketMetrics`**: 연결 품질 모니터링, 핑/퐁 메트릭, 지연 시간 측정
+
+*   **주요 기능:**
+    *   **연결 관리:** 자동 재연결, 인증 토큰 갱신, 네트워크 상태 감지
+    *   **이벤트 시스템:** RxJS Observable 기반 반응형 이벤트 스트림
+    *   **케이스 변환:** 서버(snake_case)와 클라이언트(camelCase) 간 자동 변환
+    *   **구독 관리:** `updateSubscription` 메서드로 CVE 구독/해제 통합 관리
+    *   **React Query 연동:** 웹소켓 이벤트 기반 쿼리 캐시 자동 무효화
+
+*   **클라이언트 사용 패턴:**
+    ```typescript
+    // 기본 사용법
+    import { useSocket } from 'core/socket/hooks/useSocket';
+    
+    const { 
+      subscribe, unsubscribe, emit, on, 
+      connectionState, subscribeCVE, unsubscribeCVE 
+    } = useSocket('event_name', callbackFn, [deps], options);
+    
+    // CVE 구독 예제
+    subscribeCVE('CVE-2023-12345'); // socketService.updateSubscription 호출
+    ```
+
+*   **최적화 기법:**
+    *   **참조 안정성:** useRef로 이벤트 핸들러 관리
+    *   **중복 이벤트 방지:** 핸들러 맵으로 동일 이벤트 및 콜백 중복 등록 방지
+    *   **제어된 재구독:** useEffect 의존성 최소화
+    *   **리액트 훅 룰 준수:** 불필요한 의존성 방지
 
 ## 4. 백엔드 상세 분석 (Backend Details)
 
@@ -339,3 +359,171 @@ graph TD
     *   **의존성 주입**(`core/dependencies.py`) 구조를 이해하고 서비스/리포지토리 사용 시 해당 함수를 통해 인스턴스를 가져와야 합니다.
     *   **실시간 동기화** 로직(WebSocket 이벤트, React Query 캐시 업데이트)을 고려하여 데이터 일관성을 유지해야 합니다.
     *   **인증/인가** 로직(`get_current_user`, `get_current_admin_user`)을 이해하고 API 접근 제어에 적용해야 합니다.
+
+## 8. 최근 리팩토링 및 개선 사항
+
+### 8.1. 소켓 서비스 리팩토링 (2025-04-11)
+
+*   **핵심 변경:**
+    *   **클래스 책임 분리:** `SocketService`, `SocketEventManager`, `SocketMetrics`로 분리하여 단일 책임 원칙 적용
+    *   **API 단순화:** 구독 관련 기능을 `updateSubscription(cveId, isSubscribed)` 메서드로 통합
+    *   **로컬 스토리지 의존성 제거:** React Query 캐시만으로 상태 관리하도록 변경
+    *   **타입 안전성 강화:** 불필요한 `any` 타입 제거 및 인터페이스 개선
+    *   **named export 표준화:** 모든 컴포넌트를 명명된 export로 통일
+    *   **순환 참조 문제 해결:** 이벤트 버스 패턴 도입으로 컴포넌트 간 결합도 감소
+
+*   **개선된 구독 패턴:**
+    ```typescript
+    // 이전: 별도 메서드 호출
+    socketService.subscribeCVE(cveId);
+    socketService.unsubscribeCVE(cveId);
+    
+    // 개선: 통합 메서드 사용
+    socketService.updateSubscription(cveId, true);   // 구독
+    socketService.updateSubscription(cveId, false);  // 구독 해제
+    ```
+    
+*   **이벤트 버스 패턴 도입:**
+    ```typescript
+    // 이벤트 발행 예시
+    socketEventBus.publish('socketService:connected', null);
+    
+    // 이벤트 구독 예시 
+    socketEventBus.on('socketService:connected').subscribe(() => {
+      this.isConnected = true;
+      this.startConnectionQualityMonitoring();
+    });
+    ```
+
+*   **최적화 성과:**
+    *   코드 중복 감소
+    *   메모리 효율성 향상 (로컬 스토리지 의존성 제거)
+    *   유지보수성 개선 (명확한 역할 분리)
+    *   성능 향상 (불필요한 이벤트 구독/해제 최소화)
+    *   테스트 용이성 (각 컴포넌트 독립적 테스트 가능)
+
+### 8.2. 소켓 서비스 아키텍처 개선 (2025-04-12)
+
+*   **기존 방식의 문제점:**
+    *   직접적인 참조 구조로 인한 순환 참조 문제
+    *   높은 결합도로 인한 유지보수 어려움
+    *   테스트 복잡성 증가
+
+*   **파일별 역할 분담:**
+    *   **socketEventBus.ts**: 컴포넌트 간 통신을 중재하는 이벤트 버스 구현
+        - 발행-구독(pub-sub) 모델 적용
+        - RxJS Observable 기반 비동기 이벤트 스트림 관리
+        - 타입 안전성이 보장된 이벤트 시스템 제공
+        
+    *   **socketService.ts**: 소켓 연결 관리 담당
+        - 연결 생성/해제, 재연결 전략, 인증 토큰 관리
+        - 기본 인터페이스 제공 (on, emit, connectionState$ 등)
+        
+    *   **socketEventManager.ts**: 이벤트 처리 전담
+        - 이벤트 등록, 발행, 케이스 변환
+        - 스로틀링/디바운싱을 통한 최적화
+        
+    *   **socketMetrics.ts**: 연결 품질 모니터링 전담
+        - 소켓 핑-퐁을 통한 지연시간 측정
+        - 연결 상태 메트릭 수집 및 분석
+        
+*   **이벤트 기반 통신 흐름:**
+    1. SocketService에서 연결 시: `socketEventBus.publish('socketService:connected', null)`
+    2. SocketMetrics에서 구독: `socketEventBus.on('socketService:connected').subscribe()`
+    3. 이벤트 버스를 통한 간접 통신으로 순환 참조 제거
+
+```
+
+### 8.3. 이벤트 버스 기반 구독 관리 개선 (2025-04-12)
+
+*   **핵심 개선사항:**
+    * **이벤트 버스 패턴 확장:** 구독 관련 로직에 이벤트 버스 패턴 적용 완료
+    * **useCVESubscription 리팩토링:** 이벤트 버스 기반으로 구독 상태 관리 개선
+    * **WebSocketQueryBridge 개선:** 직접 소켓 참조 제거 및 이벤트 버스 통합
+    * **구독 이벤트 일관성 확보:** 모든 `SUBSCRIPTION_STATUS` 이벤트 처리 중앙화
+
+*   **웹소켓 이벤트 흐름 아키텍처:**
+    ```
+    ┌────────────────┐      ┌───────────────┐      ┌───────────────────┐
+    │                │      │               │      │                   │
+    │  SocketService │──┬──▶│ socketEventBus│────▶│ SocketEventManager │
+    │                │  │   │               │      │                   │
+    └────────────────┘  │   └───────────────┘      └───────────────────┘
+            │           │          ▲                         │
+            │           │          │                         │
+            ▼           │          │                         ▼
+    ┌────────────────┐  │   ┌───────────────┐      ┌───────────────────┐
+    │                │  │   │               │      │                   │
+    │   WebSocket    │  └──▶│ SocketMetrics │      │ WebSocketQueryBridge│
+    │  (Socket.IO)   │      │               │      │                   │
+    └────────────────┘      └───────────────┘      └───────────────────┘
+            ▲                                                │
+            │                                                │
+            ▼                                                ▼
+    ┌────────────────┐                              ┌───────────────────┐
+    │                │                              │                   │
+    │  useSocket 훅  │                              │  React Query 캐시  │
+    │                │                              │                   │
+    └────────────────┘                              └───────────────────┘
+            ▲                                                ▲
+            │                                                │
+            └────────────────┬───────────────────────────────┘
+                             │
+                     ┌───────────────┐
+                     │               │
+                     │  UI 컴포넌트   │
+                     │               │
+                     └───────────────┘
+    ```
+
+*   **구독 처리 흐름:**
+    1. **이벤트 발생:** 컴포넌트에서 구독 요청 시작 (`useCVESubscription.subscribe()` 호출)
+    2. **서비스 요청:** `socketService.updateSubscription(cveId, true)` 호출
+    3. **WebSocket 전송:** `socket.emit('subscribe_cve', { cve_id: cveId })`
+    4. **서버 응답:** 서버에서 `subscription_status` 이벤트 전송
+    5. **이벤트 버스 전파:** `socketEventBus.on<SubscriptionStatusEvent>(SUBSCRIPTION_EVENTS.SUBSCRIPTION_STATUS)`을 통해 구독자들에게 상태 변경 알림
+    6. **상태 업데이트:** 구독 컴포넌트에서 상태 업데이트 및 UI 반영
+    7. **캐시 갱신:** `queryClient.invalidateQueries({ queryKey: [QUERY_KEYS.CVE_DETAIL, cveId] })`
+
+*   **`useCVESubscription` 훅 사용법:**
+    ```typescript
+    // 훅 사용
+    const { 
+      isSubscribed,   // 현재 구독 상태
+      isLoading,      // 구독 요청 처리 중 여부
+      error,          // 오류 정보
+      subscribe,      // 구독 요청 함수
+      unsubscribe,    // 구독 취소 함수
+      getSubscribers  // 구독자 목록 접근 함수
+    } = useCVESubscription(cveId);
+    
+    // 구독 관리
+    const handleSubscribe = () => {
+      if (!isSubscribed) subscribe();
+      else unsubscribe();
+    };
+    
+    // 구독자 목록 표시
+    const subscribers = getSubscribers();
+    ```
+
+*   **WebSocketQueryBridge의 역할:**
+    * WebSocket 이벤트와 React Query 캐시를 연결하는 브릿지 컴포넌트
+    * 이벤트에 따른 쿼리 무효화 매핑 관리
+    * 구독 상태 변경 시 관련 쿼리 자동 갱신
+    * RxJS Subscription을 사용한 메모리 누수 방지
+
+*   **이벤트 버스 패턴의 장점:**
+    * **결합도 감소:** 컴포넌트 간 직접 참조 제거
+    * **테스트 용이성:** 컴포넌트 독립적 테스트 가능
+    * **디버깅 편의성:** 이벤트 흐름 추적 용이
+    * **확장성 향상:** 새로운 리스너 쉽게 추가 가능
+    * **메모리 관리 개선:** RxJS Subscription을 통한 리소스 정리
+
+*   **주요 기술 적용:**
+    * **RxJS:** Observable 기반 이벤트 스트림 관리
+    * **타입스크립트:** 인터페이스를 통한 이벤트 데이터 타입 강화
+    * **React Query:** 서버 상태 관리 및 캐시 무효화 자동화
+    * **Socket.IO:** 실시간 양방향 통신 지원
+
+이번 리팩토링을 통해 구독 관리 로직의 결합도를 낮추고, 타입 안전성과 코드 유지보수성을 대폭 향상시켰습니다. 이벤트 버스 패턴을 통해 애플리케이션 전체에 일관된 소켓 이벤트 처리 방식을 제공합니다.
